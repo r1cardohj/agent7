@@ -10,9 +10,13 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application.current import get_app
 from prompt_toolkit.completion import Completer, Completion, CompleteEvent
 from prompt_toolkit.document import Document
+from prompt_toolkit.enums import EditingMode
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.key_binding.vi_state import InputMode
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
@@ -281,10 +285,25 @@ async def async_main(argv: list[str] | None = None) -> None:
             err.print("[dim]# no credentials yet — /login deepseek | /login kimi[/dim]")
         if ids:
             err.print(f"[dim]# {len(ids)} models across {len(state.credentials)} provider(s)[/dim]")
+        def _vi_rprompt() -> HTML | str:
+            # prompt_toolkit: vi_state.input_mode — INSERT / NAVIGATION / REPLACE…
+            mode = get_app().vi_state.input_mode
+            if mode in (InputMode.INSERT, InputMode.INSERT_MULTIPLE):
+                label, color = "INSERT", "ansigreen"
+            elif mode == InputMode.NAVIGATION:
+                label, color = "NORMAL", "ansiyellow"
+            elif mode in (InputMode.REPLACE, InputMode.REPLACE_SINGLE):
+                label, color = "REPLACE", "ansired"
+            else:
+                label, color = str(mode), "ansibrightblack"
+            return HTML(f"<style fg=\"{color}\">-- {label} --</style>")
+
         prompt = PromptSession(
             history=InMemoryHistory(),
             completer=SlashCompleter(state),
             complete_while_typing=True,
+            editing_mode=EditingMode.VI,
+            rprompt=_vi_rprompt,
         )
 
         def _repl_prompt() -> str:
