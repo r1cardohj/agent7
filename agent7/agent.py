@@ -16,9 +16,14 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-MAX_TOOL_CHARS = 50_000
+# Per-tool output budgets. `read` is paginated, so it may return a big chunk;
+# shell and search output is usually skimmed, so keep it small by default.
+MAX_READ_CHARS = 50_000
+MAX_BASH_CHARS = 12_000
+MAX_GREP_CHARS = 12_000
+DEFAULT_READ_LINES = 200
 MAX_TURNS = 30
-MAX_GREP_LINES = 200
+MAX_GREP_LINES = 100
 # TUI write preview: keep it short — a sketch, not the full patch.
 MAX_DIFF_LINES = 18
 
@@ -31,7 +36,7 @@ class Interrupted(Exception):
         super().__init__(partial)
 
 SYSTEM = """You are a coding agent. You can only use these tools: read, write, bash, grep.
-Explore with read/grep before editing. Use bash to run tests and verify changes.
+Explore with read/grep before editing (read shows ~200 lines per call — page with offset/limit). Use bash to run tests and verify changes.
 Prefer small, focused edits with write(old_string=...). When done, reply with a short summary — no more tool calls."""
 
 TOOLS: list[dict[str, Any]] = [
@@ -39,7 +44,10 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read",
-            "description": "Read a text file (numbered lines). Optional 1-based offset/limit.",
+            "description": (
+                "Read a text file (numbered lines). Returns up to 200 lines "
+                "(and a hint) by default; use 1-based offset/limit to page through."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -77,7 +85,10 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Run a shell command in the working directory.",
+            "description": (
+                "Run a shell command in the working directory. Output is truncated "
+                "to ~12k chars, so filter with head/tail/grep for long output."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -92,7 +103,10 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "grep",
-            "description": "Search with ripgrep (or grep -R fallback).",
+            "description": (
+                "Search with ripgrep (or grep -R fallback). Results are capped at "
+                "100 lines; narrow the pattern/path instead of expecting everything."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -107,7 +121,7 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
-def _truncate(s: str, limit: int = MAX_TOOL_CHARS) -> str:
+def _truncate(s: str, limit: int) -> str:
     if len(s) <= limit:
         return s
     return s[:limit] + f"\n...[truncated {len(s) - limit} chars]"
@@ -126,12 +140,19 @@ def tool_read(cwd: Path, path: str, offset: int | None = None, limit: int | None
         lines = fp.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError:
         return f"error: binary or non-utf8: {fp}"
-    start = max(0, (offset or 1) - 1) if offset is not None else 0
-    end = len(lines) if limit is None else start + max(0, limit)
+    total = len(lines)
+    start = min(max(0, (offset or 1) - 1), total) if offset is not None else 0
+    want = limit if limit is not None and limit > 0 else DEFAULT_READ_LINES
+    end = min(total, start + want)
     chunk = lines[start:end]
-    return _truncate(
-        "\n".join(f"{i + start + 1}|{line}" for i, line in enumerate(chunk)) or "(empty)"
-    )
+    body = "\n".join(f"{i + start + 1}|{line}" for i, line in enumerate(chunk)) or "(empty)"
+    body = _truncate(body, MAX_READ_CHARS)
+    if start > 0 or end < total:
+        hint = f"...[lines {start + 1}-{end} of {total}"
+        if end < total:
+            hint += f"; continue with offset={end + 1}"
+        body = f"{body}\n{hint}]"
+    return body
 
 
 def _write_diff(fp: Path, before: str, after: str, *, max_lines: int = MAX_DIFF_LINES) -> str:
@@ -232,13 +253,16 @@ def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
             env=env,
         )
     except subprocess.TimeoutExpired as e:
-        return _truncate(f"timeout after {timeout or 60}s\n{(e.stdout or '')}{(e.stderr or '')}")
+        return _truncate(
+            f"timeout after {timeout or 60}s\n{(e.stdout or '')}{(e.stderr or '')}",
+            MAX_BASH_CHARS,
+        )
     parts = [f"exit={proc.returncode}"]
     if proc.stdout:
         parts.append("stdout:\n" + proc.stdout)
     if proc.stderr:
         parts.append("stderr:\n" + proc.stderr)
-    return _truncate("\n".join(parts))
+    return _truncate("\n".join(parts), MAX_BASH_CHARS)
 
 
 def tool_grep(
@@ -263,11 +287,11 @@ def tool_grep(
         return "error: neither rg nor grep available"
     out = proc.stdout or ""
     if proc.returncode not in (0, 1) and not out:
-        return _truncate(proc.stderr or f"grep failed exit={proc.returncode}")
+        return _truncate(proc.stderr or f"grep failed exit={proc.returncode}", MAX_GREP_CHARS)
     lines = out.splitlines()
     if len(lines) > MAX_GREP_LINES:
         out = "\n".join(lines[:MAX_GREP_LINES]) + f"\n...[{len(lines) - MAX_GREP_LINES} more]"
-    return _truncate(out or "(no matches)")
+    return _truncate(out or "(no matches)", MAX_GREP_CHARS)
 
 
 HANDLERS: dict[str, Callable[..., str]] = {

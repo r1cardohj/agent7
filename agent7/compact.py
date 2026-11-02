@@ -6,6 +6,7 @@ from typing import Any
 
 THRESHOLD = 0.75
 KEEP_USER_TURNS = 3
+KEEP_TOOL_RESULTS = 4
 TOOL_MAX_CHARS = 2_000
 ASSISTANT_MAX_CHARS = 4_000
 
@@ -31,12 +32,17 @@ def compact_messages(
     messages: list[dict[str, Any]],
     *,
     keep_user_turns: int = KEEP_USER_TURNS,
+    keep_tool_results: int = KEEP_TOOL_RESULTS,
     tool_max_chars: int = TOOL_MAX_CHARS,
     assistant_max_chars: int = ASSISTANT_MAX_CHARS,
 ) -> tuple[list[dict[str, Any]], int]:
     """
-    Truncate content before the last `keep_user_turns` user messages.
-    Returns (new_messages, n_changed).
+    Shrink old tool results and prose without dropping any messages.
+
+    In a short history, tool results get their own recency boundary: a one-shot
+    task can run many tool turns without another user message, so keep the last
+    `keep_tool_results` intact and compact older ones. Once there are
+    `keep_user_turns` user messages, use that turn boundary for all content.
     """
     if not messages:
         return messages, 0
@@ -51,21 +57,29 @@ def compact_messages(
     if len(user_idxs) >= keep_user_turns:
         keep_from = user_idxs[-keep_user_turns]
     else:
-        keep_from = 0  # short history: nothing is "old"
+        keep_from = 0  # short history: prose is still potentially relevant
+
+    tool_idxs = [i for i, m in enumerate(rest) if m.get("role") == "tool"]
+    old_tool_before = keep_from or len(rest)
+    if keep_from == 0 and keep_tool_results >= 0 and tool_idxs:
+        old_tool_before = tool_idxs[max(0, len(tool_idxs) - keep_tool_results)]
 
     out = list(head)
     changed = 0
     for i, m in enumerate(rest):
-        if i >= keep_from:
-            out.append(m)
-            continue
         role = m.get("role")
         content = m.get("content")
-        if role == "tool" and isinstance(content, str) and len(content) > tool_max_chars:
+        if (
+            role == "tool"
+            and i < old_tool_before
+            and isinstance(content, str)
+            and len(content) > tool_max_chars
+        ):
             out.append({**m, "content": _truncate(content, tool_max_chars)})
             changed += 1
         elif (
             role == "assistant"
+            and i < keep_from
             and isinstance(content, str)
             and len(content) > assistant_max_chars
             and not m.get("tool_calls")

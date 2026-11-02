@@ -48,13 +48,14 @@ class ReplyPrinterPreviewTests(unittest.TestCase):
 
     def test_closes_open_thinking_block_first(self) -> None:
         self.rp.on_thinking("pondering")
+        self.assertTrue(self.rp._thinking_open)
 
         self.rp.on_preview("x.txt  +1 -0\n@@ ...\n")
 
         text = self.out()
-        self.assertIn("thinking", text)
         self.assertIn("# write", text)
-        self.assertLess(text.index("thinking"), text.index("# write"))
+        # thinking is a status-line spinner, not dumped into the preview stream
+        self.assertNotIn("pondering", text)
         self.assertFalse(self.rp._thinking_open)
 
     def test_preview_does_not_emit_markdown_answer(self) -> None:

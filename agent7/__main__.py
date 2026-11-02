@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import os
 import sys
+import time
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -28,8 +29,7 @@ from .session import Session, format_context_prompt
 
 console = Console(stderr=False)
 err = Console(stderr=True)
-_THINK = "cyan dim"
-_THINK_PREFIX = "  │ "
+_THINK_FRAMES = ("thinking   ", "thinking.  ", "thinking.. ", "thinking...")
 
 def _load_dotenv(path: Path = Path(".env")) -> None:
     if not path.is_file():
@@ -58,7 +58,7 @@ class ReplyPrinter:
         self.buf: list[str] = []
         self._chars = 0
         self._thinking_open = False
-        self._thinking_bol = True
+        self._thinking_t0 = 0.0
         self._counting = False
 
     def __enter__(self) -> ReplyPrinter:
@@ -76,21 +76,21 @@ class ReplyPrinter:
         console.print(Markdown(text))
         console.print()
 
+    def _clear_status_line(self) -> None:
+        if err.is_terminal:
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
+
     def _close_thinking(self) -> None:
         if not self._thinking_open:
             return
-        if not self._thinking_bol:
-            err.print()
-        err.print()
+        self._clear_status_line()
         self._thinking_open = False
-        self._thinking_bol = True
 
     def _clear_counter(self) -> None:
         if not self._counting:
             return
-        if err.is_terminal:
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
+        self._clear_status_line()
         self._counting = False
 
     def _show_counter(self) -> None:
@@ -106,29 +106,23 @@ class ReplyPrinter:
             return
         self._clear_counter()
         if not self._thinking_open:
-            err.print()
-            err.print(Text("  thinking", style="cyan dim italic"))
             self._thinking_open = True
-            self._thinking_bol = True
-        parts = text.split("\n")
-        for i, part in enumerate(parts):
-            if part:
-                if self._thinking_bol:
-                    err.print(Text(_THINK_PREFIX, style=_THINK), end="")
-                    self._thinking_bol = False
-                err.print(Text(part, style=_THINK), end="")
-            if i < len(parts) - 1:
-                err.print()
-                self._thinking_bol = True
+            self._thinking_t0 = time.monotonic()
+        if not err.is_terminal:
+            return
+        frame = int((time.monotonic() - self._thinking_t0) / 0.4) % len(_THINK_FRAMES)
+        sys.stderr.write(f"\r\033[K  {_THINK_FRAMES[frame]}")
+        sys.stderr.flush()
 
     def on_answer_to_thinking(self) -> None:
         if not self.buf:
             return
-        text = "".join(self.buf)
+        # Discard streamed answer text that arrived before tool calls —
+        # only keep the thinking spinner, not the content.
         self.buf.clear()
         self._chars = 0
         self._clear_counter()
-        self.on_thinking(text)
+        self.on_thinking(".")
 
     def on_delta(self, text: str) -> None:
         self.buf.append(text)
