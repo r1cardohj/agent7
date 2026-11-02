@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,14 @@ from openai import AsyncOpenAI
 MAX_TOOL_CHARS = 50_000
 MAX_TURNS = 30
 MAX_GREP_LINES = 200
+
+
+class Interrupted(Exception):
+    """Ctrl-C / cancel during an agent turn. optional partial assistant text."""
+
+    def __init__(self, partial: str = "") -> None:
+        self.partial = partial
+        super().__init__(partial)
 
 SYSTEM = """You are a coding agent. You can only use these tools: read, write, bash, grep.
 Explore with read/grep before editing. Use bash to run tests and verify changes.
@@ -265,6 +274,16 @@ def _usage_from_chunk(chunk: Any) -> dict[str, int] | None:
     return out or None
 
 
+async def _aclose_stream(stream: Any) -> None:
+    close = getattr(stream, "close", None)
+    if close is None:
+        return
+    with suppress(Exception):
+        result = close()
+        if asyncio.iscoroutine(result):
+            await result
+
+
 async def _stream_completion(
     client: AsyncOpenAI,
     *,
@@ -283,40 +302,53 @@ async def _stream_completion(
     }
     try:
         stream = await client.chat.completions.create(**create_kwargs)
+    except Interrupted:
+        raise
+    except (asyncio.CancelledError, KeyboardInterrupt) as e:
+        raise Interrupted() from e
     except Exception:
         create_kwargs.pop("stream_options", None)
-        stream = await client.chat.completions.create(**create_kwargs)
+        try:
+            stream = await client.chat.completions.create(**create_kwargs)
+        except (asyncio.CancelledError, KeyboardInterrupt) as e:
+            raise Interrupted() from e
+
     content_parts: list[str] = []
     tool_acc: dict[int, dict[str, str]] = {}
     saw_tools = False
     usage: dict[str, int] | None = None
 
-    async for chunk in stream:
-        maybe = _usage_from_chunk(chunk)
-        if maybe:
-            usage = maybe
-        if not chunk.choices:
-            continue
-        delta = chunk.choices[0].delta
-        reasoning = _delta_reasoning(delta)
-        if reasoning:
-            await _emit(on_thinking, reasoning)
-        if delta.tool_calls:
-            if not saw_tools:
-                saw_tools = True
-                await _emit(on_answer_to_thinking)
-            for tc in delta.tool_calls:
-                slot = tool_acc.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
-                if tc.id:
-                    slot["id"] = tc.id
-                if tc.function:
-                    if tc.function.name:
-                        slot["name"] = tc.function.name
-                    if tc.function.arguments:
-                        slot["arguments"] += tc.function.arguments
-        if delta.content:
-            content_parts.append(delta.content)
-            await _emit(on_thinking if saw_tools else on_delta, delta.content)
+    try:
+        async for chunk in stream:
+            maybe = _usage_from_chunk(chunk)
+            if maybe:
+                usage = maybe
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            reasoning = _delta_reasoning(delta)
+            if reasoning:
+                await _emit(on_thinking, reasoning)
+            if delta.tool_calls:
+                if not saw_tools:
+                    saw_tools = True
+                    await _emit(on_answer_to_thinking)
+                for tc in delta.tool_calls:
+                    slot = tool_acc.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+                    if tc.id:
+                        slot["id"] = tc.id
+                    if tc.function:
+                        if tc.function.name:
+                            slot["name"] = tc.function.name
+                        if tc.function.arguments:
+                            slot["arguments"] += tc.function.arguments
+            if delta.content:
+                content_parts.append(delta.content)
+                await _emit(on_thinking if saw_tools else on_delta, delta.content)
+    except (asyncio.CancelledError, KeyboardInterrupt) as e:
+        raise Interrupted("".join(content_parts)) from e
+    finally:
+        await _aclose_stream(stream)
 
     tool_calls = [
         {
@@ -349,38 +381,62 @@ async def run_agent(
     cwd = cwd.resolve()
     messages.append({"role": "user", "content": task})
 
-    for turn in range(1, max_turns + 1):
-        content, tool_calls, usage = await _stream_completion(
-            client,
-            model=model,
-            messages=messages,
-            on_delta=on_delta,
-            on_thinking=on_thinking,
-            on_answer_to_thinking=on_answer_to_thinking,
-        )
-        if usage:
-            await _emit(on_usage, usage)
-        assistant: dict[str, Any] = {"role": "assistant", "content": content}
-        if tool_calls:
-            assistant["tool_calls"] = tool_calls
-        messages.append(assistant)
-        if not tool_calls:
-            return content
-
-        for tc in tool_calls:
-            name = tc["function"]["name"]
-            raw_args = tc["function"]["arguments"]
+    try:
+        for turn in range(1, max_turns + 1):
             try:
-                args = json.loads(raw_args or "{}")
-            except json.JSONDecodeError:
-                args = {}
-                result = f"error: invalid JSON arguments: {raw_args!r}"
-            else:
-                result = await asyncio.to_thread(dispatch_tool, cwd, name, args)
-            if on_tool:
-                await _emit(on_tool, turn, name, args, result)
-            else:
-                print(f"  [{turn}] {name} {tool_summary(name, args)}", file=sys.stderr, flush=True)
-            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+                content, tool_calls, usage = await _stream_completion(
+                    client,
+                    model=model,
+                    messages=messages,
+                    on_delta=on_delta,
+                    on_thinking=on_thinking,
+                    on_answer_to_thinking=on_answer_to_thinking,
+                )
+            except Interrupted as e:
+                if e.partial:
+                    messages.append({"role": "assistant", "content": e.partial})
+                raise
 
-    return f"(stopped after {max_turns} turns)"
+            if usage:
+                await _emit(on_usage, usage)
+            assistant: dict[str, Any] = {"role": "assistant", "content": content}
+            if tool_calls:
+                assistant["tool_calls"] = tool_calls
+            messages.append(assistant)
+            if not tool_calls:
+                return content
+
+            for tc in tool_calls:
+                name = tc["function"]["name"]
+                raw_args = tc["function"]["arguments"]
+                try:
+                    args = json.loads(raw_args or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                    result = f"error: invalid JSON arguments: {raw_args!r}"
+                else:
+                    try:
+                        result = await asyncio.to_thread(dispatch_tool, cwd, name, args)
+                    except (asyncio.CancelledError, KeyboardInterrupt) as e:
+                        result = "error: interrupted"
+                        messages.append(
+                            {"role": "tool", "tool_call_id": tc["id"], "content": result}
+                        )
+                        if on_tool:
+                            await _emit(on_tool, turn, name, args, result)
+                        raise Interrupted() from e
+                if on_tool:
+                    await _emit(on_tool, turn, name, args, result)
+                else:
+                    print(
+                        f"  [{turn}] {name} {tool_summary(name, args)}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+
+        return f"(stopped after {max_turns} turns)"
+    except Interrupted:
+        raise
+    except (asyncio.CancelledError, KeyboardInterrupt) as e:
+        raise Interrupted() from e

@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
-from .agent import SYSTEM, run_agent, tool_summary
+from .agent import SYSTEM, Interrupted, run_agent, tool_summary
 from .commands import dispatch, fetch_models, known_names, switch_model
 from .providers import get_provider, resolve_all, resolve_default
 from .session import Session, format_context_prompt
@@ -269,7 +269,11 @@ async def async_main(argv: list[str] | None = None) -> None:
         )
 
         if task:
-            await _run_once(state, task)
+            try:
+                await _run_once(state, task)
+            except Interrupted:
+                err.print()
+                err.print("[dim]# interrupted[/dim]")
             return
 
         err.print("[dim]# REPL  /help · /login · /model · empty line / Ctrl-D to quit[/dim]")
@@ -302,7 +306,14 @@ async def async_main(argv: list[str] | None = None) -> None:
             if state.credential is None:
                 err.print("[yellow]# login first: /login deepseek | /login kimi[/yellow]")
                 continue
-            await _run_once(state, line)
+            try:
+                await _run_once(state, line)
+            except Interrupted:
+                err.print()
+                err.print("[dim]# interrupted[/dim]")
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                err.print()
+                err.print("[dim]# interrupted[/dim]")
     finally:
         await state.client.close()
 
