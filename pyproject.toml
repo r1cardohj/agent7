@@ -1,14 +1,45 @@
 [project]
 name = "agent7"
-version = "0.0.1"
-description = "Minimal coding agent (read/write/bash/grep) for DeepSeek / Kimi"
+version = "0.1.0"
+description = "The simplest coding agent — four tools, one loop, ~1200 lines of Python"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
+authors = [
+    { name = "r1cardohj", email = "2413302357@qq.com" },
+]
+keywords = [
+    "agent",
+    "coding-agent",
+    "cli",
+    "llm",
+    "deepseek",
+    "kimi",
+    "openai-compatible",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Typing :: Typed",
+]
 dependencies = [
     "openai>=1.40.0",
     "rich>=13.0.0",
     "prompt-toolkit>=3.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/r1cardohj/agent7"
+Repository = "https://github.com/r1cardohj/agent7"
+Issues = "https://github.com/r1cardohj/agent7/issues"
 
 [project.scripts]
 agent7 = "agent7.__main__:main"
@@ -19,3 +50,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent7"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/agent7",
+    "/README.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]

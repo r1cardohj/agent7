@@ -18,7 +18,9 @@ agent7/        1252 lines
 ## Install
 
 ```bash
-uv sync
+pip install agent7
+# or: uv tool install agent7
+# or from source: uv sync && uv run agent7
 ```
 
 ## Auth
