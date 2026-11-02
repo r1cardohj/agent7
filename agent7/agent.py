@@ -59,7 +59,7 @@ def _truncate(s: str, limit: int, *, tag: str = "truncated") -> str:
     return s if len(s) <= limit else s[:limit] + f"\n...[{tag} {len(s) - limit} chars]"
 
 def _resolve(cwd: Path, path: str) -> Path:
-    p = Path(path)
+    p = Path(path.removeprefix("@").replace("\\ ", " "))  # tolerate `@path` typed in the REPL
     return p if p.is_absolute() else cwd / p
 
 def tool_read(cwd: Path, path: str, offset: int | None = None, limit: int | None = None) -> str:
@@ -273,7 +273,7 @@ def _usage_from_chunk(chunk: Any) -> dict[str, int] | None:
 
 async def _stream_completion(
     client: AsyncOpenAI, *, model: str, messages: list[dict[str, Any]],
-    on_delta, on_thinking, on_answer_to_thinking,
+    on_delta, on_thinking, on_answer_to_thinking, on_finish=None,
 ) -> tuple[str, list[dict[str, Any]], dict[str, int] | None]:
     kwargs: dict[str, Any] = {
         "model": model, "messages": messages, "tools": TOOLS, "stream": True,
@@ -300,6 +300,8 @@ async def _stream_completion(
                 usage = u
             if not chunk.choices:
                 continue
+            if finish := getattr(chunk.choices[0], "finish_reason", None):
+                await _emit(on_finish, finish)  # "stop" | "length" | "tool_calls" | ...
             delta = chunk.choices[0].delta
             if r := _delta_reasoning(delta):
                 await _emit(on_thinking, r)
@@ -337,7 +339,7 @@ async def run_agent(
     task: str, *, cwd: Path, client: AsyncOpenAI, model: str, max_turns: int = MAX_TURNS,
     messages: list[dict[str, Any]], on_delta=None, on_thinking=None, on_answer_to_thinking=None,
     on_tool=None, on_preview=None, on_usage=None, context_limit: int | None = None,
-    prompt_tokens: int | None = None, on_compact=None,
+    prompt_tokens: int | None = None, on_compact=None, on_finish=None,
 ) -> str:
     cwd = cwd.resolve()
     messages.append({"role": "user", "content": task})
@@ -353,6 +355,7 @@ async def run_agent(
                 content, tool_calls, usage = await _stream_completion(
                     client, model=model, messages=messages, on_delta=on_delta,
                     on_thinking=on_thinking, on_answer_to_thinking=on_answer_to_thinking,
+                    on_finish=on_finish,
                 )
             except Interrupted as e:
                 if e.partial:

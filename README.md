@@ -7,10 +7,10 @@ You give it one sentence; it reads files, edits files, runs commands, then stops
 Built for people who work on one thing at a time — you hold one task in your head, and so does it.
 
 ```
-agent7/        1189 lines
-  __main__.py   296   CLI + REPL
-  agent.py      395   tools + agent loop + compaction
-  commands.py   235   slash commands + model switching
+agent7/        1252 lines
+  __main__.py   355   CLI + REPL + @path completion
+  agent.py      398   tools + agent loop + compaction
+  commands.py   236   slash commands + model switching
   providers.py  161   API key auth
   session.py    101   session state
 ```
@@ -52,8 +52,15 @@ uv run agent7                                    # REPL
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
 Exit with an empty line or Ctrl-D.
 
+Type `@` in the REPL to recursively complete files and directories from the cwd:
+`fix @agent7/agent.py`.
+Tab accepts, directories keep going (`@agent7/` → `@agent7/session.py`), and spaces
+are escaped (`@my\ file.txt`), so the path the model sees is the path it can read.
+
 `--cwd` sets the working directory, `--max-turns` caps the loop (default 30 turns;
-when it runs out you get `(stopped after N turns)`).
+when it runs out you get `# (stopped after N turns)`). A run that ends with no visible
+text never ends silently: you get either `# (stopped after N turns)`,
+`# no text in the reply …` or `# … hit the output token limit …`.
 
 ## Only four tools
 

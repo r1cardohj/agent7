@@ -161,6 +161,7 @@ async def _activate(session: Session, prefer: str | None = None) -> CommandResul
 def cmd_help(session: Session, args: list[str]) -> CommandResult:
     lines = ["commands:"] + [f"  /{n:<12} {h}" for n, h in list_commands()]
     lines.append(f"current: model={session.model_ref or session.model}  cwd={session.cwd}")
+    lines.append("tip: type @ in the prompt to complete a file path")
     return CommandResult(message="\n".join(lines))
 
 @command("model", help="list/switch models  (/model | /model <ref> | /model refresh)")

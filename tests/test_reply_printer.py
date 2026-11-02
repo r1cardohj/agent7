@@ -48,6 +48,11 @@ class ReplyPrinterPreviewTests(unittest.TestCase):
         self.assertNotIn("pondering", self.out())
         self.assertFalse(self.rp._thinking_open)
 
+    def test_whitespace_only_answer_prints_nothing(self) -> None:
+        with self.rp as rp:
+            rp.on_delta("\n  \n")
+        self.assertEqual(self.out(), "")
+
     def test_preview_does_not_emit_markdown_answer(self) -> None:
         self.rp.on_delta("some streamed answer text")
         self.rp.on_preview("x.txt  +1 -1")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -65,7 +66,7 @@ class ReplyPrinter:
         text = "".join(self.buf)
         self.buf.clear()
         self._chars = 0
-        if text:
+        if text.strip():
             console.print()
             console.print(Markdown(text))
             console.print()
@@ -147,13 +148,55 @@ class ReplyPrinter:
             head.right_crop(1)
         err.print(head)
 
-class SlashCompleter(Completer):
+_AT_PATH = re.compile(r"(?<![A-Za-z0-9_.\-/@])@((?:\\ |[^\s@])*)$")
+
+def at_path_prefix(text: str) -> str | None:
+    """The path fragment after an '@' that starts the current word ('@' -> '')."""
+    m = _AT_PATH.search(text)
+    return m.group(1) if m else None
+
+def path_completions(cwd: Path, text: str) -> list[Completion]:
+    """Complete files/dirs as `@path` for the word being typed at the end of text."""
+    fragment = at_path_prefix(text)
+    if fragment is None:
+        return []
+    raw = os.path.expanduser(fragment.replace("\\ ", " "))
+    head, _, prefix = raw.rpartition("/")
+    target = Path(head) if head else Path()
+    if not target.is_absolute():
+        target = cwd / target
+    entries: list[tuple[Path, str]] = []
+    show_hidden = prefix.startswith(".")
+    for root, dirs, files in os.walk(target):
+        if not show_hidden:
+            dirs[:] = [name for name in dirs if not name.startswith(".")]
+        for name in dirs + files:
+            if (name.startswith(".") and not show_hidden) or not name.startswith(prefix):
+                continue
+            p = Path(root) / name
+            entries.append((p, p.relative_to(target).as_posix()))
+    entries.sort(key=lambda entry: (not entry[0].is_dir(), entry[1].lower()))
+    out = []
+    for p, path in entries:
+        is_dir = p.is_dir()
+        rel = f"{head}/{path}" if head else path
+        out.append(Completion(
+            (rel + "/" if is_dir else rel).replace(" ", "\\ "),
+            start_position=-len(fragment),
+            display=path + ("/" if is_dir else ""),
+        ))
+    return out
+
+class ReplCompleter(Completer):
+    """Slash commands, plus `@path` file completion from the cwd."""
+
     def __init__(self, session: Session) -> None:
         self.session = session
 
     def get_completions(self, document: Document, complete_event: CompleteEvent):
         text = document.text_before_cursor
         if not text.startswith("/"):
+            yield from path_completions(self.session.cwd, text)
             return
         parts = text[1:].split(" ", 1)
         cmd = parts[0].lower()
@@ -174,9 +217,22 @@ class SlashCompleter(Completer):
                     if mid.startswith(prefix.lower()):
                         yield Completion(mid, start_position=-len(prefix), display=mid)
 
+NO_TEXT_NOTICE = "no text in the reply — the model stopped without content (retry, or /model)"
+TRUNCATED_NOTICE = "no text in the reply — the model hit the output token limit (retry with a smaller step)"
+STOPPED_PREFIX = "(stopped after "
+
+def reply_notice(answer: str, finish_reason: str | None = None) -> str | None:
+    """Dim note for a run that produced nothing visible on screen."""
+    if answer.startswith(STOPPED_PREFIX):  # "ran out of turns" is itself the message
+        return answer
+    if answer.strip():
+        return None
+    return TRUNCATED_NOTICE if finish_reason == "length" else NO_TEXT_NOTICE
+
 async def _run_once(session: Session, task: str) -> str:
+    finish: list[str] = []
     with ReplyPrinter() as rp:
-        return await run_agent(
+        answer = await run_agent(
             task, cwd=session.cwd, client=session.client, model=session.model,
             max_turns=session.max_turns, messages=session.messages,
             on_delta=rp.on_delta, on_thinking=rp.on_thinking,
@@ -184,7 +240,12 @@ async def _run_once(session: Session, task: str) -> str:
             on_preview=rp.on_preview, on_usage=session.update_usage,
             context_limit=session.context_limit, prompt_tokens=session.prompt_tokens,
             on_compact=lambda n: err.print(f"[dim]# compacted {n} message(s)[/dim]"),
+            on_finish=finish.append,
         )
+    # never leave a tool call as the last thing on screen
+    if notice := reply_notice(answer, finish[-1] if finish else None):
+        err.print(f"[dim]# {notice}[/dim]")
+    return answer
 
 async def async_main(argv: list[str] | None = None) -> None:
     _force_utf8_stdio()
@@ -248,7 +309,7 @@ async def async_main(argv: list[str] | None = None) -> None:
             except Interrupted:
                 err.print("\n[dim]# interrupted[/dim]")
             return
-        err.print("[dim]# REPL  /help · /login · /model · empty line / Ctrl-D to quit[/dim]")
+        err.print("[dim]# REPL  /help · /login · /model · @file · empty line / Ctrl-D to quit[/dim]")
         if not all_creds:
             err.print("[dim]# no credentials — /login deepseek | /login kimi[/dim]")
 
@@ -261,7 +322,7 @@ async def async_main(argv: list[str] | None = None) -> None:
 
         prompt = PromptSession(
             history=InMemoryHistory(),
-            completer=SlashCompleter(state),
+            completer=ReplCompleter(state),
             complete_while_typing=True,
             editing_mode=EditingMode.VI,
             rprompt=_vi_rprompt,
