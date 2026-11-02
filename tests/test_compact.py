@@ -1,6 +1,6 @@
 import unittest
 
-from agent7.compact import KEEP_TOOL_RESULTS, compact_messages, should_compact
+from agent7.agent import KEEP_TOOL_RESULTS, compact_messages, should_compact
 
 
 def tool_history(tool_count: int, *, chars: int = 3_000) -> list[dict]:

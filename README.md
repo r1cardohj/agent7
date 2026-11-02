@@ -35,14 +35,10 @@ uv run agent7 "create hello.py that prints hi"
 uv run agent7   # REPL — /help /login /model /status /compact
 ```
 
-Writes display a unified diff before changing the file. The `write` tool can
-replace a unique text span with `old_string`, using the same preview and write
-path as whole-file writes.
+Writes show a `path  +N -M` line (green/red counts). `write(old_string=...)` replaces one unique span.
 
-Tool output is budgeted by default: `read` returns 200 lines per call and prints a
-`continue with offset=N` hint, while `bash` / `grep` keep only ~12k chars (grep: 100
-lines) so a noisy command cannot fill the context.
+Tool output is budgeted: `read` ~200 lines/call with `offset=` hints; `bash`/`grep` ~12k chars (grep: 100 lines).
 
-At ~75% context usage, old tool/assistant text is auto-shrunk (last 3 user turns kept). One-shot loops also keep the last 4 tool results intact, so old output can shrink without another user turn. `/compact` runs that pass manually.
+At ~75% context usage, old tool/assistant text is auto-shrunk (last 3 user turns; one-shot loops keep last 4 tool results). `/compact` runs that pass manually.
 
 No sandbox — tools run as your user.

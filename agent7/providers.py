@@ -12,7 +12,6 @@ from openai import AsyncOpenAI
 
 BaseFn = Callable[[list[str]], str]
 
-
 def _auth_path() -> Path:
     home = os.environ.get("AGENT7_HOME", "").strip()
     if home:
@@ -21,10 +20,7 @@ def _auth_path() -> Path:
     root = Path(xdg).expanduser() / "agent7" if xdg else Path.home() / ".config" / "agent7"
     return root / "auth.json"
 
-
-def agent7_auth_path() -> Path:
-    return _auth_path()
-
+agent7_auth_path = _auth_path
 
 def load_auth() -> dict[str, Any]:
     path = _auth_path()
@@ -35,7 +31,6 @@ def load_auth() -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
-
 
 def _save(data: dict[str, Any]) -> Path:
     path = _auth_path()
@@ -53,47 +48,26 @@ def _save(data: dict[str, Any]) -> Path:
         pass
     return path
 
-
 @dataclass
 class Credential:
     api_key: str
     base_url: str
-    source: str  # env | agent7 | login
-
+    source: str
 
 @dataclass
 class ApiKeyProvider:
     id: str
-    name: str
     aliases: tuple[str, ...]
     env_keys: tuple[str, ...]
     default_base: str
     prompt: str
-    # Optional: map login args → base URL (e.g. kimi `global`).
     base_from_args: BaseFn | None = None
 
     def resolve(self) -> Credential | None:
-        base_override = os.environ.get("AGENT7_BASE_URL", "").strip() or None
+        base = os.environ.get("AGENT7_BASE_URL", "").strip() or self.default_base
         for env in self.env_keys:
-            key = os.environ.get(env, "").strip()
-            if key:
-                return Credential(key, base_override or self.default_base, "env")
-
-        # AGENT7_API_KEY only when base_url clearly belongs to this provider,
-        # or (deepseek) when unset.
-        agent7 = os.environ.get("AGENT7_API_KEY", "").strip()
-        if agent7:
-            if base_override and self.id in base_override.replace(".", "-"):
-                return Credential(agent7, base_override, "env")
-            if self.id == "deepseek" and (not base_override or "deepseek" in base_override):
-                return Credential(agent7, base_override or self.default_base, "env")
-            if self.id == "kimi-coding" and base_override and (
-                "kimi.com" in base_override or "kimi.ai" in base_override
-            ):
-                return Credential(agent7, base_override, "env")
-            if self.id == "moonshot" and base_override and "moonshot" in base_override:
-                return Credential(agent7, base_override, "env")
-
+            if key := os.environ.get(env, "").strip():
+                return Credential(key, base, "env")
         entry = load_auth().get(self.id)
         if isinstance(entry, dict) and entry.get("type") != "oauth":
             key = entry.get("key")
@@ -102,17 +76,10 @@ class ApiKeyProvider:
                 return Credential(key.strip(), bu, "agent7")
         return None
 
-    async def login(
-        self,
-        *,
-        args: list[str],
-        prompt_secret: Any,
-        on_status: Any | None = None,
-    ) -> Credential:
-        key = prompt_secret(self.prompt)
+    async def login(self, *, args: list[str], prompt_secret: Any, on_status: Any | None = None) -> Credential:
+        key = (prompt_secret(self.prompt) or "").strip()
         if not key:
             raise ValueError("cancelled — empty key")
-        key = key.strip()
         base = self.base_from_args(args) if self.base_from_args else self.default_base
         data = load_auth()
         data[self.id] = {"type": "api_key", "key": key, "baseUrl": base}
@@ -141,71 +108,40 @@ class ApiKeyProvider:
     def make_client(self, cred: Credential) -> AsyncOpenAI:
         return AsyncOpenAI(api_key=cred.api_key, base_url=cred.base_url)
 
-
 def _kimi_base(args: list[str]) -> str:
+    if override := os.environ.get("KIMI_CODE_BASE_URL", "").strip():
+        return override
     region = os.environ.get("KIMI_CODE_REGION", "").strip().lower()
     global_ = any(a.lower() in ("global", "overseas", "ai") for a in args) or region in (
-        "global",
-        "overseas",
-        "ai",
-        "kimi.ai",
+        "global", "overseas", "ai", "kimi.ai",
     )
-    override = os.environ.get("KIMI_CODE_BASE_URL", "").strip()
-    if override:
-        return override
     return "https://api.kimi.ai/coding/v1" if global_ else "https://api.kimi.com/coding/v1"
 
-
-_BUILTINS: list[ApiKeyProvider] = [
-    ApiKeyProvider(
-        id="deepseek",
-        name="DeepSeek",
-        aliases=("ds",),
-        env_keys=("DEEPSEEK_API_KEY",),
-        default_base="https://api.deepseek.com",
-        prompt="DeepSeek API key",
-    ),
-    ApiKeyProvider(
-        id="kimi-coding",
-        name="Kimi Code",
-        aliases=("kimi", "kimi-code"),
-        env_keys=("KIMI_API_KEY",),
-        default_base="https://api.kimi.com/coding/v1",
-        prompt="Kimi Code API token",
-        base_from_args=_kimi_base,
-    ),
-    ApiKeyProvider(
-        id="moonshot",
-        name="Moonshot",
-        aliases=("kimi-key",),
-        env_keys=("MOONSHOT_API_KEY",),
-        default_base="https://api.moonshot.cn/v1",
-        prompt="Moonshot API key",
-    ),
+_BUILTINS = [
+    ApiKeyProvider("deepseek", ("ds",), ("DEEPSEEK_API_KEY",),
+                   "https://api.deepseek.com", "DeepSeek API key"),
+    ApiKeyProvider("kimi-coding", ("kimi", "kimi-code"), ("KIMI_API_KEY",),
+                   "https://api.kimi.com/coding/v1", "Kimi Code API token", _kimi_base),
+    ApiKeyProvider("moonshot", ("kimi-key",), ("MOONSHOT_API_KEY",),
+                   "https://api.moonshot.cn/v1", "Moonshot API key"),
 ]
-
 _REGISTRY: dict[str, ApiKeyProvider] = {}
 for _p in _BUILTINS:
     _REGISTRY[_p.id] = _p
     for _a in _p.aliases:
         _REGISTRY[_a] = _p
 
-
 def get_provider(name: str) -> ApiKeyProvider | None:
     return _REGISTRY.get(name.lower().replace("_", "-"))
-
 
 def list_providers() -> list[ApiKeyProvider]:
     return list(_BUILTINS)
 
-
 def resolve_all() -> dict[str, Credential]:
     return {p.id: c for p in _BUILTINS if (c := p.resolve())}
 
-
 def resolve_default() -> tuple[ApiKeyProvider, Credential] | None:
-    data = load_auth()
-    active = data.get("active")
+    active = load_auth().get("active")
     if isinstance(active, str):
         p = get_provider(active)
         if p and (c := p.resolve()):
@@ -215,18 +151,11 @@ def resolve_default() -> tuple[ApiKeyProvider, Credential] | None:
             return p, c
     return None
 
-
 def describe_found() -> list[tuple[str, str]]:
     active = load_auth().get("active")
-    rows: list[tuple[str, str]] = []
-    for p in _BUILTINS:
-        c = p.resolve()
-        if not c:
-            continue
-        mark = "*" if active == p.id else " "
-        rows.append((f"{mark} {p.id}", c.source))
-    return rows
+    return [
+        (f"{'*' if active == p.id else ' '} {p.id}", c.source)
+        for p in _BUILTINS if (c := p.resolve())
+    ]
 
-
-# Back-compat alias used by type hints elsewhere.
 Provider = ApiKeyProvider

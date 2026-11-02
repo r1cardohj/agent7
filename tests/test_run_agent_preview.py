@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -112,10 +111,7 @@ class RunAgentPreviewTests(unittest.TestCase):
 
         self.assertEqual(answer, "done")
         self.assertEqual(self.target.read_text(), "value = 'new'\n")
-        self.assertEqual(len(previews), 1)
-        self.assertIn("-value = 'old'", previews[0])
-        self.assertIn("+value = 'new'", previews[0])
-        # preview arrives before the tool result is reported, and the result is the write summary
+        self.assertEqual(previews, [f"{self.target.resolve()}  +1 -1"])
         self.assertEqual(len(seen_tools), 1)
         self.assertEqual(seen_tools[0][1], "write")
         self.assertTrue(seen_tools[0][3].startswith("wrote "))
@@ -163,10 +159,7 @@ class RunAgentPreviewTests(unittest.TestCase):
 
         self.assertEqual(answer, "ok")
         self.assertEqual((self.cwd / "fresh.txt").read_text(), "one\ntwo\n")
-        self.assertEqual(len(previews), 1)
-        self.assertTrue(previews[0].startswith(f"{os.path.realpath(self.cwd / 'fresh.txt')}  +2 -0"))
-        self.assertIn("+one", previews[0])
-        self.assertIn("+two", previews[0])
+        self.assertEqual(previews, [f"{(self.cwd / 'fresh.txt').resolve()}  +2 -0"])
 
     def test_noop_write_reports_no_changes_without_preview(self) -> None:
         previews: list[str] = []

@@ -1,4 +1,4 @@
-"""Tests for ReplyPrinter.on_preview (stderr rendering of the write diff)."""
+"""Tests for ReplyPrinter.on_preview (write +/− stats line)."""
 
 import io
 import unittest
@@ -21,50 +21,37 @@ class ReplyPrinterPreviewTests(unittest.TestCase):
     def out(self) -> str:
         return self.stream.getvalue()
 
-    def test_prints_header_and_diff_verbatim(self) -> None:
-        diff = "a.py  +1 -1\n@@ -1 +1 @@\n-[a] {b}\n+[c] {d}\n"
-
-        self.rp.on_preview(diff)
-
+    def test_prints_stats_header(self) -> None:
+        self.rp.on_preview("a.py  +1 -1")
         text = self.out()
         self.assertIn("# write", text)
         self.assertIn("a.py", text)
-        self.assertIn("-[a] {b}", text)
-        self.assertIn("+[c] {d}", text)
+        self.assertIn("+1", text)
+        self.assertIn("-1", text)
 
-    def test_header_shows_add_and_del_counts(self) -> None:
-        self.rp.on_preview("cfg.txt  +2 -3\n@@ ...\n")
-
+    def test_ignores_extra_lines(self) -> None:
+        self.rp.on_preview("cfg.txt  +2 -3\n@@ ignored\n+body")
         text = self.out()
-        self.assertIn("# write", text)
-        self.assertIn("cfg.txt", text)
         self.assertIn("+2", text)
-        self.assertIn("-3", text)
+        self.assertNotIn("@@", text)
+        self.assertNotIn("+body", text)
 
     def test_empty_diff_prints_nothing(self) -> None:
         self.rp.on_preview("")
-
         self.assertEqual(self.out(), "")
 
     def test_closes_open_thinking_block_first(self) -> None:
         self.rp.on_thinking("pondering")
         self.assertTrue(self.rp._thinking_open)
-
-        self.rp.on_preview("x.txt  +1 -0\n@@ ...\n")
-
-        text = self.out()
-        self.assertIn("# write", text)
-        # thinking is a status-line spinner, not dumped into the preview stream
-        self.assertNotIn("pondering", text)
+        self.rp.on_preview("x.txt  +1 -0")
+        self.assertIn("# write", self.out())
+        self.assertNotIn("pondering", self.out())
         self.assertFalse(self.rp._thinking_open)
 
     def test_preview_does_not_emit_markdown_answer(self) -> None:
         self.rp.on_delta("some streamed answer text")
-
-        self.rp.on_preview("x.txt  +1 -1\n@@ ...\n")
-
+        self.rp.on_preview("x.txt  +1 -1")
         self.assertEqual(self.rp.buf, ["some streamed answer text"])
-        # the buffered reply is only rendered on __exit__, never inside the preview
         self.assertNotIn("some streamed answer text", self.out())
 
 

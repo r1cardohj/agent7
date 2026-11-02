@@ -31,12 +31,7 @@ class WriteToolTests(unittest.TestCase):
         self.assertTrue(result.startswith("wrote "))
         self.assertEqual((self.cwd / "nested/hello.py").read_text(), "print('hi')\n")
         self.assertEqual(len(previews), 1)
-        self.assertTrue(previews[0].startswith(f"{self.cwd / 'nested/hello.py'}  +1 -0"))
-        self.assertIn("@@", previews[0])
-        self.assertIn("+print('hi')", previews[0])
-        # --- / +++ file headers are skipped; the summary line names the file
-        self.assertNotIn("--- ", previews[0])
-        self.assertNotIn("+++ ", previews[0])
+        self.assertEqual(previews[0], f"{self.cwd / 'nested/hello.py'}  +1 -0")
 
     def test_old_string_replaces_one_unique_span(self) -> None:
         path = self.cwd / "hello.py"
@@ -56,9 +51,7 @@ class WriteToolTests(unittest.TestCase):
 
         self.assertTrue(result.startswith("wrote "))
         self.assertEqual(path.read_text(), "def hello():\n    return 'new'\n")
-        self.assertEqual(len(previews), 1)
-        self.assertIn("-    return 'old'", previews[0])
-        self.assertIn("+    return 'new'", previews[0])
+        self.assertEqual(previews, [f"{path}  +1 -1"])
 
     def test_old_string_must_be_unique(self) -> None:
         path = self.cwd / "hello.txt"

@@ -27,8 +27,7 @@ from .commands import dispatch, fetch_models, known_names, switch_model
 from .providers import get_provider, resolve_all, resolve_default
 from .session import Session, format_context_prompt
 
-console = Console(stderr=False)
-err = Console(stderr=True)
+console, err = Console(stderr=False), Console(stderr=True)
 _THINK_FRAMES = ("thinking   ", "thinking.  ", "thinking.. ", "thinking...")
 
 def _load_dotenv(path: Path = Path(".env")) -> None:
@@ -41,7 +40,6 @@ def _load_dotenv(path: Path = Path(".env")) -> None:
         key, _, val = line.partition("=")
         os.environ.setdefault(key.strip(), val.strip().strip("'").strip('"'))
 
-
 def _force_utf8_stdio() -> None:
     for stream in (sys.stdin, sys.stdout, sys.stderr):
         try:
@@ -50,10 +48,7 @@ def _force_utf8_stdio() -> None:
             pass
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
-
 class ReplyPrinter:
-    """Buffer streamed answer tokens; show a char counter; render Markdown once."""
-
     def __init__(self) -> None:
         self.buf: list[str] = []
         self._chars = 0
@@ -70,11 +65,10 @@ class ReplyPrinter:
         text = "".join(self.buf)
         self.buf.clear()
         self._chars = 0
-        if not text:
-            return
-        console.print()
-        console.print(Markdown(text))
-        console.print()
+        if text:
+            console.print()
+            console.print(Markdown(text))
+            console.print()
 
     def _clear_status_line(self) -> None:
         if err.is_terminal:
@@ -82,16 +76,14 @@ class ReplyPrinter:
             sys.stderr.flush()
 
     def _close_thinking(self) -> None:
-        if not self._thinking_open:
-            return
-        self._clear_status_line()
-        self._thinking_open = False
+        if self._thinking_open:
+            self._clear_status_line()
+            self._thinking_open = False
 
     def _clear_counter(self) -> None:
-        if not self._counting:
-            return
-        self._clear_status_line()
-        self._counting = False
+        if self._counting:
+            self._clear_status_line()
+            self._counting = False
 
     def _show_counter(self) -> None:
         if not err.is_terminal:
@@ -106,19 +98,15 @@ class ReplyPrinter:
             return
         self._clear_counter()
         if not self._thinking_open:
-            self._thinking_open = True
-            self._thinking_t0 = time.monotonic()
-        if not err.is_terminal:
-            return
-        frame = int((time.monotonic() - self._thinking_t0) / 0.4) % len(_THINK_FRAMES)
-        sys.stderr.write(f"\r\033[K  {_THINK_FRAMES[frame]}")
-        sys.stderr.flush()
+            self._thinking_open, self._thinking_t0 = True, time.monotonic()
+        if err.is_terminal:
+            frame = int((time.monotonic() - self._thinking_t0) / 0.4) % len(_THINK_FRAMES)
+            sys.stderr.write(f"\r\033[K  {_THINK_FRAMES[frame]}")
+            sys.stderr.flush()
 
     def on_answer_to_thinking(self) -> None:
         if not self.buf:
             return
-        # Discard streamed answer text that arrived before tool calls —
-        # only keep the thinking spinner, not the content.
         self.buf.clear()
         self._chars = 0
         self._clear_counter()
@@ -134,7 +122,6 @@ class ReplyPrinter:
         self._clear_counter()
         self.buf.clear()
         self._chars = 0
-        summary = tool_summary(name, args)
         ok = not result.startswith("error:")
         mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
         meta = ""
@@ -142,43 +129,23 @@ class ReplyPrinter:
             code = result.split("\n", 1)[0].removeprefix("exit=")
             color = "green" if code == "0" else "yellow"
             meta = f"  [{color}]exit={code}[/{color}]"
-        err.print(f"  {mark} [bold]{name:<5}[/bold] [dim]{summary}[/dim]{meta}")
+        err.print(f"  {mark} [bold]{name:<5}[/bold] [dim]{tool_summary(name, args)}[/dim]{meta}")
 
-    def on_preview(self, diff: str) -> None:
+    def on_preview(self, stats: str) -> None:
         self._close_thinking()
         self._clear_counter()
-        lines = diff.splitlines()
-        if not lines:
+        line = (stats.splitlines() or [""])[0]
+        if not line:
             return
+        path, _, rest = line.rpartition("  ")
         head = Text("# write  ", style="dim")
-        # first line is `path  +N -M`
-        path, _, stats = lines[0].rpartition("  ")
-        if path and stats.startswith("+"):
-            head.append(path, style="dim")
+        head.append(path or line, style="dim")
+        if path and rest.startswith("+"):
             head.append("  ")
-            for part in stats.split(" "):
-                if part.startswith("+"):
-                    head.append(part, style="green bold")
-                elif part.startswith("-"):
-                    head.append(part, style="red bold")
-                else:
-                    head.append(part, style="dim")
-                head.append(" ")
-            if head.plain.endswith(" "):
-                head.right_crop(1)
-        else:
-            head.append(lines[0], style="dim")
+            for part in rest.split():
+                head.append(part + " ", style="green bold" if part[0] == "+" else "red bold")
+            head.right_crop(1)
         err.print(head)
-        for line in lines[1:]:
-            if line.startswith("@@"):
-                err.print(Text(line, style="cyan"))
-            elif line.startswith("+"):
-                err.print(Text(line, style="green"))
-            elif line.startswith("-"):
-                err.print(Text(line, style="red"))
-            else:
-                err.print(Text(line, style="dim"))
-
 
 class SlashCompleter(Completer):
     def __init__(self, session: Session) -> None:
@@ -200,41 +167,24 @@ class SlashCompleter(Completer):
             if cmd == "model":
                 for mid in self.session.models_cache or []:
                     bare = mid.partition("/")[2]
-                    if (
-                        mid.startswith(prefix)
-                        or bare.startswith(prefix)
-                        or prefix.lower() in mid.lower()
-                    ):
+                    if mid.startswith(prefix) or bare.startswith(prefix) or prefix.lower() in mid.lower():
                         yield Completion(mid, start_position=-len(prefix), display=mid)
             elif cmd in ("login", "logout"):
                 for mid in ("deepseek", "kimi", "moonshot", "global"):
                     if mid.startswith(prefix.lower()):
                         yield Completion(mid, start_position=-len(prefix), display=mid)
 
-
 async def _run_once(session: Session, task: str) -> str:
-    def _on_compact(n: int) -> None:
-        err.print(f"[dim]# compacted {n} message(s)[/dim]")
-
     with ReplyPrinter() as rp:
         return await run_agent(
-            task,
-            cwd=session.cwd,
-            client=session.client,
-            model=session.model,
-            max_turns=session.max_turns,
-            messages=session.messages,
-            on_delta=rp.on_delta,
-            on_thinking=rp.on_thinking,
-            on_answer_to_thinking=rp.on_answer_to_thinking,
-            on_tool=rp.on_tool,
-            on_preview=rp.on_preview,
-            on_usage=session.update_usage,
-            context_limit=session.context_limit,
-            prompt_tokens=session.prompt_tokens,
-            on_compact=_on_compact,
+            task, cwd=session.cwd, client=session.client, model=session.model,
+            max_turns=session.max_turns, messages=session.messages,
+            on_delta=rp.on_delta, on_thinking=rp.on_thinking,
+            on_answer_to_thinking=rp.on_answer_to_thinking, on_tool=rp.on_tool,
+            on_preview=rp.on_preview, on_usage=session.update_usage,
+            context_limit=session.context_limit, prompt_tokens=session.prompt_tokens,
+            on_compact=lambda n: err.print(f"[dim]# compacted {n} message(s)[/dim]"),
         )
-
 
 async def async_main(argv: list[str] | None = None) -> None:
     _force_utf8_stdio()
@@ -245,7 +195,6 @@ async def async_main(argv: list[str] | None = None) -> None:
     p.add_argument("--max-turns", type=int, default=30)
     args = p.parse_args(argv)
     task = " ".join(args.task).strip() or None
-
     cwd = (args.cwd or Path.cwd()).resolve()
     model = os.environ.get("AGENT7_MODEL") or ""
 
@@ -255,33 +204,22 @@ async def async_main(argv: list[str] | None = None) -> None:
         pid = next(iter(all_creds))
         prov = get_provider(pid)
         picked = (prov, all_creds[pid]) if prov else None
-
-    if picked is not None:
+    if picked:
         prov, cred = picked
         client = prov.make_client(cred)
     else:
         client = AsyncOpenAI(api_key="missing", base_url="https://api.deepseek.com")
         if task:
-            print(
-                "No credentials. Set DEEPSEEK_API_KEY / KIMI_API_KEY / MOONSHOT_API_KEY,\n"
-                "or run `uv run agent7` and `/login deepseek` / `/login kimi`.",
-                file=sys.stderr,
-            )
+            print("No credentials. Set DEEPSEEK_API_KEY / KIMI_API_KEY / MOONSHOT_API_KEY,\n"
+                  "or run `uv run agent7` and `/login`.", file=sys.stderr)
             sys.exit(1)
         prov, cred = None, None
-
     state = Session(
-        model=model or "pending",
-        cwd=cwd,
-        client=client,
-        max_turns=args.max_turns,
+        model=model or "pending", cwd=cwd, client=client, max_turns=args.max_turns,
         messages=[{"role": "system", "content": SYSTEM}],
-        provider_id=prov.id if prov else None,
-        cred_source=cred.source if cred else None,
-        credential=cred,
-        credentials=dict(all_creds),
+        provider_id=prov.id if prov else None, cred_source=cred.source if cred else None,
+        credential=cred, credentials=dict(all_creds),
     )
-
     try:
         ids: list[str] = []
         if all_creds:
@@ -291,48 +229,35 @@ async def async_main(argv: list[str] | None = None) -> None:
                 err.print(f"[dim]# models fetch failed: {e}[/dim]")
         if model:
             result = await switch_model(state, model)
-            if result.message.startswith("unknown") or result.message.startswith("ambiguous"):
+            if result.message.startswith(("unknown", "ambiguous")):
                 err.print(f"[dim]# {result.message}[/dim]")
                 if ids:
                     await switch_model(state, ids[0])
                 else:
                     state.set_model(model)
-        elif not state.model or state.model == "pending":
+        elif state.model in ("", "pending"):
             if ids:
                 await switch_model(state, ids[0])
             else:
                 state.set_model("deepseek-chat")
-        providers = ",".join(state.credentials) or "none"
-        err.print(
-            f"[dim]# agent7  model={state.model_ref or state.model}  "
-            f"providers=[{providers}]  cwd={state.cwd}[/dim]"
-        )
-
+        err.print(f"[dim]# agent7  model={state.model_ref or state.model}  "
+                  f"providers=[{','.join(state.credentials) or 'none'}]  cwd={state.cwd}[/dim]")
         if task:
             try:
                 await _run_once(state, task)
             except Interrupted:
-                err.print()
-                err.print("[dim]# interrupted[/dim]")
+                err.print("\n[dim]# interrupted[/dim]")
             return
-
         err.print("[dim]# REPL  /help · /login · /model · empty line / Ctrl-D to quit[/dim]")
         if not all_creds:
-            err.print("[dim]# no credentials yet — /login deepseek | /login kimi[/dim]")
-        if ids:
-            err.print(f"[dim]# {len(ids)} models across {len(state.credentials)} provider(s)[/dim]")
-        def _vi_rprompt() -> HTML | str:
-            # prompt_toolkit: vi_state.input_mode — INSERT / NAVIGATION / REPLACE…
+            err.print("[dim]# no credentials — /login deepseek | /login kimi[/dim]")
+
+        def _vi_rprompt() -> HTML:
             mode = get_app().vi_state.input_mode
-            if mode in (InputMode.INSERT, InputMode.INSERT_MULTIPLE):
-                label, color = "INSERT", "ansigreen"
-            elif mode == InputMode.NAVIGATION:
-                label, color = "NORMAL", "ansiyellow"
-            elif mode in (InputMode.REPLACE, InputMode.REPLACE_SINGLE):
-                label, color = "REPLACE", "ansired"
-            else:
-                label, color = str(mode), "ansibrightblack"
-            return HTML(f"<style fg=\"{color}\">-- {label} --</style>")
+            label, color = ("INSERT", "ansigreen") if mode in (InputMode.INSERT, InputMode.INSERT_MULTIPLE) else (
+                ("NORMAL", "ansiyellow") if mode == InputMode.NAVIGATION else ("REPLACE", "ansired")
+            )
+            return HTML(f'<style fg="{color}">-- {label} --</style>')
 
         prompt = PromptSession(
             history=InMemoryHistory(),
@@ -341,13 +266,9 @@ async def async_main(argv: list[str] | None = None) -> None:
             editing_mode=EditingMode.VI,
             rprompt=_vi_rprompt,
         )
-
-        def _repl_prompt() -> str:
-            return f"{format_context_prompt(state)} > "
-
         while True:
             try:
-                line = (await prompt.prompt_async(_repl_prompt)).strip()
+                line = (await prompt.prompt_async(lambda: f"{format_context_prompt(state)} > ")).strip()
             except (EOFError, KeyboardInterrupt):
                 print(file=sys.stderr)
                 break
@@ -363,19 +284,13 @@ async def async_main(argv: list[str] | None = None) -> None:
                 continue
             try:
                 await _run_once(state, line)
-            except Interrupted:
-                err.print()
-                err.print("[dim]# interrupted[/dim]")
-            except (asyncio.CancelledError, KeyboardInterrupt):
-                err.print()
-                err.print("[dim]# interrupted[/dim]")
+            except (Interrupted, asyncio.CancelledError, KeyboardInterrupt):
+                err.print("\n[dim]# interrupted[/dim]")
     finally:
         await state.client.close()
 
-
 def main(argv: list[str] | None = None) -> None:
     asyncio.run(async_main(argv))
-
 
 if __name__ == "__main__":
     main()
