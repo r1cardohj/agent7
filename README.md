@@ -32,7 +32,9 @@ export DEEPSEEK_API_KEY=sk-...
 
 ```bash
 uv run agent7 "create hello.py that prints hi"
-uv run agent7   # REPL — /help /login /model /status
+uv run agent7   # REPL — /help /login /model /status /compact
 ```
+
+At ~75% context usage, old tool/assistant text is auto-shrunk (last 3 user turns kept). `/compact` runs that pass manually.
 
 No sandbox — tools run as your user.

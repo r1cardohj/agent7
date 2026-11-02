@@ -377,12 +377,24 @@ async def run_agent(
     on_answer_to_thinking: Callable[[], Any] | None = None,
     on_tool: OnTool | None = None,
     on_usage: OnUsage | None = None,
+    context_limit: int | None = None,
+    prompt_tokens: int | None = None,
+    on_compact: Callable[[int], Any] | None = None,
 ) -> str:
+    from .compact import compact_messages, should_compact
+
     cwd = cwd.resolve()
     messages.append({"role": "user", "content": task})
+    last_prompt = prompt_tokens
 
     try:
         for turn in range(1, max_turns + 1):
+            if should_compact(last_prompt, context_limit):
+                new_msgs, n = compact_messages(messages)
+                if n:
+                    messages[:] = new_msgs
+                    await _emit(on_compact, n)
+
             try:
                 content, tool_calls, usage = await _stream_completion(
                     client,
@@ -399,6 +411,7 @@ async def run_agent(
 
             if usage:
                 await _emit(on_usage, usage)
+                last_prompt = usage.get("prompt_tokens", last_prompt)
             assistant: dict[str, Any] = {"role": "assistant", "content": content}
             if tool_calls:
                 assistant["tool_calls"] = tool_calls

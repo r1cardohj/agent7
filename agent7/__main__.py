@@ -184,6 +184,9 @@ class SlashCompleter(Completer):
 
 
 async def _run_once(session: Session, task: str) -> str:
+    def _on_compact(n: int) -> None:
+        err.print(f"[dim]# compacted {n} message(s)[/dim]")
+
     with ReplyPrinter() as rp:
         return await run_agent(
             task,
@@ -197,6 +200,9 @@ async def _run_once(session: Session, task: str) -> str:
             on_answer_to_thinking=rp.on_answer_to_thinking,
             on_tool=rp.on_tool,
             on_usage=session.update_usage,
+            context_limit=session.context_limit,
+            prompt_tokens=session.prompt_tokens,
+            on_compact=_on_compact,
         )
 
 

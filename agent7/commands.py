@@ -252,6 +252,17 @@ async def cmd_login(session: Session, args: list[str]) -> CommandResult:
     return CommandResult(message=f"logged in {target.id}\n{result.message}")
 
 
+@command("compact", help="shrink old tool/assistant text in history")
+def cmd_compact(session: Session, args: list[str]) -> CommandResult:
+    from .compact import compact_messages
+
+    new_msgs, n = compact_messages(session.messages)
+    session.messages[:] = new_msgs
+    if not n:
+        return CommandResult(message="compact: nothing to shrink (history short or already small)")
+    return CommandResult(message=f"compact: shrunk {n} message(s); recent turns kept intact")
+
+
 @command("logout", help="clear saved key  (/logout deepseek|kimi|moonshot)")
 def cmd_logout(session: Session, args: list[str]) -> CommandResult:
     if not args:
