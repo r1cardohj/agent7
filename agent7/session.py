@@ -10,7 +10,8 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-# Hardcoded — DeepSeek /models has no context_length field.
+from .providers import Credential, Provider, get_provider
+
 _KNOWN_CONTEXT: dict[str, int] = {
     "deepseek-chat": 128_000,
     "deepseek-reasoner": 128_000,
@@ -18,6 +19,12 @@ _KNOWN_CONTEXT: dict[str, int] = {
     "deepseek-v4-flash": 1_048_576,
     "deepseek-v4.1-flash": 1_048_576,
     "deepseek-v4-pro": 1_048_576,
+    "k3": 1_048_576,
+    "k3-256k": 262_144,
+    "k3.1-pro": 1_048_576,
+    "k3.1-pro-highspeed": 1_048_576,
+    "kimi-for-coding": 1_048_576,
+    "kimi-for-coding-highspeed": 262_144,
 }
 
 
@@ -36,7 +43,9 @@ def resolve_context_limit(model: str) -> int | None:
         return int(m.group(1)) * 1000
     if "deepseek" in key:
         return 1_048_576 if "flash" in key else 128_000
-    if "moonshot" in key or key.startswith("kimi"):
+    if key.startswith("k3") or key.startswith("kimi"):
+        return 1_048_576
+    if "moonshot" in key:
         return 128_000
     return None
 
@@ -49,24 +58,16 @@ def fmt_tokens(n: int) -> str:
 
 
 def format_context_prompt(session: Session) -> str:
-    """REPL prefix: last usage.prompt_tokens / known context limit."""
     used = session.prompt_tokens
     limit = session.context_limit
     u = fmt_tokens(used) if used is not None else "?"
-    if limit is None:
-        return u
-    return f"{u}/{fmt_tokens(limit)}"
+    return u if limit is None else f"{u}/{fmt_tokens(limit)}"
 
 
 def format_usage(session: Session) -> str:
-    """Render last API usage fields as returned."""
     if session.prompt_tokens is None:
-        limit = (
-            f"  context_limit={fmt_tokens(session.context_limit)}"
-            if session.context_limit
-            else ""
-        )
-        return f"usage=none{limit}"
+        lim = f"  context_limit={fmt_tokens(session.context_limit)}" if session.context_limit else ""
+        return f"usage=none{lim}"
     parts = [
         f"prompt_tokens={fmt_tokens(session.prompt_tokens)}",
         f"completion_tokens={fmt_tokens(session.completion_tokens or 0)}",
@@ -87,16 +88,42 @@ class Session:
     max_turns: int = 30
     messages: list[dict[str, Any]] = field(default_factory=list)
     models_cache: list[str] | None = None
+    model_ref: str | None = None
     context_limit: int | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    provider_id: str | None = None
+    cred_source: str | None = None
+    credential: Credential | None = None
+    credentials: dict[str, Credential] = field(default_factory=dict)
 
-    def set_model(self, model: str) -> None:
+    def set_model(self, model: str, *, ref: str | None = None) -> None:
         self.model = model
+        self.model_ref = ref or (f"{self.provider_id}/{model}" if self.provider_id else model)
         self.context_limit = resolve_context_limit(model)
 
     def update_usage(self, usage: dict[str, int]) -> None:
         self.prompt_tokens = usage.get("prompt_tokens")
         self.completion_tokens = usage.get("completion_tokens")
         self.total_tokens = usage.get("total_tokens")
+
+    def remember(self, provider_id: str, cred: Credential) -> None:
+        self.credentials[provider_id] = cred
+
+    async def apply(self, provider: Provider | str, cred: Credential) -> None:
+        if isinstance(provider, str):
+            p = get_provider(provider)
+            if p is None:
+                raise ValueError(f"unknown provider {provider!r}")
+            provider = p
+        old = self.client
+        self.client = provider.make_client(cred)
+        self.provider_id = provider.id
+        self.cred_source = cred.source
+        self.credential = cred
+        self.credentials[provider.id] = cred
+        try:
+            await old.close()
+        except Exception:
+            pass

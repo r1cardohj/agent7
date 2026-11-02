@@ -18,7 +18,8 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 from .agent import SYSTEM, run_agent, tool_summary
-from .commands import dispatch, fetch_models, known_names
+from .commands import dispatch, fetch_models, known_names, switch_model
+from .providers import get_provider, resolve_all, resolve_default
 from .session import Session, format_context_prompt
 
 console = Console(stderr=False)
@@ -161,11 +162,21 @@ class SlashCompleter(Completer):
                 if name.startswith(cmd):
                     yield Completion(name, start_position=-len(cmd), display=f"/{name}")
             return
-        if cmd == "model" and len(parts) == 2:
+        if len(parts) == 2:
             prefix = parts[1]
-            for mid in self.session.models_cache or []:
-                if mid.startswith(prefix) or prefix.lower() in mid.lower():
-                    yield Completion(mid, start_position=-len(prefix), display=mid)
+            if cmd == "model":
+                for mid in self.session.models_cache or []:
+                    bare = mid.partition("/")[2]
+                    if (
+                        mid.startswith(prefix)
+                        or bare.startswith(prefix)
+                        or prefix.lower() in mid.lower()
+                    ):
+                        yield Completion(mid, start_position=-len(prefix), display=mid)
+            elif cmd in ("login", "logout"):
+                for mid in ("deepseek", "kimi", "moonshot", "global"):
+                    if mid.startswith(prefix.lower()):
+                        yield Completion(mid, start_position=-len(prefix), display=mid)
 
 
 async def _run_once(session: Session, task: str) -> str:
@@ -195,26 +206,29 @@ async def async_main(argv: list[str] | None = None) -> None:
     args = p.parse_args(argv)
     task = " ".join(args.task).strip() or None
 
-    api_key = (
-        os.environ.get("AGENT7_API_KEY")
-        or os.environ.get("DEEPSEEK_API_KEY")
-        or os.environ.get("MOONSHOT_API_KEY")
-    )
-    if not api_key:
-        print("Set AGENT7_API_KEY (or DEEPSEEK_API_KEY / MOONSHOT_API_KEY).", file=sys.stderr)
-        sys.exit(1)
-
-    base_url = os.environ.get("AGENT7_BASE_URL")
-    if not base_url:
-        base_url = (
-            "https://api.moonshot.cn/v1"
-            if os.environ.get("MOONSHOT_API_KEY") and not os.environ.get("DEEPSEEK_API_KEY")
-            else "https://api.deepseek.com"
-        )
-
     cwd = (args.cwd or Path.cwd()).resolve()
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
     model = os.environ.get("AGENT7_MODEL") or ""
+
+    all_creds = resolve_all()
+    picked = resolve_default()
+    if picked is None and all_creds:
+        pid = next(iter(all_creds))
+        prov = get_provider(pid)
+        picked = (prov, all_creds[pid]) if prov else None
+
+    if picked is not None:
+        prov, cred = picked
+        client = prov.make_client(cred)
+    else:
+        client = AsyncOpenAI(api_key="missing", base_url="https://api.deepseek.com")
+        if task:
+            print(
+                "No credentials. Set DEEPSEEK_API_KEY / KIMI_API_KEY / MOONSHOT_API_KEY,\n"
+                "or run `uv run agent7` and `/login deepseek` / `/login kimi`.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        prov, cred = None, None
 
     state = Session(
         model=model or "pending",
@@ -222,27 +236,47 @@ async def async_main(argv: list[str] | None = None) -> None:
         client=client,
         max_turns=args.max_turns,
         messages=[{"role": "system", "content": SYSTEM}],
+        provider_id=prov.id if prov else None,
+        cred_source=cred.source if cred else None,
+        credential=cred,
+        credentials=dict(all_creds),
     )
 
     try:
-        try:
-            ids = await fetch_models(state)
-        except Exception as e:  # noqa: BLE001
-            ids = []
-            err.print(f"[dim]# models fetch failed: {e}[/dim]")
-        if not state.model or state.model == "pending":
-            state.set_model(ids[0] if ids else "deepseek-chat")
-        else:
-            state.set_model(state.model)
-        err.print(f"[dim]# agent7  model={state.model}  cwd={state.cwd}[/dim]")
+        ids: list[str] = []
+        if all_creds:
+            try:
+                ids = await fetch_models(state)
+            except Exception as e:  # noqa: BLE001
+                err.print(f"[dim]# models fetch failed: {e}[/dim]")
+        if model:
+            result = await switch_model(state, model)
+            if result.message.startswith("unknown") or result.message.startswith("ambiguous"):
+                err.print(f"[dim]# {result.message}[/dim]")
+                if ids:
+                    await switch_model(state, ids[0])
+                else:
+                    state.set_model(model)
+        elif not state.model or state.model == "pending":
+            if ids:
+                await switch_model(state, ids[0])
+            else:
+                state.set_model("deepseek-chat")
+        providers = ",".join(state.credentials) or "none"
+        err.print(
+            f"[dim]# agent7  model={state.model_ref or state.model}  "
+            f"providers=[{providers}]  cwd={state.cwd}[/dim]"
+        )
 
         if task:
             await _run_once(state, task)
             return
 
-        err.print("[dim]# REPL  /help · empty line / Ctrl-D to quit[/dim]")
+        err.print("[dim]# REPL  /help · /login · /model · empty line / Ctrl-D to quit[/dim]")
+        if not all_creds:
+            err.print("[dim]# no credentials yet — /login deepseek | /login kimi[/dim]")
         if ids:
-            err.print(f"[dim]# {len(ids)} models[/dim]")
+            err.print(f"[dim]# {len(ids)} models across {len(state.credentials)} provider(s)[/dim]")
         prompt = PromptSession(
             history=InMemoryHistory(),
             completer=SlashCompleter(state),
@@ -265,9 +299,12 @@ async def async_main(argv: list[str] | None = None) -> None:
                 for row in result.message.splitlines():
                     err.print(f"[dim]{row}[/dim]")
                 continue
+            if state.credential is None:
+                err.print("[yellow]# login first: /login deepseek | /login kimi[/yellow]")
+                continue
             await _run_once(state, line)
     finally:
-        await client.close()
+        await state.client.close()
 
 
 def main(argv: list[str] | None = None) -> None:
