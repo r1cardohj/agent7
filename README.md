@@ -35,6 +35,10 @@ uv run agent7 "create hello.py that prints hi"
 uv run agent7   # REPL — /help /login /model /status /compact
 ```
 
+Writes display a unified diff before changing the file. The `write` tool can
+replace a unique text span with `old_string`, using the same preview and write
+path as whole-file writes.
+
 At ~75% context usage, old tool/assistant text is auto-shrunk (last 3 user turns kept). `/compact` runs that pass manually.
 
 No sandbox — tools run as your user.

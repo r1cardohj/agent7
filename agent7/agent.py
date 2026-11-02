@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import os
 import shutil
@@ -18,6 +19,8 @@ from openai import AsyncOpenAI
 MAX_TOOL_CHARS = 50_000
 MAX_TURNS = 30
 MAX_GREP_LINES = 200
+# TUI write preview: keep it short — a sketch, not the full patch.
+MAX_DIFF_LINES = 18
 
 
 class Interrupted(Exception):
@@ -29,7 +32,7 @@ class Interrupted(Exception):
 
 SYSTEM = """You are a coding agent. You can only use these tools: read, write, bash, grep.
 Explore with read/grep before editing. Use bash to run tests and verify changes.
-Prefer small, focused edits. When done, reply with a short summary — no more tool calls."""
+Prefer small, focused edits with write(old_string=...). When done, reply with a short summary — no more tool calls."""
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -52,12 +55,19 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "write",
-            "description": "Write/overwrite a text file (creates parent dirs).",
+            "description": (
+                "Write/overwrite a text file, or replace one unique text span when "
+                "old_string is set. Creates parent dirs for new files."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
                     "content": {"type": "string"},
+                    "old_string": {
+                        "type": "string",
+                        "description": "Optional existing text; must occur exactly once.",
+                    },
                 },
                 "required": ["path", "content"],
             },
@@ -124,11 +134,85 @@ def tool_read(cwd: Path, path: str, offset: int | None = None, limit: int | None
     )
 
 
-def tool_write(cwd: Path, path: str, content: str) -> str:
+def _write_diff(fp: Path, before: str, after: str, *, max_lines: int = MAX_DIFF_LINES) -> str:
+    """Compact unified-diff sketch for the TUI (not a full patch)."""
+    raw = difflib.unified_diff(
+        before.splitlines(keepends=True),
+        after.splitlines(keepends=True),
+        fromfile=str(fp),
+        tofile=str(fp),
+        n=1,
+    )
+    shown: list[str] = []
+    total_add = total_del = 0
+    shown_changes = 0
+    truncated = False
+    for line in raw:
+        # Skip --- / +++ headers; the summary line already names the file.
+        if line.startswith("---") or line.startswith("+++"):
+            continue
+        text = line.rstrip("\n")
+        is_hunk = text.startswith("@@")
+        is_add = text.startswith("+")
+        is_del = text.startswith("-")
+        if is_add:
+            total_add += 1
+        elif is_del:
+            total_del += 1
+        if truncated:
+            continue
+        if is_add or is_del:
+            if shown_changes >= max_lines:
+                truncated = True
+                continue
+            shown_changes += 1
+        elif not is_hunk and shown_changes >= max_lines:
+            truncated = True
+            continue
+        shown.append(text)
+
+    head = f"{fp}  +{total_add} -{total_del}"
+    if not shown:
+        return head
+    body = "\n".join(shown)
+    if truncated:
+        left = max(0, total_add + total_del - shown_changes)
+        body += f"\n...[{left} more changed lines]"
+    return f"{head}\n{body}"
+
+
+def tool_write(
+    cwd: Path,
+    path: str,
+    content: str,
+    old_string: str | None = None,
+    on_preview: Callable[[str], None] | None = None,
+) -> str:
     fp = _resolve(cwd, path)
+    try:
+        before = fp.read_text(encoding="utf-8") if fp.exists() else ""
+    except UnicodeDecodeError:
+        return f"error: binary or non-utf8: {fp}"
+
+    if old_string is not None:
+        if not fp.is_file():
+            return f"error: not a file: {fp}"
+        if not old_string:
+            return "error: old_string must not be empty"
+        occurrences = before.count(old_string)
+        if occurrences != 1:
+            return f"error: old_string occurs {occurrences} times in {fp}; expected exactly 1"
+        after = before.replace(old_string, content, 1)
+    else:
+        after = content
+
+    if before == after and fp.is_file():
+        return f"no changes: {fp}"
+    if on_preview is not None:
+        on_preview(_write_diff(fp, before, after))
     fp.parent.mkdir(parents=True, exist_ok=True)
-    fp.write_text(content, encoding="utf-8")
-    return f"wrote {len(content)} bytes to {fp}"
+    fp.write_text(after, encoding="utf-8")
+    return f"wrote {len(after.encode('utf-8'))} bytes to {fp}"
 
 
 def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
@@ -194,11 +278,19 @@ HANDLERS: dict[str, Callable[..., str]] = {
 }
 
 
-def dispatch_tool(cwd: Path, name: str, args: dict[str, Any]) -> str:
+def dispatch_tool(
+    cwd: Path,
+    name: str,
+    args: dict[str, Any],
+    *,
+    on_preview: Callable[[str], None] | None = None,
+) -> str:
     fn = HANDLERS.get(name)
     if not fn:
         return f"error: unknown tool {name}"
     try:
+        if name == "write":
+            return tool_write(cwd, **args, on_preview=on_preview)
         return fn(cwd, **args)
     except TypeError as e:
         return f"error: bad args for {name}: {e}"
@@ -221,7 +313,8 @@ def tool_summary(name: str, args: dict[str, Any]) -> str:
             return f"{path}  (offset={off} limit={lim})"
         return path
     if name == "write":
-        return f"{args.get('path', '')}  ({len(str(args.get('content') or ''))} bytes)"
+        action = "replace" if args.get("old_string") is not None else "write"
+        return f"{args.get('path', '')}  ({action}, {len(str(args.get('content') or ''))} chars)"
     if name == "grep":
         bits = [repr(args.get("pattern") or ""), "in", str(args.get("path") or ".")]
         if args.get("glob"):
@@ -253,6 +346,7 @@ OnTool = Callable[[int, str, dict[str, Any], str], Any]
 
 
 OnUsage = Callable[[dict[str, int]], Any]
+OnPreview = Callable[[str], None]
 
 
 def _usage_from_chunk(chunk: Any) -> dict[str, int] | None:
@@ -376,6 +470,7 @@ async def run_agent(
     on_thinking: OnText | None = None,
     on_answer_to_thinking: Callable[[], Any] | None = None,
     on_tool: OnTool | None = None,
+    on_preview: OnPreview | None = None,
     on_usage: OnUsage | None = None,
     context_limit: int | None = None,
     prompt_tokens: int | None = None,
@@ -429,7 +524,9 @@ async def run_agent(
                     result = f"error: invalid JSON arguments: {raw_args!r}"
                 else:
                     try:
-                        result = await asyncio.to_thread(dispatch_tool, cwd, name, args)
+                        result = await asyncio.to_thread(
+                            dispatch_tool, cwd, name, args, on_preview=on_preview
+                        )
                     except (asyncio.CancelledError, KeyboardInterrupt) as e:
                         result = "error: interrupted"
                         messages.append(

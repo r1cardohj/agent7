@@ -150,6 +150,41 @@ class ReplyPrinter:
             meta = f"  [{color}]exit={code}[/{color}]"
         err.print(f"  {mark} [bold]{name:<5}[/bold] [dim]{summary}[/dim]{meta}")
 
+    def on_preview(self, diff: str) -> None:
+        self._close_thinking()
+        self._clear_counter()
+        lines = diff.splitlines()
+        if not lines:
+            return
+        head = Text("# write  ", style="dim")
+        # first line is `path  +N -M`
+        path, _, stats = lines[0].rpartition("  ")
+        if path and stats.startswith("+"):
+            head.append(path, style="dim")
+            head.append("  ")
+            for part in stats.split(" "):
+                if part.startswith("+"):
+                    head.append(part, style="green bold")
+                elif part.startswith("-"):
+                    head.append(part, style="red bold")
+                else:
+                    head.append(part, style="dim")
+                head.append(" ")
+            if head.plain.endswith(" "):
+                head.right_crop(1)
+        else:
+            head.append(lines[0], style="dim")
+        err.print(head)
+        for line in lines[1:]:
+            if line.startswith("@@"):
+                err.print(Text(line, style="cyan"))
+            elif line.startswith("+"):
+                err.print(Text(line, style="green"))
+            elif line.startswith("-"):
+                err.print(Text(line, style="red"))
+            else:
+                err.print(Text(line, style="dim"))
+
 
 class SlashCompleter(Completer):
     def __init__(self, session: Session) -> None:
@@ -199,6 +234,7 @@ async def _run_once(session: Session, task: str) -> str:
             on_thinking=rp.on_thinking,
             on_answer_to_thinking=rp.on_answer_to_thinking,
             on_tool=rp.on_tool,
+            on_preview=rp.on_preview,
             on_usage=session.update_usage,
             context_limit=session.context_limit,
             prompt_tokens=session.prompt_tokens,
