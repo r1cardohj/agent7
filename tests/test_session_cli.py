@@ -48,6 +48,16 @@ class SessionCliTests(unittest.TestCase):
         data = load(self.cwd)
         self.assertEqual(data["messages"], [{"role": "system", "content": SYSTEM}])
 
+    def test_ctrl_c_discards_input_and_returns_to_the_prompt(self) -> None:
+        with patch("agent7.__main__.resolve_all", return_value={}), \
+             patch("agent7.__main__.resolve_default", return_value=None), \
+             patch("agent7.__main__.AsyncOpenAI") as client, \
+             patch("agent7.__main__.PromptSession") as prompt:
+            client.return_value.close = AsyncMock()
+            prompt.return_value.prompt_async.side_effect = [KeyboardInterrupt, EOFError]
+            asyncio.run(async_main(["--cwd", str(self.cwd)]))
+        self.assertEqual(prompt.return_value.prompt_async.call_count, 2)
+
     def test_resume_passes_saved_context_to_agent(self) -> None:
         state = SimpleNamespace(
             cwd=self.cwd, model_ref="deepseek/test", max_turns=30,

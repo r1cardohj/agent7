@@ -65,7 +65,8 @@ in the saved context. Files live in `${XDG_STATE_HOME:-~/.local/state}/agent7/se
 store API keys. Hard process kills can lose the in-progress turn.
 
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
-Exit with Ctrl-D (or Ctrl-Z on Windows).
+Exit with Ctrl-D (or Ctrl-Z on Windows). Ctrl-C discards the current input or interrupts
+the running turn, then returns to the prompt instead of exiting the REPL.
 
 Reasoning models (DeepSeek, Grok, Kimi) stream their `reasoning_content` live: it shows up
 dimmed under a `thinking` header, before the answer and above each tool line. It is
@@ -140,7 +141,7 @@ retries that turn once.
 
 - Not an orchestrator: no branching, no subagents
 - Not a parallel framework: single-threaded, one thing at a time
-- Not a background service: a foreground process, stopped with Ctrl-C
+- Not a background service: work runs only in the foreground
 - No sandbox: tools run as you, and `bash` can do anything your account can do
 
 If that kind of "small" is exactly what you want, this is enough. If it's missing

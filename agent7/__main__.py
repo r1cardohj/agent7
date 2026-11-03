@@ -445,9 +445,13 @@ async def async_main(argv: list[str] | None = None) -> None:
         while True:
             try:
                 line = (await prompt.prompt_async(lambda: f"{format_context_prompt(state)} > ")).strip()
-            except (EOFError, KeyboardInterrupt):
+            except EOFError:
                 print(file=sys.stderr)
                 break
+            except KeyboardInterrupt:
+                # Ctrl-C abandons this input, not the whole REPL.
+                print(file=sys.stderr)
+                continue
             if not line:
                 continue
             result = await dispatch(state, line)
