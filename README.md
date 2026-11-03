@@ -83,10 +83,14 @@ text never ends silently: you get either `# (stopped after N turns)`,
 | `read` | Read a file with line numbers | 200 lines per call by default; page with `offset=` |
 | `write` | Create or overwrite a whole file | `+N -M` diff stats |
 | `edit` | Precise replacements; one call may include multiple `edits[]` against the original file (no overlaps) | `+N -M` diff stats |
-| `bash` | Shell in the cwd (incl. rg/grep/find/ls) | ~12k chars |
+| `bash` | Host shell in the cwd (bash / PowerShell / cmd) | ~12k chars |
 
 That's it. No `grep`, no `list_dir`, no `todo`, no `task`.
 Need more capability? Let the agent use `bash`.
+
+On startup agent7 picks a shell from `sys.platform`: **Git Bash → PowerShell → cmd** on
+Windows, **bash** elsewhere. The choice is written into the system prompt so the model
+matches the host. Override with `AGENT7_SHELL=bash|powershell|cmd|/path/to/shell`.
 
 Tools run **serially**, one after another — so the log always reads in order and
 you never get three outputs interleaved. Edits are applied without a confirmation
