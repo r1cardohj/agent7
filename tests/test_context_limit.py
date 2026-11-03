@@ -74,6 +74,16 @@ class ResolveContextLimitTests(unittest.TestCase):
         self.assertEqual(resolve_context_limit("kimi-for-coding"), 262_144)
         self.assertEqual(resolve_context_limit("grok-4"), 256_000)
 
+    def test_k3_models(self) -> None:
+        for model in ("k3", "k3.1-pro", "k3.1-pro-highspeed"):
+            with self.subTest(model=model):
+                self.assertEqual(resolve_context_limit(model), 1_048_576)
+                session = make_session(resolve_context_limit(model), 4_868)
+                self.assertEqual(format_context_prompt(session), "4,868/1M")
+
+        # An explicit model suffix takes precedence over the family default.
+        self.assertEqual(resolve_context_limit("k3-256k"), 256_000)
+
     def test_limit_named_in_the_model(self) -> None:
         self.assertEqual(resolve_context_limit("qwen3-256k"), 256_000)
         self.assertEqual(resolve_context_limit("qwen3-1m"), 1_000_000)

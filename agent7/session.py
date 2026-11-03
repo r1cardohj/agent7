@@ -32,6 +32,8 @@ def resolve_context_limit(model: str) -> int | None:
         return 256_000 if ("grok-4" in key or "build" in key) else 131_072
     if "kimi-for-coding" in key:
         return 262_144
+    if key == "k3" or key.startswith("k3.1"):
+        return 1_048_576
     return None
 
 def fmt_tokens(n: int) -> str:
