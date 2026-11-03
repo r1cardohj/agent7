@@ -1,16 +1,22 @@
 """Tests for `@path` completion in the REPL prompt."""
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
-
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
 
 from agent7.agent import _resolve
-from agent7.__main__ import ReplCompleter, at_path_prefix, path_completions
+from agent7.__main__ import (
+    MAX_COMPLETIONS,
+    ReplCompleter,
+    at_path_prefix,
+    path_completions,
+)
 
 
 class AtPathPrefixTests(unittest.TestCase):
@@ -94,6 +100,28 @@ class PathCompletionTests(unittest.TestCase):
         (c,) = path_completions(self.cwd, f"@{self.cwd}/agent7/main")
         self.assertEqual(c.text, f"{self.cwd}/agent7/main.py")
 
+    def test_generated_directories_are_not_walked(self) -> None:
+        (self.cwd / "node_modules" / "pkg").mkdir(parents=True)
+        (self.cwd / "node_modules" / "pkg" / "index.js").write_text("x", encoding="utf-8")
+
+        got = self.inserts("@")
+
+        self.assertNotIn("node_modules/", got)
+        self.assertNotIn("node_modules/pkg/index.js", got)
+
+    def test_home_fragment_is_expanded(self) -> None:
+        with tempfile.TemporaryDirectory() as home, patch.dict(os.environ, {"HOME": home}):
+            Path(home, "notes.txt").write_text("x", encoding="utf-8")
+            (c,) = path_completions(self.cwd, "@~/no")
+
+        self.assertEqual(c.text, str(Path(home, "notes.txt")))
+
+    def test_results_are_capped(self) -> None:
+        for i in range(MAX_COMPLETIONS + 20):
+            (self.cwd / f"f{i:04d}.txt").write_text("x", encoding="utf-8")
+
+        self.assertEqual(len(path_completions(self.cwd, "@f")), MAX_COMPLETIONS)
+
 
 class ReplCompleterTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -132,6 +160,9 @@ class ResolveAtPathTests(unittest.TestCase):
     def test_plain_and_absolute_paths_unchanged(self) -> None:
         self.assertEqual(_resolve(self.cwd, "a.py"), self.cwd / "a.py")
         self.assertEqual(_resolve(self.cwd, "/etc/hosts"), Path("/etc/hosts"))
+
+    def test_expands_home(self) -> None:
+        self.assertEqual(_resolve(self.cwd, "@~/notes.txt"), Path.home() / "notes.txt")
 
 
 if __name__ == "__main__":

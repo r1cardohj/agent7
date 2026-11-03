@@ -104,7 +104,24 @@ At 75% context usage, old tool/assistant text is compacted automatically: the la
 3 user turns are kept, or for one-shot tasks the last 4 tool results. `/compact`
 triggers the same compaction manually.
 
+Providers that never report `usage` are measured by an estimate, so compaction still
+kicks in; if the server rejects a request as too long anyway, it compacts harder and
+retries that turn once.
+
 `AGENT7_CONTEXT_LIMIT` overrides the context limit.
+
+## When things go wrong
+
+- **429 / 5xx / connection errors** are retried up to 3 times (0.5s, 1.5s, 3s) — but
+  only while nothing has been printed yet, so you never see a reply twice. After that
+  you get `# error: …` and, in the REPL, the prompt comes back instead of the process dying.
+- **Ctrl-C in the middle of a tool batch** answers every remaining tool call with
+  `error: interrupted`, so the next request is still valid.
+- **Writes are atomic** (temp file + rename): an interrupted `write`/`edit` leaves the
+  original file untouched, and symlinks keep pointing where they did.
+- **Large outputs are bounded**: `read` streams the file and keeps only the window it
+  returns; `bash` captures to temp files and reads back ~12k chars. A 100 MB log costs
+  a few hundred KB of memory, not 300 MB.
 
 ## What it is not
 

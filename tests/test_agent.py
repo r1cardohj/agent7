@@ -1,7 +1,9 @@
 import sys
 import tempfile
+import tracemalloc
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from agent7.agent import (
     DEFAULT_READ_LINES,
@@ -43,6 +45,28 @@ class WriteToolTests(unittest.TestCase):
 
         self.assertTrue(result.startswith("no changes:"))
         self.assertEqual(previews, [])
+
+    def test_failed_write_leaves_the_old_file_intact(self) -> None:
+        path = self.cwd / "keep.txt"
+        path.write_text("original\n")
+
+        with patch("agent7.agent.os.fsync", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                tool_write(self.cwd, "keep.txt", "half a rewrite")
+
+        self.assertEqual(path.read_text(), "original\n")
+        self.assertEqual([p.name for p in self.cwd.iterdir()], ["keep.txt"])
+
+    def test_write_follows_a_symlink_instead_of_replacing_it(self) -> None:
+        real = self.cwd / "real.txt"
+        real.write_text("old\n")
+        link = self.cwd / "link.txt"
+        link.symlink_to(real)
+
+        tool_write(self.cwd, "link.txt", "new\n")
+
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(real.read_text(), "new\n")
 
 
 class EditToolTests(unittest.TestCase):
@@ -192,6 +216,55 @@ class ReadToolTests(unittest.TestCase):
 
         self.assertEqual(dispatch_tool(self.cwd, "read", {"path": "empty.txt"}), "(empty)")
 
+    def test_one_enormous_line_cannot_blow_up_memory(self) -> None:
+        path = self.cwd / "min.js"
+        with path.open("w", encoding="utf-8") as fh:
+            fh.write("y" * 6_000_000)  # a single 6 MB line, no newline
+
+        tracemalloc.start()
+        try:
+            result = dispatch_tool(self.cwd, "read", {"path": "min.js"})
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+
+        self.assertTrue(result.startswith("1|"))
+        self.assertIn("truncated", result)
+        self.assertLess(peak, 4_000_000)
+
+    def test_offset_past_eof_says_so(self) -> None:
+        (self.cwd / "small.txt").write_text("a\nb\n")
+
+        result = dispatch_tool(self.cwd, "read", {"path": "small.txt", "offset": 99})
+
+        self.assertIn("(empty)", result)
+        self.assertIn("lines 99-2 of 2", result)
+
+    def test_binary_file_is_reported(self) -> None:
+        (self.cwd / "blob.bin").write_bytes(b"\xff\xfe\x00binary")
+
+        self.assertTrue(
+            dispatch_tool(self.cwd, "read", {"path": "blob.bin"}).startswith("error:")
+        )
+
+    def test_large_file_is_streamed_not_buffered(self) -> None:
+        path = self.cwd / "big.log"
+        with path.open("w", encoding="utf-8") as fh:
+            for i in range(200_000):
+                fh.write(f"line{i} " + "x" * 40 + "\n")  # ~9 MB
+
+        tracemalloc.start()
+        try:
+            result = dispatch_tool(self.cwd, "read", {"path": "big.log"})
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+
+        self.assertIn("1|line0", result)
+        self.assertIn("of 200000", result)
+        self.assertIn("continue with offset=201", result)
+        self.assertLess(peak, 4_000_000)
+
 
 class OutputBudgetTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -211,6 +284,23 @@ class OutputBudgetTests(unittest.TestCase):
 
         self.assertIn("truncated", result)
         self.assertLess(len(result), MAX_BASH_CHARS + 200)
+
+    def test_large_bash_output_is_capped_in_memory(self) -> None:
+        py = sys.executable.replace("'", "'\\''")
+        tracemalloc.start()
+        try:
+            result = dispatch_tool(
+                self.cwd,
+                "bash",
+                {"command": f"'{py}' -c \"print('y' * {8_000_000})\""},
+            )
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+
+        self.assertIn("truncated", result)
+        self.assertLess(len(result), MAX_BASH_CHARS + 200)
+        self.assertLess(peak, 4_000_000)
 
     def test_grep_tool_is_gone(self) -> None:
         self.assertEqual(dispatch_tool(self.cwd, "grep", {"pattern": "x"}), "error: unknown tool grep")

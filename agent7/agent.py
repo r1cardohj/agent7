@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -21,6 +22,10 @@ MAX_READ_CHARS, MAX_BASH_CHARS = 50_000, 12_000
 DEFAULT_READ_LINES, MAX_TURNS = 200, 50
 COMPACT_THRESHOLD, KEEP_USER_TURNS, KEEP_TOOL_RESULTS = 0.75, 3, 4
 TOOL_MAX_CHARS, ASSISTANT_MAX_CHARS = 2_000, 4_000
+RETRY_SLEEPS = (0.5, 1.5, 3.0)
+RETRY_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+OVERFLOW_STATUS = frozenset({400, 413, 422})
+
 class Interrupted(Exception):
     def __init__(self, partial: str = "") -> None:
         self.partial = partial
@@ -158,22 +163,63 @@ def _truncate(s: str, limit: int, *, tag: str = "truncated") -> str:
     return s if len(s) <= limit else s[:limit] + f"\n...[{tag} {len(s) - limit} chars]"
 
 def _resolve(cwd: Path, path: str) -> Path:
-    p = Path(path.removeprefix("@").replace("\\ ", " "))  # tolerate `@path` typed in the REPL
+    p = Path(path.removeprefix("@").replace("\\ ", " ")).expanduser()  # `@path` from the REPL
     return p if p.is_absolute() else cwd / p
+
+def _write_atomic(fp: Path, text: str) -> None:
+    """Temp file + os.replace: a Ctrl-C mid-write can never truncate the file."""
+    target = fp.resolve() if fp.is_symlink() else fp  # keep symlinks pointing where they did
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        with suppress(OSError):
+            os.chmod(tmp, target.stat().st_mode & 0o7777)
+        os.replace(tmp, target)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+def _count_lines(fp: Path) -> int:
+    """Total line count at C speed (bytes.count) so a 100 MB log stays fast."""
+    total, tail = 0, b"\n"
+    with fp.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            total += chunk.count(b"\n")
+            tail = chunk[-1:]
+    return total if tail == b"\n" or total == 0 else total + 1
 
 def tool_read(cwd: Path, path: str, offset: int | None = None, limit: int | None = None) -> str:
     fp = _resolve(cwd, path)
     if not fp.is_file():
         return f"error: not a file: {fp}"
+    want = limit if limit is not None and limit > 0 else DEFAULT_READ_LINES
+    start = max(0, (offset or 1) - 1) if offset is not None else 0
+    total = _count_lines(fp)
+    window: list[str] = []
+    kept = end = 0
     try:
-        lines = fp.read_text(encoding="utf-8").splitlines()
+        # Only the wanted window is decoded and kept, and no single line can be
+        # unbounded: a 100 MB log costs a few hundred KB instead of 300 MB.
+        with fp.open(encoding="utf-8") as fh:
+            lineno = 0
+            while line := fh.readline(MAX_READ_CHARS + 1):
+                lineno += 1
+                if lineno > start + want or kept >= MAX_READ_CHARS:
+                    break
+                if lineno <= start:
+                    continue
+                text = line.rstrip("\r\n")
+                window.append(text)
+                kept += len(text) + 1
+                end = lineno
     except UnicodeDecodeError:
         return f"error: binary or non-utf8: {fp}"
-    total = len(lines)
-    start = min(max(0, (offset or 1) - 1), total) if offset is not None else 0
-    want = limit if limit is not None and limit > 0 else DEFAULT_READ_LINES
-    end = min(total, start + want)
-    body = "\n".join(f"{i + start + 1}|{line}" for i, line in enumerate(lines[start:end])) or "(empty)"
+    end = end or min(start, total)
+    body = "\n".join(f"{i + start + 1}|{line}" for i, line in enumerate(window)) or "(empty)"
     body = _truncate(body, MAX_READ_CHARS)
     if start > 0 or end < total:
         hint = f"...[lines {start + 1}-{end} of {total}"
@@ -211,8 +257,7 @@ def tool_write(
         return f"no changes: {fp}"
     if on_preview:
         on_preview(_write_stats(fp, before, after, kind="write"))
-    fp.parent.mkdir(parents=True, exist_ok=True)
-    fp.write_text(after, encoding="utf-8", newline="\n")
+    _write_atomic(fp, after)
     return f"wrote {len(after.encode('utf-8'))} bytes to {fp}"
 
 def tool_edit(
@@ -258,9 +303,17 @@ def tool_edit(
         return f"no changes: {fp}"
     if on_preview:
         on_preview(_write_stats(fp, before, after, kind="edit"))
-    fp.write_text(after, encoding="utf-8", newline="\n")
+    _write_atomic(fp, after)
     n = len(edits)
     return f"edited {n} span{'s' if n != 1 else ''} in {fp}"
+
+_BASH_HEAD_BYTES = MAX_BASH_CHARS * 4  # one char is at most 4 bytes in UTF-8
+
+def _head(f: Any) -> str:
+    """First ~MAX_BASH_CHARS chars of a temp file; the rest never enters memory."""
+    f.flush()
+    f.seek(0)
+    return f.read(_BASH_HEAD_BYTES).decode("utf-8", "replace")
 
 def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
     env = os.environ.copy()
@@ -268,22 +321,25 @@ def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
     env.setdefault("LANG", "C.UTF-8")
     env.setdefault("LC_ALL", "C.UTF-8")
     argv = [*SHELL.argv, command]
-    try:
-        proc = subprocess.run(
-            argv, cwd=cwd, capture_output=True,
-            encoding="utf-8", errors="replace", timeout=timeout or 60, env=env,
-        )
-    except FileNotFoundError:
-        return f"error: shell not found: {SHELL.argv[0]}"
-    except subprocess.TimeoutExpired as e:
-        return _truncate(
-            f"timeout after {timeout or 60}s\n{(e.stdout or '')}{(e.stderr or '')}", MAX_BASH_CHARS
-        )
-    parts = [f"exit={proc.returncode}"]
-    if proc.stdout:
-        parts.append("stdout:\n" + proc.stdout)
-    if proc.stderr:
-        parts.append("stderr:\n" + proc.stderr)
+    limit = timeout or 60
+    # Output goes to temp files: subprocess.run keeps its timeout/kill semantics
+    # and we read back only the head instead of buffering everything in memory.
+    with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
+        try:
+            proc = subprocess.run(
+                argv, cwd=cwd, stdout=out_f, stderr=err_f, timeout=limit, env=env,
+            )
+        except FileNotFoundError:
+            return f"error: shell not found: {SHELL.argv[0]}"
+        except subprocess.TimeoutExpired:
+            return _truncate(
+                f"timeout after {limit}s\n{_head(out_f)}{_head(err_f)}", MAX_BASH_CHARS
+            )
+        parts = [f"exit={proc.returncode}"]
+        if stdout := _head(out_f):
+            parts.append("stdout:\n" + stdout)
+        if stderr := _head(err_f):
+            parts.append("stderr:\n" + stderr)
     return _truncate("\n".join(parts), MAX_BASH_CHARS)
 
 HANDLERS = {
@@ -386,29 +442,79 @@ def _usage_from_chunk(chunk: Any) -> dict[str, int] | None:
            if (v := getattr(usage, k, None)) is not None}
     return out or None
 
-async def _stream_completion(
-    client: AsyncOpenAI, *, model: str, messages: list[dict[str, Any]],
-    on_delta, on_thinking, on_answer_to_thinking, on_finish=None,
-) -> tuple[str, list[dict[str, Any]], dict[str, int] | None]:
-    kwargs: dict[str, Any] = {
-        "model": model, "messages": messages, "tools": TOOLS, "stream": True,
-        "stream_options": {"include_usage": True},
-    }
+class _Retryable(Exception):
+    """Failed before any text reached the screen, so the request can be replayed."""
+
+    def __init__(self, cause: BaseException) -> None:
+        self.cause = cause
+        super().__init__(str(cause))
+
+_RETRY_ERRORS = frozenset({
+    "APIConnectionError", "APITimeoutError", "RateLimitError",
+    "InternalServerError", "ServiceUnavailableError", "BadGatewayError",
+})
+
+def _retryable(exc: BaseException) -> bool:
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status in RETRY_STATUS
+    return type(exc).__name__ in _RETRY_ERRORS
+
+def _bad_stream_options(exc: BaseException) -> bool:
+    """The provider may not accept `stream_options` (client-side TypeError or a 400)."""
+    if isinstance(exc, TypeError):
+        return True
+    if getattr(exc, "status_code", None) not in (400, 404, 422):
+        return False
+    text = f"{exc}".lower()
+    return any(k in text for k in ("stream_options", "unexpected keyword", "unrecognized"))
+
+def _is_context_overflow(exc: BaseException) -> bool:
+    if getattr(exc, "status_code", None) not in OVERFLOW_STATUS:
+        return False
+    text = f"{exc} {getattr(exc, 'body', '')}".lower()
+    return any(k in text for k in (
+        "context_length", "context length", "maximum context", "too many tokens",
+        "prompt is too long", "input is too long",
+    ))
+
+def estimate_tokens(messages: list[dict[str, Any]]) -> int:
+    """Rough size for providers that never report usage: ~4 chars per token."""
+    chars = 0
+    for m in messages:
+        chars += len(str(m.get("content") or ""))
+        for call in m.get("tool_calls") or []:
+            chars += len(str((call.get("function") or {}).get("arguments") or ""))
+    return chars // 4 + 1
+
+async def _open_stream(client: AsyncOpenAI, kwargs: dict[str, Any]) -> Any:
+    """Open the stream, dropping `stream_options` once for providers that reject it."""
     try:
-        stream = await client.chat.completions.create(**kwargs)
-    except Interrupted:
-        raise
+        return await client.chat.completions.create(**kwargs)
     except (asyncio.CancelledError, KeyboardInterrupt) as e:
         raise Interrupted() from e
-    except Exception:
-        kwargs.pop("stream_options", None)
+    except Exception as e:
+        if "stream_options" not in kwargs or not _bad_stream_options(e):
+            raise
+        retry = {k: v for k, v in kwargs.items() if k != "stream_options"}
         try:
-            stream = await client.chat.completions.create(**kwargs)
+            return await client.chat.completions.create(**retry)
         except (asyncio.CancelledError, KeyboardInterrupt) as e:
             raise Interrupted() from e
+
+async def _stream_once(
+    client: AsyncOpenAI, kwargs: dict[str, Any], *, on_delta, on_thinking,
+    on_answer_to_thinking, on_finish,
+) -> tuple[str, list[dict[str, Any]], dict[str, int] | None]:
+    try:
+        stream = await _open_stream(client, kwargs)
+    except Interrupted:
+        raise
+    except Exception as e:
+        raise _Retryable(e) from e
     parts: list[str] = []
     tool_acc: dict[int, dict[str, str]] = {}
-    saw_tools, usage = False, None
+    saw_tools, emitted, usage = False, False, None
     try:
         async for chunk in stream:
             if u := _usage_from_chunk(chunk):
@@ -419,6 +525,7 @@ async def _stream_completion(
                 await _emit(on_finish, finish)  # "stop" | "length" | "tool_calls" | ...
             delta = chunk.choices[0].delta
             if r := _delta_reasoning(delta):
+                emitted = True
                 await _emit(on_thinking, r)
             if delta.tool_calls:
                 if not saw_tools:
@@ -434,10 +541,17 @@ async def _stream_completion(
                         if tc.function.arguments:
                             slot["arguments"] += tc.function.arguments
             if delta.content:
+                emitted = True
                 parts.append(delta.content)
                 await _emit(on_thinking if saw_tools else on_delta, delta.content)
+    except Interrupted:
+        raise
     except (asyncio.CancelledError, KeyboardInterrupt) as e:
         raise Interrupted("".join(parts)) from e
+    except Exception as e:
+        if emitted:  # the user already saw text: replaying it would duplicate it
+            raise
+        raise _Retryable(e) from e
     finally:
         if close := getattr(stream, "close", None):
             with suppress(Exception):
@@ -450,6 +564,37 @@ async def _stream_completion(
         for i in sorted(tool_acc)
     ], usage
 
+async def _stream_completion(
+    client: AsyncOpenAI, *, model: str, messages: list[dict[str, Any]],
+    on_delta, on_thinking, on_answer_to_thinking, on_finish=None,
+) -> tuple[str, list[dict[str, Any]], dict[str, int] | None]:
+    kwargs: dict[str, Any] = {
+        "model": model, "messages": messages, "tools": TOOLS, "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    for attempt in range(len(RETRY_SLEEPS) + 1):
+        try:
+            return await _stream_once(
+                client, kwargs, on_delta=on_delta, on_thinking=on_thinking,
+                on_answer_to_thinking=on_answer_to_thinking, on_finish=on_finish,
+            )
+        except _Retryable as e:
+            if attempt == len(RETRY_SLEEPS) or not _retryable(e.cause):
+                raise e.cause from None
+            await asyncio.sleep(RETRY_SLEEPS[attempt])
+    raise AssertionError("unreachable")  # pragma: no cover
+
+def _answer_pending(
+    messages: list[dict[str, Any]], calls: list[dict[str, Any]],
+    note: str = "error: interrupted",
+) -> None:
+    """Answer every tool call that will never run, so the history stays replayable."""
+    answered = {m.get("tool_call_id") for m in messages if m.get("role") == "tool"}
+    for call in calls:
+        call_id = call.get("id")
+        if isinstance(call_id, str) and call_id and call_id not in answered:
+            messages.append({"role": "tool", "tool_call_id": call_id, "content": note})
+
 async def run_agent(
     task: str, *, cwd: Path, client: AsyncOpenAI, model: str, max_turns: int = MAX_TURNS,
     messages: list[dict[str, Any]], on_delta=None, on_thinking=None, on_answer_to_thinking=None,
@@ -461,10 +606,13 @@ async def run_agent(
     last_prompt = prompt_tokens
     try:
         for turn in range(1, max_turns + 1):
-            if should_compact(last_prompt, context_limit):
+            # Providers that never report usage would otherwise never compact.
+            prompt = last_prompt if last_prompt is not None else estimate_tokens(messages)
+            if should_compact(prompt, context_limit):
                 new_msgs, n = compact_messages(messages)
                 if n:
                     messages[:] = new_msgs
+                    last_prompt = None
                     await _emit(on_compact, n)
             try:
                 content, tool_calls, usage = await _stream_completion(
@@ -476,6 +624,19 @@ async def run_agent(
                 if e.partial:
                     messages.append({"role": "assistant", "content": e.partial})
                 raise
+            except Exception as e:
+                # Server-side context overflow: shrink hard, then retry the same turn once.
+                n = 0
+                if _is_context_overflow(e):
+                    squeezed, n = compact_messages(
+                        messages, keep_user_turns=1, keep_tool_results=1
+                    )
+                if not n:
+                    raise
+                messages[:] = squeezed
+                last_prompt = None
+                await _emit(on_compact, n)
+                continue
             if usage:
                 await _emit(on_usage, usage)
                 last_prompt = usage.get("prompt_tokens", last_prompt)
@@ -497,9 +658,8 @@ async def run_agent(
                             dispatch_tool, cwd, name, args, on_preview=on_preview
                         )
                     except (asyncio.CancelledError, KeyboardInterrupt) as e:
-                        messages.append(
-                            {"role": "tool", "tool_call_id": tc["id"], "content": "error: interrupted"}
-                        )
+                        # Every tool_call needs a tool message, or the next request is a 400.
+                        _answer_pending(messages, tool_calls)
                         raise Interrupted() from e
                 if on_tool:
                     await _emit(on_tool, turn, name, args, result)

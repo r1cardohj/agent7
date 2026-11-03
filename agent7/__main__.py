@@ -185,6 +185,12 @@ class ReplyPrinter:
         err.print(head)
 
 _AT_PATH = re.compile(r"(?<![A-Za-z0-9_.\-/@])@((?:\\ |[^\s@])*)$")
+SKIP_DIRS = frozenset({
+    ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
+    ".mypy_cache", ".ruff_cache", ".pytest_cache", ".tox", ".next",
+    ".gradle", ".idea", ".cache",
+})
+MAX_COMPLETIONS, MAX_DEPTH = 300, 8
 
 def at_path_prefix(text: str) -> str | None:
     """The path fragment after an '@' that starts the current word ('@' -> '')."""
@@ -198,19 +204,30 @@ def path_completions(cwd: Path, text: str) -> list[Completion]:
         return []
     raw = os.path.expanduser(fragment.replace("\\ ", " "))
     head, _, prefix = raw.rpartition("/")
-    target = Path(head) if head else Path()
+    target = Path(head).expanduser() if head else Path()
     if not target.is_absolute():
         target = cwd / target
+    if not target.is_dir():
+        return []
     entries: list[tuple[Path, str]] = []
     show_hidden = prefix.startswith(".")
     for root, dirs, files in os.walk(target):
-        if not show_hidden:
-            dirs[:] = [name for name in dirs if not name.startswith(".")]
+        # A bare '@' must not walk node_modules / .git / $HOME: prune, cap depth, cap results.
+        dirs[:] = [
+            name for name in dirs
+            if name not in SKIP_DIRS and (show_hidden or not name.startswith("."))
+        ]
+        if len(Path(root).relative_to(target).parts) >= MAX_DEPTH:
+            dirs[:] = []
         for name in dirs + files:
-            if (name.startswith(".") and not show_hidden) or not name.startswith(prefix):
+            if not name.startswith(prefix) or (name.startswith(".") and not show_hidden):
                 continue
             p = Path(root) / name
             entries.append((p, p.relative_to(target).as_posix()))
+            if len(entries) >= MAX_COMPLETIONS:
+                break
+        if len(entries) >= MAX_COMPLETIONS:
+            break
     entries.sort(key=lambda entry: (not entry[0].is_dir(), entry[1].lower()))
     out = []
     for p, path in entries:
@@ -376,6 +393,8 @@ async def async_main(argv: list[str] | None = None) -> None:
                 await _run_once(state, task, on_saved=persist)
             except Interrupted:
                 err.print("\n[dim]# interrupted[/dim]")
+            except Exception as e:  # noqa: BLE001
+                err.print(f"[red]# error: {type(e).__name__}: {e}[/red]")
             return
         quit_hint = "Ctrl-Z to quit" if sys.platform == "win32" else "Ctrl-D to quit"
         err.print(f"[dim]# REPL  /help · /login · /model · @file · {quit_hint}[/dim]")
@@ -417,6 +436,8 @@ async def async_main(argv: list[str] | None = None) -> None:
                 await _run_once(state, line, on_saved=persist)
             except (Interrupted, asyncio.CancelledError, KeyboardInterrupt):
                 err.print("\n[dim]# interrupted[/dim]")
+            except Exception as e:  # noqa: BLE001  a failed turn must not kill the REPL
+                err.print(f"[red]# error: {type(e).__name__}: {e}[/red]")
     finally:
         try:
             persist()
