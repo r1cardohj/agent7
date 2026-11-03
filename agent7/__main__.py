@@ -23,7 +23,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
-from .agent import SHELL, SYSTEM, Interrupted, run_agent, tool_summary
+from .agent import DEFAULT_MAX_TURNS, SHELL, SYSTEM, Interrupted, run_agent, tool_summary
 from .commands import dispatch, fetch_models, known_names, switch_model
 from .providers import (
     default_model_for,
@@ -308,14 +308,37 @@ async def _run_agent_once(session: Session, task: str) -> str:
         err.print(f"[dim]# {notice}[/dim]")
     return answer
 
+def _positive_int(raw: str) -> int:
+    value = int(raw)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, got {value}")
+    return value
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="agent7 — minimal coding agent")
     p.add_argument("task", nargs="*", help="task; omit for REPL")
     p.add_argument("--cwd", type=Path, default=None)
-    p.add_argument("--max-turns", type=int, default=None)
+    p.add_argument("--max-turns", type=_positive_int, default=None,
+                   help=f"model rounds per task (default {DEFAULT_MAX_TURNS}, or $AGENT7_MAX_TURNS)")
     p.add_argument("-r", "--resume", action="store_true",
                    help="resume the last session in this workspace")
     return p.parse_args(sys.argv[1:] if argv is None else argv)
+
+def resolve_max_turns(args: argparse.Namespace) -> int:
+    """CLI > $AGENT7_MAX_TURNS > default.
+
+    A saved session keeps its transcript, not its turn budget: resuming must not
+    pin you to whatever `--max-turns` the snapshot was created with.
+    """
+    if args.max_turns is not None:
+        return args.max_turns
+    raw = os.environ.get("AGENT7_MAX_TURNS", "").strip()
+    if raw:
+        try:
+            return _positive_int(raw)
+        except (ValueError, argparse.ArgumentTypeError):
+            err.print(f"[dim]# ignoring bad AGENT7_MAX_TURNS={raw!r}[/dim]")
+    return DEFAULT_MAX_TURNS
 
 async def async_main(argv: list[str] | None = None) -> None:
     _force_utf8_stdio()
@@ -330,10 +353,7 @@ async def async_main(argv: list[str] | None = None) -> None:
         except ValueError as e:
             raise SystemExit(str(e)) from None
     created_at = snapshot["created_at"] if snapshot else timestamp()
-    max_turns = (
-        args.max_turns if args.max_turns is not None
-        else snapshot["max_turns"] if snapshot else 30
-    )
+    max_turns = resolve_max_turns(args)
     model = os.environ.get("AGENT7_MODEL") or (
         snapshot.get("model_ref", "") if snapshot else ""
     )

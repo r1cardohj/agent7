@@ -19,9 +19,10 @@ from typing import Any
 from openai import AsyncOpenAI
 
 MAX_READ_CHARS, MAX_BASH_CHARS = 50_000, 12_000
-DEFAULT_READ_LINES, MAX_TURNS = 200, 50
+DEFAULT_READ_LINES, DEFAULT_MAX_TURNS = 200, 200  # turns are a safety net, not a budget
 COMPACT_THRESHOLD, KEEP_USER_TURNS, KEEP_TOOL_RESULTS = 0.75, 3, 4
 TOOL_MAX_CHARS, ASSISTANT_MAX_CHARS = 2_000, 4_000
+OVERFLOW_RETRIES = 2
 RETRY_SLEEPS = (0.5, 1.5, 3.0)
 RETRY_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 OVERFLOW_STATUS = frozenset({400, 413, 422})
@@ -596,7 +597,7 @@ def _answer_pending(
             messages.append({"role": "tool", "tool_call_id": call_id, "content": note})
 
 async def run_agent(
-    task: str, *, cwd: Path, client: AsyncOpenAI, model: str, max_turns: int = MAX_TURNS,
+    task: str, *, cwd: Path, client: AsyncOpenAI, model: str, max_turns: int = DEFAULT_MAX_TURNS,
     messages: list[dict[str, Any]], on_delta=None, on_thinking=None, on_answer_to_thinking=None,
     on_tool=None, on_preview=None, on_usage=None, context_limit: int | None = None,
     prompt_tokens: int | None = None, on_compact=None, on_finish=None,
@@ -604,8 +605,9 @@ async def run_agent(
     cwd = cwd.resolve()
     messages.append({"role": "user", "content": task})
     last_prompt = prompt_tokens
+    turns = retries = 0
     try:
-        for turn in range(1, max_turns + 1):
+        while turns < max_turns:
             # Providers that never report usage would otherwise never compact.
             prompt = last_prompt if last_prompt is not None else estimate_tokens(messages)
             if should_compact(prompt, context_limit):
@@ -625,9 +627,12 @@ async def run_agent(
                     messages.append({"role": "assistant", "content": e.partial})
                 raise
             except Exception as e:
-                # Server-side context overflow: shrink hard, then retry the same turn once.
+                # Server-side context overflow: shrink hard, then retry the same turn.
+                # The retry makes no progress, so it must not spend the turn budget.
+                retries += 1
+                squeezed: list[dict[str, Any]] = []
                 n = 0
-                if _is_context_overflow(e):
+                if retries <= OVERFLOW_RETRIES and _is_context_overflow(e):
                     squeezed, n = compact_messages(
                         messages, keep_user_turns=1, keep_tool_results=1
                     )
@@ -637,6 +642,8 @@ async def run_agent(
                 last_prompt = None
                 await _emit(on_compact, n)
                 continue
+            retries = 0
+            turns += 1
             if usage:
                 await _emit(on_usage, usage)
                 last_prompt = usage.get("prompt_tokens", last_prompt)
@@ -662,9 +669,9 @@ async def run_agent(
                         _answer_pending(messages, tool_calls)
                         raise Interrupted() from e
                 if on_tool:
-                    await _emit(on_tool, turn, name, args, result)
+                    await _emit(on_tool, turns, name, args, result)
                 else:
-                    print(f"  [{turn}] {name} {tool_summary(name, args)}", file=sys.stderr, flush=True)
+                    print(f"  [{turns}] {name} {tool_summary(name, args)}", file=sys.stderr, flush=True)
                 messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
         return f"(stopped after {max_turns} turns)"
     except Interrupted:

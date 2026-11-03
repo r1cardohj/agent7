@@ -11,6 +11,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from .agent import DEFAULT_MAX_TURNS
 from .providers import Credential, Provider, get_provider
 
 def resolve_context_limit(model: str) -> int | None:
@@ -60,7 +61,7 @@ class Session:
     model: str
     cwd: Path
     client: AsyncOpenAI
-    max_turns: int = 30
+    max_turns: int = DEFAULT_MAX_TURNS
     messages: list[dict[str, Any]] = field(default_factory=list)
     models_cache: list[str] | None = None
     model_ref: str | None = None

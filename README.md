@@ -73,10 +73,17 @@ Type `@` in the REPL to recursively complete files and directories from the cwd:
 Tab accepts, directories keep going (`@agent7/` → `@agent7/session.py`), and spaces
 are escaped (`@my\ file.txt`), so the path the model sees is the path it can read.
 
-`--cwd` sets the working directory, `--max-turns` caps the loop (default 30 turns;
-when it runs out you get `# (stopped after N turns)`). A run that ends with no visible
-text never ends silently: you get either `# (stopped after N turns)`,
-`# no text in the reply …` or `# … hit the output token limit …`.
+`--cwd` sets the working directory. `--max-turns` caps the loop at **200 model rounds
+per task** — high enough that ordinary work never hits it, low enough to stop a runaway.
+When it runs out you get `# (stopped after N turns)`; the transcript is intact, so just
+say `continue` (or rerun with `AGENT7_MAX_TURNS=500 agent7 -r "continue"`).
+
+The cap is **per run**, not per session: `-r` never pins you to the `--max-turns` an
+already-saved session was created with. Precedence is `--max-turns` > `$AGENT7_MAX_TURNS`
+> 200.
+
+A run that ends with no visible text never ends silently: you get either
+`# (stopped after N turns)`, `# no text in the reply …` or `# … hit the output token limit …`.
 
 ## Tools
 
