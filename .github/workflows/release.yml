@@ -1,0 +1,140 @@
+name: Release
+
+# Push a tag like v0.2.0 that lives on the main branch (main/master) to publish to PyPI.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+  build:
+    name: build & verify
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Verify the tag is on the main branch
+        run: |
+          for branch in main master; do
+            git fetch --no-tags origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" 2>/dev/null || true
+            if git rev-parse --verify --quiet "refs/remotes/origin/${branch}" > /dev/null \
+              && git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/${branch}"; then
+              echo "✔ ${GITHUB_REF_NAME} is on ${branch}"
+              exit 0
+            fi
+          done
+          echo "::error::${GITHUB_REF_NAME} is not on the main branch (main/master); refusing to publish."
+          echo "Merge the commit into main/master, push it, then move the tag: git push origin :${GITHUB_REF_NAME} && git tag -f ${GITHUB_REF_NAME} && git push origin ${GITHUB_REF_NAME}"
+          exit 1
+
+      - name: Verify tag matches package version
+        run: |
+          python - <<'PY'
+          import os, pathlib, re, sys, tomllib
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          version = pyproject["project"]["version"]
+          init = pathlib.Path("agent7/__init__.py").read_text()
+          init_version = re.search(r'__version__\s*=\s*"([^"]+)"', init).group(1)
+
+          problems = []
+          if tag != f"v{version}":
+              problems.append(f"tag {tag!r} does not match pyproject version {version!r} (expected tag v{version})")
+          if init_version != version:
+              problems.append(f"agent7/__init__.py __version__ {init_version!r} != pyproject version {version!r}")
+
+          if problems:
+              for p in problems:
+                  print(f"::error::{p}")
+              sys.exit(1)
+
+          print(f"✔ releasing {tag} ({pyproject['project']['name']} {version})")
+          PY
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Twine check
+        run: python -m twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/agent7
+    permissions:
+      id-token: write # OIDC trusted publishing, no API token needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # Already-published versions are rejected by PyPI; bump the version
+        # instead of reusing a tag. Prefer an API token over OIDC? Add
+        # `with: password: ${{ secrets.PYPI_API_TOKEN }}`.
+
+  github-release:
+    name: GitHub release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag

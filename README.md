@@ -109,3 +109,51 @@ triggers the same compaction manually.
 
 If that kind of "small" is exactly what you want, this is enough. If it's missing
 the abstraction you had in mind, that omission is probably the point — not an oversight.
+
+## Releasing
+
+CI (`.github/workflows/ci.yml`) runs the unittest suite on Python 3.10–3.13 for every
+push to `main`/`master` and every pull request. It also builds the sdist + wheel with
+`python -m build`, runs `twine check --strict`, and installs the wheel in a clean venv
+to run `agent7 --help`.
+
+Publishing to PyPI is tag-driven (`.github/workflows/release.yml`):
+
+```bash
+# 1. bump the version in pyproject.toml and agent7/__init__.py (they must match)
+# 2. commit it on main/master and push
+# 3. tag and push the tag — this is what publishes
+git tag v0.2.0
+git push origin master --follow-tags
+```
+
+On a `v*` tag the workflow re-runs the tests, verifies the tag commit is on the main
+branch, verifies the tag equals the package version, builds the sdist + wheel, runs
+`twine check --strict`, publishes with `pypa/gh-action-pypi-publish`, then creates a
+GitHub release.
+
+Publishing authenticates through OIDC trusted publishing: PyPI hands the workflow a
+short-lived token, so no API token is stored in GitHub, and PEP 740 attestations are
+attached by default.
+
+One-time setup on PyPI (see *Your projects → agent7 → Publishing → Add a new pending
+publisher / GitHub*):
+
+| Field | Value |
+|---|---|
+| Owner | `r1cardohj` |
+| Repository name | `agent7` |
+| Workflow name | `release.yml` |
+| Environment name | `pypi` |
+
+The environment name is optional, but if you set it here it must match the `environment:`
+name in the `publish` job.
+
+Notes:
+
+- Publishing an already-released version fails on purpose (PyPI rejects duplicate
+  filenames). Bump the version rather than moving a tag.
+- Prefer an API token over OIDC? Set `secrets.PYPI_API_TOKEN` and add
+  `with: password: ${{ secrets.PYPI_API_TOKEN }}` to the publish step.
+- CI installs the test matrix with pip, not `uv sync`, so whatever index was baked into
+  `uv.lock` on a dev machine cannot leak into CI.
