@@ -59,6 +59,12 @@ class ApiKeyProvider:
     env_keys: tuple[str, ...]
     default_base: str
     prompt: str
+    default_model: str = ""
+    login_name: str = ""
+
+    @property
+    def preferred_login(self) -> str:
+        return self.login_name or self.id
 
     def resolve(self) -> Credential | None:
         base = os.environ.get("AGENT7_BASE_URL", "").strip() or self.default_base
@@ -107,7 +113,9 @@ class ApiKeyProvider:
 
 _BUILTINS = [
     ApiKeyProvider("deepseek", ("ds",), ("DEEPSEEK_API_KEY",),
-                   "https://api.deepseek.com", "DeepSeek API key"),
+                   "https://api.deepseek.com", "DeepSeek API key", "deepseek-chat"),
+    ApiKeyProvider("xai", ("grok",), ("XAI_API_KEY", "GROK_API_KEY"),
+                   "https://api.x.ai/v1", "xAI API key (grok)", "grok-4", "grok"),
 ]
 _REGISTRY: dict[str, ApiKeyProvider] = {}
 for _p in _BUILTINS:
@@ -117,6 +125,11 @@ for _p in _BUILTINS:
 
 def get_provider(name: str) -> ApiKeyProvider | None:
     return _REGISTRY.get(name.lower().replace("_", "-"))
+
+def default_model_for(provider_id: str | None) -> str:
+    """Fallback model when a provider's /models list is unavailable."""
+    p = get_provider(provider_id or "")
+    return p.default_model if p and p.default_model else _BUILTINS[0].default_model
 
 def list_providers() -> list[ApiKeyProvider]:
     return list(_BUILTINS)
@@ -134,6 +147,9 @@ def resolve_default() -> tuple[ApiKeyProvider, Credential] | None:
         if c := p.resolve():
             return p, c
     return None
+
+def login_hints() -> str:
+    return " | ".join(f"/login {p.preferred_login}" for p in _BUILTINS)
 
 def describe_found() -> list[tuple[str, str]]:
     active = load_auth().get("active")

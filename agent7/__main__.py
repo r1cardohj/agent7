@@ -25,7 +25,14 @@ from rich.text import Text
 
 from .agent import SHELL, SYSTEM, Interrupted, run_agent, tool_summary
 from .commands import dispatch, fetch_models, known_names, switch_model
-from .providers import get_provider, resolve_all, resolve_default
+from .providers import (
+    default_model_for,
+    get_provider,
+    list_providers,
+    login_hints,
+    resolve_all,
+    resolve_default,
+)
 from .session import Session, format_context_prompt
 from .store import list_sessions, new_id, resume, resume_messages, save, timestamp
 
@@ -242,7 +249,8 @@ class ReplCompleter(Completer):
                     if mid.startswith(prefix) or bare.startswith(prefix) or prefix.lower() in mid.lower():
                         yield Completion(mid, start_position=-len(prefix), display=mid)
             elif cmd in ("login", "logout"):
-                for mid in ("deepseek",):
+                names = [n for p in list_providers() for n in (p.id, *p.aliases)]
+                for mid in names:
                     if mid.startswith(prefix.lower()):
                         yield Completion(mid, start_position=-len(prefix), display=mid)
 
@@ -364,9 +372,10 @@ async def async_main(argv: list[str] | None = None) -> None:
         prov, cred = picked
         client = prov.make_client(cred)
     else:
-        client = AsyncOpenAI(api_key="missing", base_url="https://api.deepseek.com")
+        client = AsyncOpenAI(api_key="missing", base_url=list_providers()[0].default_base)
         if task:
-            print("No credentials. Set DEEPSEEK_API_KEY,\n"
+            keys = ", ".join(k for p in list_providers() for k in p.env_keys)
+            print(f"No credentials. Set {keys},\n"
                   "or run `uv run agent7` and `/login`.", file=sys.stderr)
             sys.exit(1)
         prov, cred = None, None
@@ -397,7 +406,7 @@ async def async_main(argv: list[str] | None = None) -> None:
             if ids:
                 await switch_model(state, ids[0])
             else:
-                state.set_model("deepseek-chat")
+                state.set_model(default_model_for(state.provider_id))
         err.print(f"[dim]# agent7  model={state.model_ref or state.model}  "
                   f"providers=[{','.join(state.credentials) or 'none'}]  "
                   f"shell={SHELL.name}  cwd={state.cwd}[/dim]")
@@ -413,7 +422,7 @@ async def async_main(argv: list[str] | None = None) -> None:
         quit_hint = "empty line / Ctrl-Z to quit" if sys.platform == "win32" else "empty line / Ctrl-D to quit"
         err.print(f"[dim]# REPL  /help · /login · /model · @file · {quit_hint}[/dim]")
         if not all_creds:
-            err.print("[dim]# no credentials — /login deepseek[/dim]")
+            err.print(f"[dim]# no credentials — {login_hints()}[/dim]")
 
         def _vi_rprompt() -> HTML:
             mode = get_app().vi_state.input_mode
@@ -444,7 +453,7 @@ async def async_main(argv: list[str] | None = None) -> None:
                     err.print(f"[dim]{row}[/dim]")
                 continue
             if state.credential is None:
-                err.print("[yellow]# login first: /login deepseek[/yellow]")
+                err.print(f"[yellow]# login first: {login_hints()}[/yellow]")
                 continue
             try:
                 await _run_once(state, line, on_saved=persist)

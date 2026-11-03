@@ -1,19 +1,19 @@
 # agent7
 
-**The simplest coding agent. ~1500 lines of Python, four tools, one loop.**
+**The simplest coding agent. ~1600 lines of Python, four tools, one loop.**
 
 No orchestration: no plan mode, no subagents, no parallel tasks, no background jobs.
 You give it one sentence; it reads files, edits files, runs commands, then stops.
 Built for people who work on one thing at a time — you hold one task in your head, and so does it.
 
 ```
-agent7/        1482 lines
-  __main__.py   434   CLI + REPL + @path completion + session wiring
-  agent.py      398   tools + agent loop + compaction
-  commands.py   236   slash commands + model switching
-  providers.py  145   API key auth
+agent7/        1634 lines
+  agent.py      513   tools + agent loop + compaction
+  __main__.py   472   CLI + REPL + @path completion + session wiring
+  commands.py   237   slash commands + model switching
+  providers.py  161   API key auth (DeepSeek, Grok)
   store.py      149   atomic JSON session snapshots
-  session.py     97   session state
+  session.py     99   session state
   __init__.py     3   version
 ```
 
@@ -30,16 +30,19 @@ pip install agent7
 Paste an API key; there is no OAuth. Keys are stored in `~/.config/agent7/auth.json`.
 
 ```bash
-export DEEPSEEK_API_KEY=sk-...
-# export AGENT7_MODEL=deepseek-flash
+export DEEPSEEK_API_KEY=sk-...   # or /login deepseek
+export XAI_API_KEY=xai-...       # Grok, from console.x.ai  (or /login grok)
+# export AGENT7_MODEL=grok-4
 ```
 
 You can also log in from inside the REPL:
 
 ```text
 /login deepseek
-/model                   # list models for the logged-in provider
+/login grok              # xAI — Grok models
+/model                   # list models for every logged-in provider
 /model deepseek-flash
+/model grok-4
 ```
 
 ## Usage
@@ -62,7 +65,7 @@ store API keys. Hard process kills can lose the in-progress turn.
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
 Exit with an empty line or Ctrl-D.
 
-Reasoning models (DeepSeek) stream their `reasoning_content` live: it shows up
+Reasoning models (DeepSeek, Grok) stream their `reasoning_content` live: it shows up
 dimmed under a `thinking` header, before the answer and above each tool line. It is
 display only — reasoning is never replayed into the prompt or the saved session.
 

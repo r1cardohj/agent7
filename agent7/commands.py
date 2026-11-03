@@ -14,6 +14,7 @@ from .providers import (
     get_provider,
     list_providers,
     load_auth,
+    login_hints,
     resolve_all,
 )
 from .session import Session, fmt_tokens, format_usage
@@ -86,8 +87,9 @@ def resolve_model_ref(session: Session, name: str) -> tuple[str, str, str] | str
         return ref.partition("/")[0], ref.partition("/")[2], ref
     if len(matches) > 1:
         return f"ambiguous model {raw!r} — pick one of: {', '.join(matches)}"
-    if raw.lower().startswith("deepseek"):
-        return "deepseek", raw, f"deepseek/{raw}"
+    for p in list_providers():
+        if any(raw.lower().startswith(n) for n in (p.id, *p.aliases)):
+            return p.id, raw, f"{p.id}/{raw}"
     if session.provider_id:
         return session.provider_id, raw, f"{session.provider_id}/{raw}"
     return f"unknown model {raw!r} — try /model"
@@ -102,8 +104,7 @@ async def switch_model(session: Session, name: str) -> CommandResult:
         return CommandResult(message=f"unknown provider {provider_id!r}")
     cred = session.credentials.get(provider_id) or p.resolve()
     if cred is None:
-        alias = p.aliases[0] if p.aliases else p.id
-        return CommandResult(message=f"no credentials for {provider_id} — /login {alias}")
+        return CommandResult(message=f"no credentials for {provider_id} — /login {p.preferred_login}")
     session.remember(provider_id, cred)
     if session.provider_id != provider_id or session.credential is not cred:
         await session.apply(p, cred)
@@ -139,7 +140,7 @@ async def _activate(session: Session, prefer: str | None = None) -> CommandResul
             pid = next(iter(session.credentials))
             target, cred = get_provider(pid), session.credentials[pid]
     if not target or not cred:
-        return CommandResult(message="no credentials — try /login deepseek")
+        return CommandResult(message=f"no credentials — try {login_hints()}")
     await session.apply(target, cred)
     try:
         ids, note = await fetch_models(session, refresh=True), ""
@@ -191,11 +192,11 @@ def cmd_status(session: Session, args: list[str]) -> CommandResult:
         f"{format_usage(session)}\nbase_url={session.client.base_url}"
     ))
 
-@command("login", help="paste API key  (/login deepseek)")
+@command("login", help="paste API key  (/login deepseek | /login grok)")
 async def cmd_login(session: Session, args: list[str]) -> CommandResult:
     if not args:
         rows = describe_found()
-        names = " | ".join(p.id for p in list_providers())
+        names = " | ".join(p.preferred_login for p in list_providers())
         lines = [f"usage: /login <provider>   ({names})", f"auth file: {agent7_auth_path()}"]
         lines += (["found:"] + [f"  {a}  {b}" for a, b in rows]) if rows else ["found: (none)"]
         if session.provider_id:
@@ -220,7 +221,7 @@ def cmd_compact(session: Session, args: list[str]) -> CommandResult:
         return CommandResult(message="compact: nothing to shrink (history short or already small)")
     return CommandResult(message=f"compact: shrunk {n} message(s); recent turns kept intact")
 
-@command("logout", help="clear saved key  (/logout deepseek)")
+@command("logout", help="clear saved key  (/logout deepseek | /logout grok)")
 def cmd_logout(session: Session, args: list[str]) -> CommandResult:
     if not args:
         keys = [p.id for p in list_providers() if p.id in load_auth()]
