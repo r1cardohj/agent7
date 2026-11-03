@@ -68,8 +68,15 @@ class ReplyNoticeTests(unittest.TestCase):
     def test_whitespace_answer_gets_the_no_text_note(self) -> None:
         self.assertEqual(reply_notice("\n  \n"), NO_TEXT_NOTICE)
 
-    def test_turn_cap_is_reported(self) -> None:
-        self.assertEqual(reply_notice("(stopped after 30 turns)"), "(stopped after 30 turns)")
+    def test_turn_cap_is_reported_with_recovery_guidance(self) -> None:
+        notice = reply_notice("(stopped after 30 turns)")
+        self.assertIsNotNone(notice)
+        assert notice is not None
+        self.assertIn("(stopped after 30 turns)", notice)
+        self.assertIn("task may be unfinished", notice)
+        self.assertIn("session is preserved", notice)
+        self.assertIn('agent7 -r "continue"', notice)
+        self.assertIn('agent7 --max-turns 500 -r "continue"', notice)
 
     def test_output_limit_gets_its_own_note(self) -> None:
         self.assertEqual(reply_notice("", "length"), TRUNCATED_NOTICE)
@@ -119,9 +126,13 @@ class RunOnceSilenceTests(unittest.TestCase):
         self.run_once([[_bash("echo hi")], [_chunk(content="", finish_reason="length")]])
         self.assertIn("output token limit", self.out())
 
-    def test_turn_cap_is_printed(self) -> None:
+    def test_turn_cap_is_printed_with_recovery_guidance(self) -> None:
         self.run_once([[_bash("echo 1")], [_bash("echo 2")], [_bash("echo 3")]], max_turns=2)
         self.assertIn("(stopped after 2 turns)", self.out())
+        self.assertIn("task may be unfinished", self.out())
+        self.assertIn("session is preserved", self.out())
+        self.assertIn('agent7 -r "continue"', self.out())
+        self.assertIn('agent7 --max-turns 500 -r "continue"', self.out())
 
     def test_normal_answer_prints_no_note(self) -> None:
         self.run_once([[_bash("echo hi")], [_chunk(content="done")]])

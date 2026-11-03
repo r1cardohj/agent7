@@ -78,8 +78,11 @@ are escaped (`@my\ file.txt`), so the path the model sees is the path it can rea
 
 `--cwd` sets the working directory. `--max-turns` caps the loop at **200 model rounds
 per task** — high enough that ordinary work never hits it, low enough to stop a runaway.
-When it runs out you get `# (stopped after N turns)`; the transcript is intact, so just
-say `continue` (or rerun with `AGENT7_MAX_TURNS=500 agent7 -r "continue"`).
+The current model round and its tool calls finish before the run pauses. When it runs out,
+a yellow notice explains that the task may be unfinished and how to recover. The session is
+preserved: type `continue` in the REPL, run `agent7 -r "continue"` for a one-shot, or use
+`agent7 --max-turns 500 -r "continue"` to resume with a higher cap. Reaching the cap never
+silently starts a new session or extends the same run indefinitely.
 
 The cap is **per run**, not per session: `-r` never pins you to the `--max-turns` an
 already-saved session was created with. Precedence is `--max-turns` > `$AGENT7_MAX_TURNS`

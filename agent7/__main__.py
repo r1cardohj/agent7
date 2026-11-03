@@ -274,11 +274,16 @@ class ReplCompleter(Completer):
 NO_TEXT_NOTICE = "no text in the reply — the model stopped without content (retry, or /model)"
 TRUNCATED_NOTICE = "no text in the reply — the model hit the output token limit (retry with a smaller step)"
 STOPPED_PREFIX = "(stopped after "
+TURN_LIMIT_GUIDANCE = (
+    "The task may be unfinished; your session is preserved.\n"
+    "Type `continue` in the REPL, or run `agent7 -r \"continue\"`.\n"
+    "To resume with a higher cap: `agent7 --max-turns 500 -r \"continue\"`."
+)
 
 def reply_notice(answer: str, finish_reason: str | None = None) -> str | None:
-    """Dim note for a run that produced nothing visible on screen."""
-    if answer.startswith(STOPPED_PREFIX):  # "ran out of turns" is itself the message
-        return answer
+    """Explain an empty reply or a turn-limit pause, including how to recover."""
+    if answer.startswith(STOPPED_PREFIX):
+        return f"{answer}\n{TURN_LIMIT_GUIDANCE}"
     if answer.strip():
         return None
     return TRUNCATED_NOTICE if finish_reason == "length" else NO_TEXT_NOTICE
@@ -303,9 +308,11 @@ async def _run_agent_once(session: Session, task: str) -> str:
             on_compact=lambda n: err.print(f"[dim]# compacted {n} message(s)[/dim]"),
             on_finish=finish.append,
         )
-    # never leave a tool call as the last thing on screen
+    # A turn-limit pause is a warning, not an invisible or successful final answer.
     if notice := reply_notice(answer, finish[-1] if finish else None):
-        err.print(f"[dim]# {notice}[/dim]")
+        style = "yellow" if answer.startswith(STOPPED_PREFIX) else "dim"
+        for line in notice.splitlines():
+            err.print(f"[{style}]# {line}[/{style}]")
     return answer
 
 def _positive_int(raw: str) -> int:
