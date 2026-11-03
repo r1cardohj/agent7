@@ -377,7 +377,7 @@ async def async_main(argv: list[str] | None = None) -> None:
             except Interrupted:
                 err.print("\n[dim]# interrupted[/dim]")
             return
-        quit_hint = "empty line / Ctrl-Z to quit" if sys.platform == "win32" else "empty line / Ctrl-D to quit"
+        quit_hint = "Ctrl-Z to quit" if sys.platform == "win32" else "Ctrl-D to quit"
         err.print(f"[dim]# REPL  /help · /login · /model · @file · {quit_hint}[/dim]")
         if not all_creds:
             err.print(f"[dim]# no credentials — {login_hints()}[/dim]")
@@ -403,7 +403,7 @@ async def async_main(argv: list[str] | None = None) -> None:
                 print(file=sys.stderr)
                 break
             if not line:
-                break
+                continue
             result = await dispatch(state, line)
             persist()
             if result is not None:

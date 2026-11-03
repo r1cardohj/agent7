@@ -61,7 +61,7 @@ in the saved context. Files live in `${XDG_STATE_HOME:-~/.local/state}/agent7/se
 store API keys. Hard process kills can lose the in-progress turn.
 
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
-Exit with an empty line or Ctrl-D.
+Exit with Ctrl-D (or Ctrl-Z on Windows).
 
 Reasoning models (DeepSeek, Grok) stream their `reasoning_content` live: it shows up
 dimmed under a `thinking` header, before the answer and above each tool line. It is
