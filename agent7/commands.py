@@ -110,6 +110,7 @@ async def switch_model(session: Session, name: str) -> CommandResult:
         await session.apply(p, cred)
     old = session.model_ref or session.model
     session.set_model(model_id, ref=ref)
+    session.refresh_system()
     limit = f"  context={fmt_tokens(session.context_limit)}" if session.context_limit else ""
     return CommandResult(message=f"model: {old} → {ref}{limit}")
 
