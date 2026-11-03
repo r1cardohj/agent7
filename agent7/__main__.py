@@ -366,7 +366,6 @@ async def async_main(argv: list[str] | None = None) -> None:
                 await switch_model(state, ids[0])
             else:
                 state.set_model(default_model_for(state.provider_id))
-        state.refresh_system()
         err.print(f"[dim]# agent7  model={state.model_ref or state.model}  "
                   f"providers=[{','.join(state.credentials) or 'none'}]  "
                   f"shell={SHELL.name}  cwd={state.cwd}[/dim]")

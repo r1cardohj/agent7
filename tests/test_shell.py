@@ -7,10 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent7.agent import (
-    DEEPSEEK_RL_SYSTEM,
     SHELL,
     SYSTEM,
-    is_deepseek_model,
     make_system,
     resolve_shell,
     tool_bash,
@@ -59,15 +57,6 @@ class ResolveShellTests(unittest.TestCase):
         text = make_system(sh)
         self.assertIn("via bash", text)
         self.assertIn(SHELL.name, SYSTEM)  # import-time SYSTEM matches live shell
-
-    def test_deepseek_uses_frozen_rl_persona(self) -> None:
-        self.assertTrue(is_deepseek_model("deepseek-chat"))
-        self.assertTrue(is_deepseek_model("deepseek-flash"))
-        self.assertTrue(is_deepseek_model("other", provider_id="deepseek"))
-        self.assertFalse(is_deepseek_model("grok-4"))
-        self.assertEqual(make_system(model="deepseek-chat"), DEEPSEEK_RL_SYSTEM)
-        self.assertEqual(make_system(model="grok-4", provider_id="deepseek"), DEEPSEEK_RL_SYSTEM)
-        self.assertNotEqual(make_system(model="grok-4"), DEEPSEEK_RL_SYSTEM)
 
 
 class BashToolShellTests(unittest.TestCase):

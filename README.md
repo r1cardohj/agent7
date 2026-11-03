@@ -7,13 +7,13 @@ You give it one sentence; it reads files, edits files, runs commands, then stops
 Built for people who work on one thing at a time — you hold one task in your head, and so does it.
 
 ```
-agent7/        1602 lines
-  agent.py      535   tools + agent loop + compaction
-  __main__.py   431   CLI + REPL + @path completion + session wiring
-  commands.py   238   slash commands + model switching
+agent7/        1570 lines
+  agent.py      513   tools + agent loop + compaction
+  __main__.py   430   CLI + REPL + @path completion + session wiring
+  commands.py   237   slash commands + model switching
   providers.py  161   API key auth (DeepSeek, Grok)
   store.py      127   one JSON snapshot per workspace
-  session.py    107   session state
+  session.py     99   session state
   __init__.py     3   version
 ```
 
@@ -91,24 +91,11 @@ Need more capability? Let the agent use `bash`.
 
 On startup agent7 picks a shell from `sys.platform`: **Git Bash → PowerShell → cmd** on
 Windows, **bash** elsewhere. The choice is written into the system prompt so the model
-matches the host (except DeepSeek — see below). Override with
-`AGENT7_SHELL=bash|powershell|cmd|/path/to/shell`.
+matches the host. Override with `AGENT7_SHELL=bash|powershell|cmd|/path/to/shell`.
 
 Tools run **serially**, one after another — so the log always reads in order and
 you never get three outputs interleaved. Edits are applied without a confirmation
 prompt; you just get a one-line diff stat.
-
-## DeepSeek prompt
-
-When the active model is a DeepSeek model (name contains `deepseek`, or the
-provider is `deepseek`), the system prompt is the frozen RL persona from DeepSeek
-Harness Minimal — a single sentence:
-
-`You are a helpful software engineer assistant.`
-
-Other providers keep the longer coding-agent prompt. Tools stay the same four
-either way; only the system text changes. Switching `/model` refreshes the
-system message for the new model.
 
 ## Context
 

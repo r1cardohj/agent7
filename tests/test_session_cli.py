@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from agent7.__main__ import _parse_args, async_main
-from agent7.agent import DEEPSEEK_RL_SYSTEM, SYSTEM
+from agent7.agent import SYSTEM
 from agent7.store import load, save
 
 
@@ -46,8 +46,7 @@ class SessionCliTests(unittest.TestCase):
         snapshots = list((self.root / "state" / "agent7" / "sessions").glob("*.json"))
         self.assertEqual(len(snapshots), 1)
         data = load(self.cwd)
-        # default model is deepseek-chat → frozen RL persona
-        self.assertEqual(data["messages"], [{"role": "system", "content": DEEPSEEK_RL_SYSTEM}])
+        self.assertEqual(data["messages"], [{"role": "system", "content": SYSTEM}])
 
     def test_resume_passes_saved_context_to_agent(self) -> None:
         state = SimpleNamespace(

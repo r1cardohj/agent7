@@ -21,8 +21,6 @@ MAX_READ_CHARS, MAX_BASH_CHARS = 50_000, 12_000
 DEFAULT_READ_LINES, MAX_TURNS = 200, 50
 COMPACT_THRESHOLD, KEEP_USER_TURNS, KEEP_TOOL_RESULTS = 0.75, 3, 4
 TOOL_MAX_CHARS, ASSISTANT_MAX_CHARS = 2_000, 4_000
-DEEPSEEK_RL_SYSTEM = "You are a helpful software engineer assistant."
-
 class Interrupted(Exception):
     def __init__(self, partial: str = "") -> None:
         self.partial = partial
@@ -102,20 +100,7 @@ def _shell_for_name(name: str, platform: str) -> Shell:
     comspec = os.environ.get("COMSPEC", "cmd.exe")
     return Shell("cmd", (comspec, "/c"))
 
-def is_deepseek_model(model: str, *, provider_id: str | None = None) -> bool:
-    """DeepSeek API models get the frozen RL persona; other providers keep the long prompt."""
-    if (provider_id or "").lower() == "deepseek":
-        return True
-    return "deepseek" in (model or "").lower()
-
-def make_system(
-    shell: Shell | None = None,
-    *,
-    model: str | None = None,
-    provider_id: str | None = None,
-) -> str:
-    if model is not None and is_deepseek_model(model, provider_id=provider_id):
-        return DEEPSEEK_RL_SYSTEM
+def make_system(shell: Shell | None = None) -> str:
     sh = shell or resolve_shell()
     hint = _SHELL_HINTS.get(sh.name, sh.name)
     os_name = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
@@ -133,13 +118,6 @@ def make_system(
         "unchanged regions. Use write only for new files or complete rewrites. "
         "Run tests only after a batch of edits. Finish with a short summary."
     )
-
-def apply_system(messages: list[dict[str, Any]], system: str) -> None:
-    """Replace or insert the leading system message in place."""
-    if messages and messages[0].get("role") == "system":
-        messages[0]["content"] = system
-    else:
-        messages.insert(0, {"role": "system", "content": system})
 
 SHELL = resolve_shell()
 SYSTEM = make_system(SHELL)

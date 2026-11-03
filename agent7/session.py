@@ -78,14 +78,6 @@ class Session:
         self.model_ref = ref or (f"{self.provider_id}/{model}" if self.provider_id else model)
         self.context_limit = resolve_context_limit(model)
 
-    def refresh_system(self) -> None:
-        from .agent import SHELL, apply_system, make_system
-
-        apply_system(
-            self.messages,
-            make_system(SHELL, model=self.model, provider_id=self.provider_id),
-        )
-
     def update_usage(self, usage: dict[str, int]) -> None:
         self.prompt_tokens = usage.get("prompt_tokens")
         self.completion_tokens = usage.get("completion_tokens")
