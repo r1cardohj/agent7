@@ -6,10 +6,12 @@ import asyncio
 import difflib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -24,19 +26,101 @@ class Interrupted(Exception):
         self.partial = partial
         super().__init__(partial)
 
-SYSTEM = (
-    "You are a coding agent. Tools: read, write, edit, bash. "
-    "Explore before editing; read pages ~200 lines (offset/limit). "
-    "Use read for file contents — do not cat/sed via bash. "
-    "Use bash for search and listing (rg, grep, find, ls). "
-    "Use edit for precise changes (edits[].old_string must match exactly). "
-    "When changing multiple places in one file, use one edit call with multiple edits[] "
-    "instead of multiple edit calls. Each edits[].old_string is matched against the original "
-    "file, not after earlier edits. Do not emit overlapping or nested edits; merge nearby "
-    "changes into one edit. Keep old_string short but unique — do not pad with large "
-    "unchanged regions. Use write only for new files or complete rewrites. "
-    "Run tests only after a batch of edits. Finish with a short summary."
-)
+@dataclass(frozen=True)
+class Shell:
+    """Host shell used by the bash tool and named in the system prompt."""
+
+    name: str  # bash | powershell | cmd
+    argv: tuple[str, ...]  # prefix; the command string is appended as one arg
+
+_SHELL_HINTS = {
+    "bash": "rg, grep, find, ls (POSIX)",
+    "powershell": "rg if available, Get-ChildItem, Select-String (PowerShell)",
+    "cmd": "dir, findstr; rg if on PATH (cmd.exe)",
+}
+
+def _is_wsl_bash_stub(path: str) -> bool:
+    # Windows ships System32\bash.exe as a WSL launcher — skip it for local Git Bash.
+    norm = path.replace("/", "\\").lower()
+    return norm.endswith("\\system32\\bash.exe") or norm.endswith("\\sysnative\\bash.exe")
+
+def _git_bash_path() -> str | None:
+    found = shutil.which("bash")
+    if found and not _is_wsl_bash_stub(found):
+        return found
+    roots = [
+        os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+        os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
+        os.environ.get("LOCALAPPDATA", ""),
+    ]
+    for root in roots:
+        if not root:
+            continue
+        for rel in (r"Git\bin\bash.exe", r"Git\usr\bin\bash.exe", r"Programs\Git\bin\bash.exe"):
+            cand = Path(root) / rel
+            if cand.is_file():
+                return str(cand)
+    return None
+
+def resolve_shell(*, platform: str | None = None) -> Shell:
+    """Pick a shell from sys.platform (overridable via AGENT7_SHELL=bash|powershell|cmd|/path)."""
+    plat = sys.platform if platform is None else platform
+    override = os.environ.get("AGENT7_SHELL", "").strip()
+    if override:
+        key = override.lower()
+        if key in ("bash", "powershell", "cmd", "sh"):
+            return _shell_for_name("bash" if key == "sh" else key, plat)
+        # Treat as executable path.
+        base = Path(override).name.lower()
+        if "bash" in base:
+            return Shell("bash", (override, "-lc"))
+        if base in ("pwsh", "pwsh.exe") or "powershell" in base:
+            return Shell("powershell", (override, "-NoProfile", "-NonInteractive", "-Command"))
+        return Shell("cmd", (override, "/c"))
+    if plat == "win32":
+        if bash := _git_bash_path():
+            return Shell("bash", (bash, "-lc"))
+        if pwsh := shutil.which("pwsh") or shutil.which("powershell"):
+            return Shell("powershell", (pwsh, "-NoProfile", "-NonInteractive", "-Command"))
+        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        return Shell("cmd", (comspec, "/c"))
+    bash = shutil.which("bash") or "/bin/bash"
+    return Shell("bash", (bash, "-lc"))
+
+def _shell_for_name(name: str, platform: str) -> Shell:
+    if name == "bash":
+        if platform == "win32":
+            bash = _git_bash_path() or shutil.which("bash") or "bash"
+        else:
+            bash = shutil.which("bash") or "/bin/bash"
+        return Shell("bash", (bash, "-lc"))
+    if name == "powershell":
+        exe = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+        return Shell("powershell", (exe, "-NoProfile", "-NonInteractive", "-Command"))
+    comspec = os.environ.get("COMSPEC", "cmd.exe")
+    return Shell("cmd", (comspec, "/c"))
+
+def make_system(shell: Shell | None = None) -> str:
+    sh = shell or resolve_shell()
+    hint = _SHELL_HINTS.get(sh.name, sh.name)
+    os_name = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
+    return (
+        "You are a coding agent. Tools: read, write, edit, bash. "
+        "Explore before editing; read pages ~200 lines (offset/limit). "
+        "Use read for file contents — do not cat/sed via bash. "
+        f"Host OS: {os_name}. The bash tool runs commands via {sh.name}. "
+        f"Use bash for search and listing ({hint}). "
+        "Use edit for precise changes (edits[].old_string must match exactly). "
+        "When changing multiple places in one file, use one edit call with multiple edits[] "
+        "instead of multiple edit calls. Each edits[].old_string is matched against the original "
+        "file, not after earlier edits. Do not emit overlapping or nested edits; merge nearby "
+        "changes into one edit. Keep old_string short but unique — do not pad with large "
+        "unchanged regions. Use write only for new files or complete rewrites. "
+        "Run tests only after a batch of edits. Finish with a short summary."
+    )
+
+SHELL = resolve_shell()
+SYSTEM = make_system(SHELL)
 
 def _fn(name: str, desc: str, props: dict, required: list[str]) -> dict:
     return {
@@ -66,7 +150,7 @@ TOOLS: list[dict[str, Any]] = [
     _fn("edit", "Precise edits. One call may include multiple edits[] against the original file; no overlaps.",
         {"path": {"type": "string"}, "edits": {"type": "array", "items": _EDIT_ITEM}},
         ["path", "edits"]),
-    _fn("bash", "Shell in cwd. Output capped ~12k chars. Use for rg/grep/find/ls.",
+    _fn("bash", "Run a shell command in cwd (host shell). Output capped ~12k chars.",
         {"command": {"type": "string"}, "timeout": {"type": "integer"}}, ["command"]),
 ]
 
@@ -128,7 +212,7 @@ def tool_write(
     if on_preview:
         on_preview(_write_stats(fp, before, after, kind="write"))
     fp.parent.mkdir(parents=True, exist_ok=True)
-    fp.write_text(after, encoding="utf-8")
+    fp.write_text(after, encoding="utf-8", newline="\n")
     return f"wrote {len(after.encode('utf-8'))} bytes to {fp}"
 
 def tool_edit(
@@ -174,7 +258,7 @@ def tool_edit(
         return f"no changes: {fp}"
     if on_preview:
         on_preview(_write_stats(fp, before, after, kind="edit"))
-    fp.write_text(after, encoding="utf-8")
+    fp.write_text(after, encoding="utf-8", newline="\n")
     n = len(edits)
     return f"edited {n} span{'s' if n != 1 else ''} in {fp}"
 
@@ -183,11 +267,14 @@ def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("LANG", "C.UTF-8")
     env.setdefault("LC_ALL", "C.UTF-8")
+    argv = [*SHELL.argv, command]
     try:
         proc = subprocess.run(
-            command, shell=True, cwd=cwd, capture_output=True,
+            argv, cwd=cwd, capture_output=True,
             encoding="utf-8", errors="replace", timeout=timeout or 60, env=env,
         )
+    except FileNotFoundError:
+        return f"error: shell not found: {SHELL.argv[0]}"
     except subprocess.TimeoutExpired as e:
         return _truncate(
             f"timeout after {timeout or 60}s\n{(e.stdout or '')}{(e.stderr or '')}", MAX_BASH_CHARS

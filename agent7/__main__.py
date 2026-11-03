@@ -24,7 +24,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
-from .agent import SYSTEM, Interrupted, run_agent, tool_summary
+from .agent import SHELL, SYSTEM, Interrupted, run_agent, tool_summary
 from .commands import dispatch, fetch_models, known_names, switch_model
 from .providers import get_provider, resolve_all, resolve_default
 from .session import Session, format_context_prompt
@@ -375,7 +375,8 @@ async def async_main(argv: list[str] | None = None) -> None:
             else:
                 state.set_model("deepseek-chat")
         err.print(f"[dim]# agent7  model={state.model_ref or state.model}  "
-                  f"providers=[{','.join(state.credentials) or 'none'}]  cwd={state.cwd}[/dim]")
+                  f"providers=[{','.join(state.credentials) or 'none'}]  "
+                  f"shell={SHELL.name}  cwd={state.cwd}[/dim]")
         label = f"  name={session_name}" if session_name else ""
         action = "resumed" if snapshot else "new"
         err.print(f"[dim]# {action} session {session_id}{label}[/dim]")
@@ -385,7 +386,8 @@ async def async_main(argv: list[str] | None = None) -> None:
             except Interrupted:
                 err.print("\n[dim]# interrupted[/dim]")
             return
-        err.print("[dim]# REPL  /help · /login · /model · @file · empty line / Ctrl-D to quit[/dim]")
+        quit_hint = "empty line / Ctrl-Z to quit" if sys.platform == "win32" else "empty line / Ctrl-D to quit"
+        err.print(f"[dim]# REPL  /help · /login · /model · @file · {quit_hint}[/dim]")
         if not all_creds:
             err.print("[dim]# no credentials — /login deepseek | /login kimi[/dim]")
 
