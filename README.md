@@ -1,18 +1,20 @@
 # agent7
 
-**The simplest coding agent. ~1200 lines of Python, four tools, one loop.**
+**The simplest coding agent. ~1500 lines of Python, four tools, one loop.**
 
 No orchestration: no plan mode, no subagents, no parallel tasks, no background jobs.
 You give it one sentence; it reads files, edits files, runs commands, then stops.
 Built for people who work on one thing at a time — you hold one task in your head, and so does it.
 
 ```
-agent7/        1252 lines
-  __main__.py   355   CLI + REPL + @path completion
+agent7/        1482 lines
+  __main__.py   434   CLI + REPL + @path completion + session wiring
   agent.py      398   tools + agent loop + compaction
   commands.py   236   slash commands + model switching
   providers.py  161   API key auth
+  store.py      149   atomic JSON session snapshots
   session.py    101   session state
+  __init__.py     3   version
 ```
 
 ## Install
@@ -48,8 +50,18 @@ You can also log in from inside the REPL:
 
 ```bash
 uv run agent7 "create hello.py that prints hi"   # one-shot
-uv run agent7                                    # REPL
+uv run agent7                                    # new REPL session
+uv run agent7 -r                                 # resume latest session in this cwd
+uv run agent7 -r <session-id>                    # resume a specific session
+uv run agent7 session -l                         # list this cwd's sessions
+uv run agent7 session "fix authentication"       # new named REPL session
 ```
+
+Sessions are saved automatically after tasks, commands, interruptions, and exit.
+`agent7 session -l` prints tab-separated `ID`, `NAME`, and `PATH` columns and needs no login.
+Snapshots contain resumable model context, not a separate full transcript; compaction is reflected
+in the saved context. Files live in `${XDG_STATE_HOME:-~/.local/state}/agent7/sessions/` and do not
+store API keys. Hard process kills can lose the in-progress turn.
 
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
 Exit with an empty line or Ctrl-D.
@@ -64,16 +76,16 @@ when it runs out you get `# (stopped after N turns)`). A run that ends with no v
 text never ends silently: you get either `# (stopped after N turns)`,
 `# no text in the reply …` or `# … hit the output token limit …`.
 
-## Only four tools
+## Tools
 
 | Tool | What it does | Output budget |
 |---|---|---|
 | `read` | Read a file with line numbers | 200 lines per call by default; page with `offset=` |
-| `write` | Write a file; with `old_string=` replace one unique span | `path  +N -M` diff stats |
-| `bash` | Run a shell command in the cwd | ~12k chars |
-| `grep` | rg/grep search | 100 lines / ~12k chars |
+| `write` | Create or overwrite a whole file | `+N -M` diff stats |
+| `edit` | Precise replacements; one call may include multiple `edits[]` against the original file (no overlaps) | `+N -M` diff stats |
+| `bash` | Shell in the cwd (incl. rg/grep/find/ls) | ~12k chars |
 
-That's it. No `edit`, no `list_dir`, no `todo`, no `task`.
+That's it. No `grep`, no `list_dir`, no `todo`, no `task`.
 Need more capability? Let the agent use `bash`.
 
 Tools run **serially**, one after another — so the log always reads in order and

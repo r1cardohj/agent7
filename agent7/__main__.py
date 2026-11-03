@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -27,6 +28,7 @@ from .agent import SYSTEM, Interrupted, run_agent, tool_summary
 from .commands import dispatch, fetch_models, known_names, switch_model
 from .providers import get_provider, resolve_all, resolve_default
 from .session import Session, format_context_prompt
+from .store import list_sessions, new_id, resume, resume_messages, save, timestamp
 
 console, err = Console(stderr=False), Console(stderr=True)
 _THINK_FRAMES = ("thinking   ", "thinking.  ", "thinking.. ", "thinking...")
@@ -138,12 +140,15 @@ class ReplyPrinter:
         line = (stats.splitlines() or [""])[0]
         if not line:
             return
-        path, _, rest = line.rpartition("  ")
-        head = Text("# write  ", style="dim")
-        head.append(path or line, style="dim")
-        if path and rest.startswith("+"):
+        kind, sep, rest = line.partition("  ")
+        if not sep or kind not in ("write", "edit"):
+            kind, rest = "write", line
+        path, _, counts = rest.rpartition("  ")
+        head = Text(f"# {kind}  ", style="dim")
+        head.append(path or rest, style="dim")
+        if path and counts.startswith("+"):
             head.append("  ")
-            for part in rest.split():
+            for part in counts.split():
                 head.append(part + " ", style="green bold" if part[0] == "+" else "red bold")
             head.right_crop(1)
         err.print(head)
@@ -229,7 +234,14 @@ def reply_notice(answer: str, finish_reason: str | None = None) -> str | None:
         return None
     return TRUNCATED_NOTICE if finish_reason == "length" else NO_TEXT_NOTICE
 
-async def _run_once(session: Session, task: str) -> str:
+async def _run_once(session: Session, task: str, *, on_saved: Callable[[], None] | None = None) -> str:
+    try:
+        return await _run_agent_once(session, task)
+    finally:
+        if on_saved:
+            on_saved()
+
+async def _run_agent_once(session: Session, task: str) -> str:
     finish: list[str] = []
     with ReplyPrinter() as rp:
         answer = await run_agent(
@@ -247,17 +259,76 @@ async def _run_once(session: Session, task: str) -> str:
         err.print(f"[dim]# {notice}[/dim]")
     return answer
 
-async def async_main(argv: list[str] | None = None) -> None:
-    _force_utf8_stdio()
-    _load_dotenv()
+def _print_sessions(cwd: Path) -> None:
+    print("ID\tNAME\tPATH")
+    for snapshot in list_sessions(cwd):
+        print(f"{snapshot['id']}\t{snapshot['name'] or '-'}\t{snapshot['path']}")
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="agent7 — minimal coding agent")
     p.add_argument("task", nargs="*", help="task; omit for REPL")
     p.add_argument("--cwd", type=Path, default=None)
-    p.add_argument("--max-turns", type=int, default=30)
-    args = p.parse_args(argv)
+    p.add_argument("--max-turns", type=int, default=None)
+    p.add_argument("-r", "--resume", nargs="?", const="latest", metavar="ID",
+                   help="resume the latest workspace session, or the given ID")
+    p.add_argument("--session-list", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--session-name", help=argparse.SUPPRESS)
+    raw = sys.argv[1:] if argv is None else argv
+    # `session` is a reserved command; all other positional text remains a task.
+    # Only the first positional token is a command; options may have any values.
+    i = 0
+    while i < len(raw) and raw[i] != "--":
+        if raw[i] in ("--cwd", "--max-turns"):
+            i += 2
+        elif raw[i] in ("-r", "--resume"):
+            i += 2 if i + 1 < len(raw) and raw[i + 1] != "session" else 1
+        elif raw[i].startswith("-"):
+            i += 1
+        else:
+            break
+    if i < len(raw) and raw[i] == "session":
+        tail = raw[i + 1:]
+        name = " ".join(tail).strip()
+        if tail in (["-l"], ["--list"]):
+            command = ["--session-list"]
+        elif not name or any(c in name for c in "\t\r\n"):
+            p.error("session name must be non-empty and on one line")
+        else:
+            command = ["--session-name", name]
+        raw = [*raw[:i], *command]
+    return p.parse_args(raw)
+
+async def async_main(argv: list[str] | None = None) -> None:
+    _force_utf8_stdio()
+    _load_dotenv()
+    args = _parse_args(argv)
     task = " ".join(args.task).strip() or None
     cwd = (args.cwd or Path.cwd()).resolve()
-    model = os.environ.get("AGENT7_MODEL") or ""
+    snapshot = None
+    if args.session_list:
+        if args.resume or args.task:
+            raise SystemExit("session -l cannot be combined with a task or --resume")
+        _print_sessions(cwd)
+        return
+    if args.session_name is not None:
+        if args.resume:
+            raise SystemExit("session and --resume cannot be combined")
+        task = None  # A named session opens the REPL; a bare task remains one-shot.
+    if args.resume:
+        try:
+            snapshot = resume(cwd, args.resume)
+        except ValueError as e:
+            raise SystemExit(str(e)) from None
+    session_id = snapshot["id"] if snapshot else new_id()
+    session_name = snapshot["name"] if snapshot else args.session_name or ""
+    created_at = snapshot["created_at"] if snapshot else timestamp()
+    max_turns = (
+        args.max_turns if args.max_turns is not None
+        else snapshot["max_turns"] if snapshot else 30
+    )
+    model = os.environ.get("AGENT7_MODEL") or (
+        snapshot.get("model_ref", "") if snapshot else ""
+    )
 
     all_creds = resolve_all()
     picked = resolve_default()
@@ -276,11 +347,13 @@ async def async_main(argv: list[str] | None = None) -> None:
             sys.exit(1)
         prov, cred = None, None
     state = Session(
-        model=model or "pending", cwd=cwd, client=client, max_turns=args.max_turns,
-        messages=[{"role": "system", "content": SYSTEM}],
+        model=model or "pending", cwd=cwd, client=client, max_turns=max_turns,
+        messages=resume_messages(snapshot, SYSTEM) if snapshot else [{"role": "system", "content": SYSTEM}],
         provider_id=prov.id if prov else None, cred_source=cred.source if cred else None,
         credential=cred, credentials=dict(all_creds),
     )
+    def persist() -> None:
+        save(session_id, state, name=session_name, created_at=created_at)
     try:
         ids: list[str] = []
         if all_creds:
@@ -303,9 +376,12 @@ async def async_main(argv: list[str] | None = None) -> None:
                 state.set_model("deepseek-chat")
         err.print(f"[dim]# agent7  model={state.model_ref or state.model}  "
                   f"providers=[{','.join(state.credentials) or 'none'}]  cwd={state.cwd}[/dim]")
+        label = f"  name={session_name}" if session_name else ""
+        action = "resumed" if snapshot else "new"
+        err.print(f"[dim]# {action} session {session_id}{label}[/dim]")
         if task:
             try:
-                await _run_once(state, task)
+                await _run_once(state, task, on_saved=persist)
             except Interrupted:
                 err.print("\n[dim]# interrupted[/dim]")
             return
@@ -336,6 +412,7 @@ async def async_main(argv: list[str] | None = None) -> None:
             if not line:
                 break
             result = await dispatch(state, line)
+            persist()
             if result is not None:
                 for row in result.message.splitlines():
                     err.print(f"[dim]{row}[/dim]")
@@ -344,11 +421,14 @@ async def async_main(argv: list[str] | None = None) -> None:
                 err.print("[yellow]# login first: /login deepseek | /login kimi[/yellow]")
                 continue
             try:
-                await _run_once(state, line)
+                await _run_once(state, line, on_saved=persist)
             except (Interrupted, asyncio.CancelledError, KeyboardInterrupt):
                 err.print("\n[dim]# interrupted[/dim]")
     finally:
-        await state.client.close()
+        try:
+            persist()
+        finally:
+            await state.client.close()
 
 def main(argv: list[str] | None = None) -> None:
     asyncio.run(async_main(argv))
