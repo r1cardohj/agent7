@@ -24,6 +24,8 @@ def resolve_context_limit(model: str) -> int | None:
     key = model.lower().strip()
     if m := re.search(r"(?<![a-z0-9])(\d+)\s*k(?![a-z0-9])", key):
         return int(m.group(1)) * 1000
+    if m := re.search(r"(?<![a-z0-9])(\d+)\s*m(?![a-z0-9])", key):
+        return int(m.group(1)) * 1_000_000
     if "deepseek" in key:
         return 1_048_576 if "flash" in key else 128_000
     if "grok" in key:
@@ -38,14 +40,29 @@ def fmt_tokens(n: int) -> str:
     k = n / 1000
     return f"{k:.0f}k" if k >= 100 or abs(k - round(k)) < 0.05 else f"{k:.1f}k"
 
+def fmt_limit(n: int) -> str:
+    """A context limit in the unit its vendor prints: 1M, 256k, 128k.
+
+    A model sold as 1M has 1,048,576 tokens, so the decimal formatter used for
+    real token counts would print 1049k — the same window under a different
+    base. Match the label instead: pick whichever base divides the number
+    exactly, so 1,048,576 → 1M, 262,144 → 256k, 256,000 → 256k.
+    """
+    for suffix, base in (("M", 1_000_000), ("M", 1024 ** 2), ("k", 1_000), ("k", 1024)):
+        if n % base == 0 and 1 <= n // base < 1000:
+            return f"{n // base}{suffix}"
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}".rstrip("0").rstrip(".") + "M"
+    return fmt_tokens(n)
+
 def format_context_prompt(session: Session) -> str:
     u = fmt_tokens(session.prompt_tokens) if session.prompt_tokens is not None else "?"
-    return u if session.context_limit is None else f"{u}/{fmt_tokens(session.context_limit)}"
+    return u if session.context_limit is None else f"{u}/{fmt_limit(session.context_limit)}"
 
 def format_usage(session: Session) -> str:
     if session.prompt_tokens is None:
         return "usage=none" + (
-            f"  context_limit={fmt_tokens(session.context_limit)}" if session.context_limit else ""
+            f"  context_limit={fmt_limit(session.context_limit)}" if session.context_limit else ""
         )
     parts = [
         f"prompt_tokens={fmt_tokens(session.prompt_tokens)}",
@@ -55,7 +72,7 @@ def format_usage(session: Session) -> str:
         parts.append(f"total_tokens={fmt_tokens(session.total_tokens)}")
     if session.context_limit is not None:
         pct = min(100, round(100 * session.prompt_tokens / session.context_limit))
-        parts.append(f"context_limit={fmt_tokens(session.context_limit)} ({pct}%)")
+        parts.append(f"context_limit={fmt_limit(session.context_limit)} ({pct}%)")
     return "  ".join(parts)
 
 @dataclass

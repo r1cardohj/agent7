@@ -17,7 +17,7 @@ from .providers import (
     login_hints,
     resolve_all,
 )
-from .session import Session, fmt_tokens, format_usage
+from .session import Session, fmt_limit, format_usage
 
 @dataclass
 class CommandResult:
@@ -110,7 +110,7 @@ async def switch_model(session: Session, name: str) -> CommandResult:
         await session.apply(p, cred)
     old = session.model_ref or session.model
     session.set_model(model_id, ref=ref)
-    limit = f"  context={fmt_tokens(session.context_limit)}" if session.context_limit else ""
+    limit = f"  context={fmt_limit(session.context_limit)}" if session.context_limit else ""
     return CommandResult(message=f"model: {old} → {ref}{limit}")
 
 async def dispatch(session: Session, line: str) -> CommandResult | None:
