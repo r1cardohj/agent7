@@ -11,9 +11,9 @@ agent7/        1482 lines
   __main__.py   434   CLI + REPL + @path completion + session wiring
   agent.py      398   tools + agent loop + compaction
   commands.py   236   slash commands + model switching
-  providers.py  161   API key auth
+  providers.py  145   API key auth
   store.py      149   atomic JSON session snapshots
-  session.py    101   session state
+  session.py     97   session state
   __init__.py     3   version
 ```
 
@@ -31,8 +31,6 @@ Paste an API key; there is no OAuth. Keys are stored in `~/.config/agent7/auth.j
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...
-# export KIMI_API_KEY=...
-# export MOONSHOT_API_KEY=sk-...
 # export AGENT7_MODEL=deepseek-flash
 ```
 
@@ -40,9 +38,7 @@ You can also log in from inside the REPL:
 
 ```text
 /login deepseek
-/login kimi              # optional: /login kimi global
-/login moonshot
-/model                   # list models for every logged-in provider
+/model                   # list models for the logged-in provider
 /model deepseek-flash
 ```
 
@@ -66,7 +62,7 @@ store API keys. Hard process kills can lose the in-progress turn.
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
 Exit with an empty line or Ctrl-D.
 
-Reasoning models (DeepSeek, Kimi) stream their `reasoning_content` live: it shows up
+Reasoning models (DeepSeek) stream their `reasoning_content` live: it shows up
 dimmed under a `thinking` header, before the answer and above each tool line. It is
 display only — reasoning is never replayed into the prompt or the saved session.
 

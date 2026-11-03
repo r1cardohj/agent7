@@ -6,11 +6,9 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from openai import AsyncOpenAI
-
-BaseFn = Callable[[list[str]], str]
 
 def _auth_path() -> Path:
     home = os.environ.get("AGENT7_HOME", "").strip()
@@ -61,7 +59,6 @@ class ApiKeyProvider:
     env_keys: tuple[str, ...]
     default_base: str
     prompt: str
-    base_from_args: BaseFn | None = None
 
     def resolve(self) -> Credential | None:
         base = os.environ.get("AGENT7_BASE_URL", "").strip() or self.default_base
@@ -80,7 +77,7 @@ class ApiKeyProvider:
         key = (prompt_secret(self.prompt) or "").strip()
         if not key:
             raise ValueError("cancelled — empty key")
-        base = self.base_from_args(args) if self.base_from_args else self.default_base
+        base = self.default_base
         data = load_auth()
         data[self.id] = {"type": "api_key", "key": key, "baseUrl": base}
         data["active"] = self.id
@@ -108,22 +105,9 @@ class ApiKeyProvider:
     def make_client(self, cred: Credential) -> AsyncOpenAI:
         return AsyncOpenAI(api_key=cred.api_key, base_url=cred.base_url)
 
-def _kimi_base(args: list[str]) -> str:
-    if override := os.environ.get("KIMI_CODE_BASE_URL", "").strip():
-        return override
-    region = os.environ.get("KIMI_CODE_REGION", "").strip().lower()
-    global_ = any(a.lower() in ("global", "overseas", "ai") for a in args) or region in (
-        "global", "overseas", "ai", "kimi.ai",
-    )
-    return "https://api.kimi.ai/coding/v1" if global_ else "https://api.kimi.com/coding/v1"
-
 _BUILTINS = [
     ApiKeyProvider("deepseek", ("ds",), ("DEEPSEEK_API_KEY",),
                    "https://api.deepseek.com", "DeepSeek API key"),
-    ApiKeyProvider("kimi-coding", ("kimi", "kimi-code"), ("KIMI_API_KEY",),
-                   "https://api.kimi.com/coding/v1", "Kimi Code API token", _kimi_base),
-    ApiKeyProvider("moonshot", ("kimi-key",), ("MOONSHOT_API_KEY",),
-                   "https://api.moonshot.cn/v1", "Moonshot API key"),
 ]
 _REGISTRY: dict[str, ApiKeyProvider] = {}
 for _p in _BUILTINS:

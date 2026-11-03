@@ -25,10 +25,6 @@ def resolve_context_limit(model: str) -> int | None:
         return int(m.group(1)) * 1000
     if "deepseek" in key:
         return 1_048_576 if "flash" in key else 128_000
-    if key.startswith(("k3", "kimi")):
-        return 1_048_576
-    if "moonshot" in key:
-        return 128_000
     return None
 
 def fmt_tokens(n: int) -> str:

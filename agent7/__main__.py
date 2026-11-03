@@ -242,7 +242,7 @@ class ReplCompleter(Completer):
                     if mid.startswith(prefix) or bare.startswith(prefix) or prefix.lower() in mid.lower():
                         yield Completion(mid, start_position=-len(prefix), display=mid)
             elif cmd in ("login", "logout"):
-                for mid in ("deepseek", "kimi", "moonshot", "global"):
+                for mid in ("deepseek",):
                     if mid.startswith(prefix.lower()):
                         yield Completion(mid, start_position=-len(prefix), display=mid)
 
@@ -366,7 +366,7 @@ async def async_main(argv: list[str] | None = None) -> None:
     else:
         client = AsyncOpenAI(api_key="missing", base_url="https://api.deepseek.com")
         if task:
-            print("No credentials. Set DEEPSEEK_API_KEY / KIMI_API_KEY / MOONSHOT_API_KEY,\n"
+            print("No credentials. Set DEEPSEEK_API_KEY,\n"
                   "or run `uv run agent7` and `/login`.", file=sys.stderr)
             sys.exit(1)
         prov, cred = None, None
@@ -413,7 +413,7 @@ async def async_main(argv: list[str] | None = None) -> None:
         quit_hint = "empty line / Ctrl-Z to quit" if sys.platform == "win32" else "empty line / Ctrl-D to quit"
         err.print(f"[dim]# REPL  /help · /login · /model · @file · {quit_hint}[/dim]")
         if not all_creds:
-            err.print("[dim]# no credentials — /login deepseek | /login kimi[/dim]")
+            err.print("[dim]# no credentials — /login deepseek[/dim]")
 
         def _vi_rprompt() -> HTML:
             mode = get_app().vi_state.input_mode
@@ -444,7 +444,7 @@ async def async_main(argv: list[str] | None = None) -> None:
                     err.print(f"[dim]{row}[/dim]")
                 continue
             if state.credential is None:
-                err.print("[yellow]# login first: /login deepseek | /login kimi[/yellow]")
+                err.print("[yellow]# login first: /login deepseek[/yellow]")
                 continue
             try:
                 await _run_once(state, line, on_saved=persist)

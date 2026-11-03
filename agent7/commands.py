@@ -139,7 +139,7 @@ async def _activate(session: Session, prefer: str | None = None) -> CommandResul
             pid = next(iter(session.credentials))
             target, cred = get_provider(pid), session.credentials[pid]
     if not target or not cred:
-        return CommandResult(message="no credentials — try /login deepseek | /login kimi")
+        return CommandResult(message="no credentials — try /login deepseek")
     await session.apply(target, cred)
     try:
         ids, note = await fetch_models(session, refresh=True), ""
@@ -191,7 +191,7 @@ def cmd_status(session: Session, args: list[str]) -> CommandResult:
         f"{format_usage(session)}\nbase_url={session.client.base_url}"
     ))
 
-@command("login", help="paste API key  (/login deepseek | /login kimi [global])")
+@command("login", help="paste API key  (/login deepseek)")
 async def cmd_login(session: Session, args: list[str]) -> CommandResult:
     if not args:
         rows = describe_found()
@@ -220,7 +220,7 @@ def cmd_compact(session: Session, args: list[str]) -> CommandResult:
         return CommandResult(message="compact: nothing to shrink (history short or already small)")
     return CommandResult(message=f"compact: shrunk {n} message(s); recent turns kept intact")
 
-@command("logout", help="clear saved key  (/logout deepseek|kimi|moonshot)")
+@command("logout", help="clear saved key  (/logout deepseek)")
 def cmd_logout(session: Session, args: list[str]) -> CommandResult:
     if not args:
         keys = [p.id for p in list_providers() if p.id in load_auth()]
