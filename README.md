@@ -2,9 +2,21 @@
 
 **The simplest coding agent. ~1600 lines of Python, four tools, one loop.**
 
+A deliberately minimal harness — all-in on modern, carefully chosen model providers.
+Fast and precise. No seatbelt; hold on.
+
 No orchestration: no plan mode, no subagents, no parallel tasks, no background jobs.
 You give it one sentence; it reads files, edits files, runs commands, then stops.
 Built for people who work on one thing at a time — you hold one task in your head, and so does it.
+
+## Features
+
+- **Deliberately minimal harness** — four tools, one loop, no orchestration
+- **Complete CLI agent UX** — streaming thinking + answer, tool lines with ✓/✗, edit/write preview, vi-mode REPL, `@path` completion, session resume
+- **Slash commands** — `/help` `/model` `/status` `/login` `/logout` `/compact`
+- **Markdown rendering** — final replies rendered as Rich Markdown in the terminal, thanks rich.
+- **Provider login** — paste an API key for DeepSeek or Grok (`/login` or env); switch models in-session
+
 
 ```
 agent7/        1570 lines
