@@ -1,4 +1,4 @@
-"""Tests for ReplyPrinter.on_preview (write +/− stats line)."""
+"""Tests for ReplyPrinter.on_preview (write +/− stats line) and thinking output."""
 
 import io
 import unittest
@@ -47,13 +47,41 @@ class ReplyPrinterPreviewTests(unittest.TestCase):
         self.rp.on_preview("")
         self.assertEqual(self.out(), "")
 
+    def test_streams_thinking_text_under_a_header(self) -> None:
+        self.rp.on_thinking("looking at ")
+        self.rp.on_thinking("agent.py\nand tests")
+        text = self.out()
+        self.assertIn("thinking", text)
+        self.assertIn("  │ looking at agent.py", text)
+        self.assertIn("  │ and tests", text)
+        self.assertTrue(self.rp._thinking_open)
+
+    def test_blank_line_skips_the_gutter(self) -> None:
+        self.rp.on_thinking("a\n\nb")
+        self.assertIn("  │ a\n\n  │ b", self.out())
+
     def test_closes_open_thinking_block_first(self) -> None:
         self.rp.on_thinking("pondering")
         self.assertTrue(self.rp._thinking_open)
         self.rp.on_preview("write  x.txt  +1 -0")
+        self.assertIn("pondering", self.out())
         self.assertIn("# write", self.out())
-        self.assertNotIn("pondering", self.out())
+        self.assertLess(self.out().index("pondering"), self.out().index("# write"))
         self.assertFalse(self.rp._thinking_open)
+
+    def test_thinking_is_not_part_of_the_answer(self) -> None:
+        with self.rp as rp:
+            rp.on_thinking("private reasoning")
+        self.assertEqual(rp.buf, [])
+        self.assertIn("private reasoning", self.out())
+
+    def test_tool_call_ends_the_thinking_block(self) -> None:
+        self.rp.on_thinking("plan")
+        self.rp.on_answer_to_thinking()
+        self.assertFalse(self.rp._thinking_open)
+        self.assertTrue(self.out().endswith("plan\n"))
+        self.rp.on_thinking("next")
+        self.assertIn("  │ next", self.out())
 
     def test_whitespace_only_answer_prints_nothing(self) -> None:
         with self.rp as rp:

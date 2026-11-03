@@ -66,6 +66,10 @@ store API keys. Hard process kills can lose the in-progress turn.
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
 Exit with an empty line or Ctrl-D.
 
+Reasoning models (DeepSeek, Kimi) stream their `reasoning_content` live: it shows up
+dimmed under a `thinking` header, before the answer and above each tool line. It is
+display only — reasoning is never replayed into the prompt or the saved session.
+
 Type `@` in the REPL to recursively complete files and directories from the cwd:
 `fix @agent7/agent.py`.
 Tab accepts, directories keep going (`@agent7/` → `@agent7/session.py`), and spaces

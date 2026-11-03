@@ -7,7 +7,6 @@ import asyncio
 import os
 import re
 import sys
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -31,7 +30,9 @@ from .session import Session, format_context_prompt
 from .store import list_sessions, new_id, resume, resume_messages, save, timestamp
 
 console, err = Console(stderr=False), Console(stderr=True)
-_THINK_FRAMES = ("thinking   ", "thinking.  ", "thinking.. ", "thinking...")
+_THINK_HEADER = "  thinking"
+_THINK_PREFIX = "  │ "
+_THINK_ON, _THINK_OFF = "\033[36;2m", "\033[0m"
 
 def _load_dotenv(path: Path = Path(".env")) -> None:
     if not path.is_file():
@@ -56,7 +57,7 @@ class ReplyPrinter:
         self.buf: list[str] = []
         self._chars = 0
         self._thinking_open = False
-        self._thinking_t0 = 0.0
+        self._thinking_bol = True
         self._counting = False
 
     def __enter__(self) -> ReplyPrinter:
@@ -73,15 +74,24 @@ class ReplyPrinter:
             console.print(Markdown(text))
             console.print()
 
+    def _write(self, text: str) -> None:
+        out = getattr(err, "file", None) or sys.stderr
+        out.write(text)
+        out.flush()
+
+    def _paint(self, text: str) -> str:
+        return f"{_THINK_ON}{text}{_THINK_OFF}" if err.is_terminal else text
+
     def _clear_status_line(self) -> None:
         if err.is_terminal:
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
+            self._write("\r\033[K")
 
     def _close_thinking(self) -> None:
-        if self._thinking_open:
-            self._clear_status_line()
-            self._thinking_open = False
+        if not self._thinking_open:
+            return
+        if not self._thinking_bol:
+            self._write("\n")
+        self._thinking_open, self._thinking_bol = False, True
 
     def _clear_counter(self) -> None:
         if self._counting:
@@ -93,27 +103,41 @@ class ReplyPrinter:
             return
         self._close_thinking()
         self._counting = True
-        sys.stderr.write(f"\r\033[K  … {self._chars} chars")
-        sys.stderr.flush()
+        self._write(f"\r\033[K  … {self._chars} chars")
+
+    def _open_thinking(self) -> None:
+        self._thinking_open, self._thinking_bol = True, True
+        self._write("\n" + self._paint(_THINK_HEADER) + "\n")
 
     def on_thinking(self, text: str) -> None:
+        """Stream the model's reasoning as dim text under a `thinking` header."""
         if not text:
             return
         self._clear_counter()
         if not self._thinking_open:
-            self._thinking_open, self._thinking_t0 = True, time.monotonic()
-        if err.is_terminal:
-            frame = int((time.monotonic() - self._thinking_t0) / 0.4) % len(_THINK_FRAMES)
-            sys.stderr.write(f"\r\033[K  {_THINK_FRAMES[frame]}")
-            sys.stderr.flush()
+            self._open_thinking()
+        lines = text.split("\n")
+        chunks: list[str] = []
+        for i, line in enumerate(lines):
+            if line:
+                if self._thinking_bol:
+                    chunks.append(self._paint(_THINK_PREFIX))
+                    self._thinking_bol = False
+                chunks.append(self._paint(line))
+            if i < len(lines) - 1:  # the stream continues on a new line
+                chunks.append("\n")
+                self._thinking_bol = True
+        self._write("".join(chunks))
 
     def on_answer_to_thinking(self) -> None:
+        # Content streamed before a tool call is not the final answer: drop it,
+        # and end the thinking block so later reasoning opens a fresh one.
+        self._close_thinking()
         if not self.buf:
             return
         self.buf.clear()
         self._chars = 0
         self._clear_counter()
-        self.on_thinking(".")
 
     def on_delta(self, text: str) -> None:
         self.buf.append(text)
