@@ -6,14 +6,9 @@ import asyncio
 import difflib
 import json
 import os
-import queue
-import re
-import secrets
 import shutil
 import subprocess
 import sys
-import threading
-import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -128,8 +123,7 @@ def make_system(
         "You are a coding agent. Tools: read, write, edit, bash. "
         "Explore before editing; read pages ~200 lines (offset/limit). "
         "Use read for file contents — do not cat/sed via bash. "
-        f"Host OS: {os_name}. The bash tool runs commands via {sh.name} "
-        "(cwd and env persist across calls). "
+        f"Host OS: {os_name}. The bash tool runs commands via {sh.name}. "
         f"Use bash for search and listing ({hint}). "
         "Use edit for precise changes (edits[].old_string must match exactly). "
         "When changing multiple places in one file, use one edit call with multiple edits[] "
@@ -178,7 +172,7 @@ TOOLS: list[dict[str, Any]] = [
     _fn("edit", "Precise edits. One call may include multiple edits[] against the original file; no overlaps.",
         {"path": {"type": "string"}, "edits": {"type": "array", "items": _EDIT_ITEM}},
         ["path", "edits"]),
-    _fn("bash", "Run a shell command (host shell). cwd and env persist across calls. Output capped ~12k chars.",
+    _fn("bash", "Run a shell command in cwd (host shell). Output capped ~12k chars.",
         {"command": {"type": "string"}, "timeout": {"type": "integer"}}, ["command"]),
 ]
 
@@ -290,21 +284,16 @@ def tool_edit(
     n = len(edits)
     return f"edited {n} span{'s' if n != 1 else ''} in {fp}"
 
-def _bash_env() -> dict[str, str]:
+def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("LANG", "C.UTF-8")
     env.setdefault("LC_ALL", "C.UTF-8")
-    env["PS1"] = ""
-    env["PROMPT_COMMAND"] = ""
-    return env
-
-def _bash_oneshot(cwd: Path, command: str, timeout: int | None = None) -> str:
     argv = [*SHELL.argv, command]
     try:
         proc = subprocess.run(
             argv, cwd=cwd, capture_output=True,
-            encoding="utf-8", errors="replace", timeout=timeout or 60, env=_bash_env(),
+            encoding="utf-8", errors="replace", timeout=timeout or 60, env=env,
         )
     except FileNotFoundError:
         return f"error: shell not found: {SHELL.argv[0]}"
@@ -319,177 +308,19 @@ def _bash_oneshot(cwd: Path, command: str, timeout: int | None = None) -> str:
         parts.append("stderr:\n" + proc.stderr)
     return _truncate("\n".join(parts), MAX_BASH_CHARS)
 
-class BashSession:
-    """Persistent host shell: cwd and env survive across run() calls."""
-
-    def __init__(self, shell: Shell | None = None, cwd: Path | None = None) -> None:
-        self.shell = shell or SHELL
-        self.cwd = (cwd or Path.cwd()).resolve()
-        self._lock = threading.Lock()
-        self._proc: subprocess.Popen[bytes] | None = None
-        self._out_q: queue.Queue[bytes | None] = queue.Queue()
-
-    def run(self, command: str, timeout: int | None = None) -> str:
-        with self._lock:
-            return self._run_locked(command, timeout or 60)
-
-    def close(self) -> None:
-        with self._lock:
-            self._kill()
-
-    def _persistent_argv(self) -> list[str]:
-        exe = self.shell.argv[0]
-        if self.shell.name == "bash":
-            return [exe, "--noprofile", "--norc"]
-        if self.shell.name == "powershell":
-            return [exe, "-NoProfile", "-NonInteractive"]
-        return [exe]  # cmd.exe reads commands from stdin
-
-    def _wrap(self, command: str, token: str) -> str:
-        if self.shell.name == "powershell":
-            return (
-                f"{command}\n"
-                f"if ($null -eq $LASTEXITCODE) {{ $__e = 0 }} else {{ $__e = $LASTEXITCODE }}\n"
-                f"Write-Output ('{token}:' + $__e)\n"
-            )
-        if self.shell.name == "cmd":
-            return f"{command}\necho {token}:%ERRORLEVEL%\n"
-        return f"{command}\necho {token}:$?\n"
-
-    def _start(self) -> None:
-        self._kill()
-        try:
-            self._proc = subprocess.Popen(
-                self._persistent_argv(),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                cwd=self.cwd,
-                env=_bash_env(),
-                bufsize=0,
-            )
-        except FileNotFoundError as e:
-            raise FileNotFoundError(self.shell.argv[0]) from e
-        threading.Thread(target=self._pump, daemon=True).start()
-
-    def _pump(self) -> None:
-        proc = self._proc
-        if not proc or not proc.stdout:
-            self._out_q.put(None)
-            return
-        try:
-            while True:
-                chunk = proc.stdout.read(4096)
-                if not chunk:
-                    self._out_q.put(None)
-                    return
-                self._out_q.put(chunk)
-        except Exception:  # noqa: BLE001
-            self._out_q.put(None)
-
-    def _kill(self) -> None:
-        proc, self._proc = self._proc, None
-        if proc is not None:
-            with suppress(Exception):
-                if proc.stdin:
-                    proc.stdin.close()
-            with suppress(Exception):
-                proc.terminate()
-            with suppress(Exception):
-                proc.wait(timeout=2)
-            with suppress(Exception):
-                proc.kill()
-            with suppress(Exception):
-                if proc.stdout:
-                    proc.stdout.close()
-        while True:
-            try:
-                self._out_q.get_nowait()
-            except queue.Empty:
-                break
-
-    def _run_locked(self, command: str, timeout: int) -> str:
-        try:
-            if self._proc is None or self._proc.poll() is not None:
-                self._start()
-        except FileNotFoundError:
-            return f"error: shell not found: {self.shell.argv[0]}"
-        assert self._proc and self._proc.stdin
-        token = f"__AGENT7_{secrets.token_hex(16)}__"
-        payload = self._wrap(command, token).encode("utf-8", errors="replace")
-        try:
-            self._proc.stdin.write(payload)
-            self._proc.stdin.flush()
-        except (BrokenPipeError, OSError):
-            try:
-                self._start()
-            except FileNotFoundError:
-                return f"error: shell not found: {self.shell.argv[0]}"
-            assert self._proc and self._proc.stdin
-            try:
-                self._proc.stdin.write(payload)
-                self._proc.stdin.flush()
-            except (BrokenPipeError, OSError) as e:
-                return f"error: shell write failed: {e}"
-        deadline = time.monotonic() + timeout
-        buf = bytearray()
-        pattern = re.compile(re.escape(token) + r":(-?\d+)")
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                text = buf.decode("utf-8", errors="replace")
-                self._kill()
-                return _truncate(f"timeout after {timeout}s\n{text}", MAX_BASH_CHARS)
-            try:
-                chunk = self._out_q.get(timeout=min(remaining, 0.25))
-            except queue.Empty:
-                continue
-            if chunk is None:
-                text = buf.decode("utf-8", errors="replace")
-                self._kill()
-                return _truncate(f"exit=?\nshell exited\n{text}", MAX_BASH_CHARS)
-            buf.extend(chunk)
-            text = buf.decode("utf-8", errors="replace")
-            if m := pattern.search(text):
-                body = text[: m.start()].rstrip("\n")
-                parts = [f"exit={m.group(1)}"]
-                if body:
-                    parts.append("stdout:\n" + body)
-                return _truncate("\n".join(parts), MAX_BASH_CHARS)
-
-def tool_bash(
-    cwd: Path,
-    command: str,
-    timeout: int | None = None,
-    *,
-    bash: BashSession | None = None,
-) -> str:
-    if bash is not None:
-        return bash.run(command, timeout=timeout)
-    return _bash_oneshot(cwd, command, timeout)
-
 HANDLERS = {
     "read": tool_read, "write": tool_write, "edit": tool_edit, "bash": tool_bash,
 }
 _PREVIEW_TOOLS = frozenset({"write", "edit"})
 
 def dispatch_tool(
-    cwd: Path,
-    name: str,
-    args: dict[str, Any],
-    *,
-    on_preview: Callable[[str], None] | None = None,
-    bash: BashSession | None = None,
+    cwd: Path, name: str, args: dict[str, Any], *, on_preview: Callable[[str], None] | None = None
 ) -> str:
     fn = HANDLERS.get(name)
     if not fn:
         return f"error: unknown tool {name}"
     try:
-        if name in _PREVIEW_TOOLS:
-            return fn(cwd, **args, on_preview=on_preview)
-        if name == "bash":
-            return fn(cwd, **args, bash=bash)
-        return fn(cwd, **args)
+        return fn(cwd, **args, on_preview=on_preview) if name in _PREVIEW_TOOLS else fn(cwd, **args)
     except TypeError as e:
         return f"error: bad args for {name}: {e}"
     except Exception as e:  # noqa: BLE001
@@ -646,14 +477,10 @@ async def run_agent(
     messages: list[dict[str, Any]], on_delta=None, on_thinking=None, on_answer_to_thinking=None,
     on_tool=None, on_preview=None, on_usage=None, context_limit: int | None = None,
     prompt_tokens: int | None = None, on_compact=None, on_finish=None,
-    bash: BashSession | None = None,
 ) -> str:
     cwd = cwd.resolve()
     messages.append({"role": "user", "content": task})
     last_prompt = prompt_tokens
-    own_bash = bash is None
-    if own_bash:
-        bash = BashSession(SHELL, cwd)
     try:
         for turn in range(1, max_turns + 1):
             if should_compact(last_prompt, context_limit):
@@ -689,7 +516,7 @@ async def run_agent(
                 else:
                     try:
                         result = await asyncio.to_thread(
-                            dispatch_tool, cwd, name, args, on_preview=on_preview, bash=bash
+                            dispatch_tool, cwd, name, args, on_preview=on_preview
                         )
                     except (asyncio.CancelledError, KeyboardInterrupt) as e:
                         messages.append(
@@ -706,6 +533,3 @@ async def run_agent(
         raise
     except (asyncio.CancelledError, KeyboardInterrupt) as e:
         raise Interrupted() from e
-    finally:
-        if own_bash and bash is not None:
-            bash.close()

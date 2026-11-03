@@ -10,7 +10,6 @@ from agent7.agent import (
     DEEPSEEK_RL_SYSTEM,
     SHELL,
     SYSTEM,
-    BashSession,
     is_deepseek_model,
     make_system,
     resolve_shell,
@@ -59,7 +58,6 @@ class ResolveShellTests(unittest.TestCase):
         sh = resolve_shell(platform="linux")
         text = make_system(sh)
         self.assertIn("via bash", text)
-        self.assertIn("persist", text)
         self.assertIn(SHELL.name, SYSTEM)  # import-time SYSTEM matches live shell
 
     def test_deepseek_uses_frozen_rl_persona(self) -> None:
@@ -78,39 +76,6 @@ class BashToolShellTests(unittest.TestCase):
             result = tool_bash(Path(tmp), "echo hello-shell")
         self.assertIn("exit=0", result)
         self.assertIn("hello-shell", result)
-
-    def test_persistent_bash_keeps_cwd(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            nested = root / "nested"
-            nested.mkdir()
-            bash = BashSession(SHELL, root)
-            try:
-                first = bash.run(f"cd nested && pwd")
-                self.assertIn("exit=0", first)
-                second = bash.run("pwd")
-                self.assertIn("exit=0", second)
-                self.assertIn(str(nested.resolve()), second)
-                third = bash.run("export AGENT7_MARK=alive")
-                self.assertIn("exit=0", third)
-                fourth = bash.run("printf '%s\\n' \"$AGENT7_MARK\"")
-                self.assertIn("exit=0", fourth)
-                self.assertIn("alive", fourth)
-            finally:
-                bash.close()
-
-    def test_persistent_bash_timeout(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            bash = BashSession(SHELL, Path(tmp))
-            try:
-                result = bash.run("sleep 5", timeout=1)
-                self.assertIn("timeout after 1s", result)
-                # session recovers for a later command
-                again = bash.run("echo recovered")
-                self.assertIn("exit=0", again)
-                self.assertIn("recovered", again)
-            finally:
-                bash.close()
 
 
 if __name__ == "__main__":

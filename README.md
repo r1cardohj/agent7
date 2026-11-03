@@ -7,13 +7,13 @@ You give it one sentence; it reads files, edits files, runs commands, then stops
 Built for people who work on one thing at a time — you hold one task in your head, and so does it.
 
 ```
-agent7/        ~1800 lines
-  agent.py      711   tools + agent loop + compaction + persistent bash
-  __main__.py   433   CLI + REPL + @path completion + session wiring
+agent7/        1602 lines
+  agent.py      535   tools + agent loop + compaction
+  __main__.py   431   CLI + REPL + @path completion + session wiring
   commands.py   238   slash commands + model switching
   providers.py  161   API key auth (DeepSeek, Grok)
   store.py      127   one JSON snapshot per workspace
-  session.py    123   session state
+  session.py    107   session state
   __init__.py     3   version
 ```
 
@@ -84,7 +84,7 @@ text never ends silently: you get either `# (stopped after N turns)`,
 | `read` | Read a file with line numbers | 200 lines per call by default; page with `offset=` |
 | `write` | Create or overwrite a whole file | `+N -M` diff stats |
 | `edit` | Precise replacements; one call may include multiple `edits[]` against the original file (no overlaps) | `+N -M` diff stats |
-| `bash` | Host shell in the cwd (bash / PowerShell / cmd); **cwd and env persist** across calls in a session | ~12k chars |
+| `bash` | Host shell in the cwd (bash / PowerShell / cmd) | ~12k chars |
 
 That's it. No `grep`, no `list_dir`, no `todo`, no `task`.
 Need more capability? Let the agent use `bash`.

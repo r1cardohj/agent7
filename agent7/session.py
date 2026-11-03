@@ -7,14 +7,11 @@ import re
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from openai import AsyncOpenAI
 
 from .providers import Credential, Provider, get_provider
-
-if TYPE_CHECKING:
-    from .agent import BashSession
 
 def resolve_context_limit(model: str) -> int | None:
     raw = os.environ.get("AGENT7_CONTEXT_LIMIT", "").strip()
@@ -75,7 +72,6 @@ class Session:
     cred_source: str | None = None
     credential: Credential | None = None
     credentials: dict[str, Credential] = field(default_factory=dict)
-    bash: BashSession | None = field(default=None, repr=False)
 
     def set_model(self, model: str, *, ref: str | None = None) -> None:
         self.model = model
@@ -89,18 +85,6 @@ class Session:
             self.messages,
             make_system(SHELL, model=self.model, provider_id=self.provider_id),
         )
-
-    def ensure_bash(self) -> BashSession:
-        from .agent import SHELL, BashSession
-
-        if self.bash is None:
-            self.bash = BashSession(SHELL, self.cwd)
-        return self.bash
-
-    def close_bash(self) -> None:
-        if self.bash is not None:
-            self.bash.close()
-            self.bash = None
 
     def update_usage(self, usage: dict[str, int]) -> None:
         self.prompt_tokens = usage.get("prompt_tokens")

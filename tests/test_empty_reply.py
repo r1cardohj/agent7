@@ -101,9 +101,6 @@ class RunOnceSilenceTests(unittest.TestCase):
             model="test-model", cwd=self.cwd, client=_Client(turns),
             max_turns=kwargs.get("max_turns", 30), messages=[],
             context_limit=None, prompt_tokens=None, update_usage=lambda u: None,
-            bash=None,
-            ensure_bash=lambda: None,  # run_agent owns an ephemeral BashSession
-            close_bash=lambda: None,
         )
         return asyncio.run(cli._run_once(session, "go"))
 

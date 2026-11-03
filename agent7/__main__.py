@@ -285,7 +285,6 @@ async def _run_agent_once(session: Session, task: str) -> str:
             context_limit=session.context_limit, prompt_tokens=session.prompt_tokens,
             on_compact=lambda n: err.print(f"[dim]# compacted {n} message(s)[/dim]"),
             on_finish=finish.append,
-            bash=session.ensure_bash(),
         )
     # never leave a tool call as the last thing on screen
     if notice := reply_notice(answer, finish[-1] if finish else None):
@@ -423,7 +422,6 @@ async def async_main(argv: list[str] | None = None) -> None:
         try:
             persist()
         finally:
-            state.close_bash()
             await state.client.close()
 
 def main(argv: list[str] | None = None) -> None:
