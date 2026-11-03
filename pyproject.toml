@@ -16,6 +16,7 @@ keywords = [
     "deepseek",
     "grok",
     "xai",
+    "kimi",
     "openai-compatible",
 ]
 classifiers = [

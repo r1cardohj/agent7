@@ -15,7 +15,7 @@ Built for people who work on one thing at a time — you hold one task in your h
 - **Complete CLI agent UX** — streaming thinking + answer, tool lines with ✓/✗, edit/write preview, vi-mode REPL, `@path` completion, session resume
 - **Slash commands** — `/help` `/model` `/status` `/login` `/logout` `/compact`
 - **Markdown rendering** — final replies rendered as Rich Markdown in the terminal, thanks rich.
-- **Provider login** — paste an API key for DeepSeek or Grok (`/login` or env); switch models in-session
+- **Provider login** — paste an API key for DeepSeek, Grok, or Kimi (`/login` or env); switch models in-session
 
 
 ## Install
@@ -33,6 +33,7 @@ Paste an API key; there is no OAuth. Keys are stored in `~/.config/agent7/auth.j
 ```bash
 export DEEPSEEK_API_KEY=sk-...   # or /login deepseek
 export XAI_API_KEY=xai-...       # Grok, from console.x.ai  (or /login grok)
+export KIMI_API_KEY=sk-...       # Kimi Code, from the Kimi Code Console (or /login kimi)
 # export AGENT7_MODEL=grok-4
 ```
 
@@ -41,9 +42,11 @@ You can also log in from inside the REPL:
 ```text
 /login deepseek
 /login grok              # xAI — Grok models
+/login kimi              # Kimi Code — kimi-for-coding and other available models
 /model                   # list models for every logged-in provider
 /model deepseek-flash
 /model grok-4
+/model kimi-for-coding
 ```
 
 ## Usage
@@ -64,7 +67,7 @@ store API keys. Hard process kills can lose the in-progress turn.
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
 Exit with Ctrl-D (or Ctrl-Z on Windows).
 
-Reasoning models (DeepSeek, Grok) stream their `reasoning_content` live: it shows up
+Reasoning models (DeepSeek, Grok, Kimi) stream their `reasoning_content` live: it shows up
 dimmed under a `thinking` header, before the answer and above each tool line. It is
 display only — reasoning is never replayed into the prompt or the saved session.
 

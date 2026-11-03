@@ -116,6 +116,8 @@ _BUILTINS = [
                    "https://api.deepseek.com", "DeepSeek API key", "deepseek-chat"),
     ApiKeyProvider("xai", ("grok",), ("XAI_API_KEY", "GROK_API_KEY"),
                    "https://api.x.ai/v1", "xAI API key (grok)", "grok-4", "grok"),
+    ApiKeyProvider("kimi", (), ("KIMI_API_KEY",),
+                   "https://api.kimi.com/coding/v1", "Kimi Code API key", "kimi-for-coding"),
 ]
 _REGISTRY: dict[str, ApiKeyProvider] = {}
 for _p in _BUILTINS:
