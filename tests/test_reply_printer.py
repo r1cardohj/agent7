@@ -22,15 +22,22 @@ class ReplyPrinterPreviewTests(unittest.TestCase):
         return self.stream.getvalue()
 
     def test_prints_stats_header(self) -> None:
-        self.rp.on_preview("a.py  +1 -1")
+        self.rp.on_preview("write  a.py  +1 -1")
         text = self.out()
         self.assertIn("# write", text)
         self.assertIn("a.py", text)
         self.assertIn("+1", text)
         self.assertIn("-1", text)
 
+    def test_prints_edit_kind(self) -> None:
+        self.rp.on_preview("edit  a.py  +2 -1")
+        text = self.out()
+        self.assertIn("# edit", text)
+        self.assertIn("a.py", text)
+        self.assertIn("+2", text)
+
     def test_ignores_extra_lines(self) -> None:
-        self.rp.on_preview("cfg.txt  +2 -3\n@@ ignored\n+body")
+        self.rp.on_preview("write  cfg.txt  +2 -3\n@@ ignored\n+body")
         text = self.out()
         self.assertIn("+2", text)
         self.assertNotIn("@@", text)
@@ -43,7 +50,7 @@ class ReplyPrinterPreviewTests(unittest.TestCase):
     def test_closes_open_thinking_block_first(self) -> None:
         self.rp.on_thinking("pondering")
         self.assertTrue(self.rp._thinking_open)
-        self.rp.on_preview("x.txt  +1 -0")
+        self.rp.on_preview("write  x.txt  +1 -0")
         self.assertIn("# write", self.out())
         self.assertNotIn("pondering", self.out())
         self.assertFalse(self.rp._thinking_open)
@@ -55,7 +62,7 @@ class ReplyPrinterPreviewTests(unittest.TestCase):
 
     def test_preview_does_not_emit_markdown_answer(self) -> None:
         self.rp.on_delta("some streamed answer text")
-        self.rp.on_preview("x.txt  +1 -1")
+        self.rp.on_preview("write  x.txt  +1 -1")
         self.assertEqual(self.rp.buf, ["some streamed answer text"])
         self.assertNotIn("some streamed answer text", self.out())
 

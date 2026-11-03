@@ -1,4 +1,4 @@
-"""Async agent loop and tools: read, write, bash, grep (+ compact)."""
+"""Async agent loop and tools: read, write, edit, bash (+ compact)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import asyncio
 import difflib
 import json
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -16,8 +15,8 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-MAX_READ_CHARS, MAX_BASH_CHARS, MAX_GREP_CHARS = 50_000, 12_000, 12_000
-DEFAULT_READ_LINES, MAX_GREP_LINES, MAX_TURNS = 200, 100, 30
+MAX_READ_CHARS, MAX_BASH_CHARS = 50_000, 12_000
+DEFAULT_READ_LINES, MAX_TURNS = 200, 30
 COMPACT_THRESHOLD, KEEP_USER_TURNS, KEEP_TOOL_RESULTS = 0.75, 3, 4
 TOOL_MAX_CHARS, ASSISTANT_MAX_CHARS = 2_000, 4_000
 class Interrupted(Exception):
@@ -26,9 +25,17 @@ class Interrupted(Exception):
         super().__init__(partial)
 
 SYSTEM = (
-    "You are a coding agent. Tools: read, write, bash, grep. "
+    "You are a coding agent. Tools: read, write, edit, bash. "
     "Explore before editing; read pages ~200 lines (offset/limit). "
-    "Prefer write(old_string=...) for small edits. Finish with a short summary."
+    "Use read for file contents — do not cat/sed via bash. "
+    "Use bash for search and listing (rg, grep, find, ls). "
+    "Use edit for precise changes (edits[].old_string must match exactly). "
+    "When changing multiple places in one file, use one edit call with multiple edits[] "
+    "instead of multiple edit calls. Each edits[].old_string is matched against the original "
+    "file, not after earlier edits. Do not emit overlapping or nested edits; merge nearby "
+    "changes into one edit. Keep old_string short but unique — do not pad with large "
+    "unchanged regions. Use write only for new files or complete rewrites. "
+    "Run tests only after a batch of edits. Finish with a short summary."
 )
 
 def _fn(name: str, desc: str, props: dict, required: list[str]) -> dict:
@@ -41,18 +48,26 @@ def _fn(name: str, desc: str, props: dict, required: list[str]) -> dict:
         },
     }
 
+_EDIT_ITEM = {
+    "type": "object",
+    "properties": {
+        "old_string": {"type": "string"},
+        "new_string": {"type": "string"},
+    },
+    "required": ["old_string", "new_string"],
+}
+
 TOOLS: list[dict[str, Any]] = [
     _fn("read", "Read text file (numbered). Default 200 lines; page with offset/limit.",
         {"path": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}},
         ["path"]),
-    _fn("write", "Write file, or replace one unique span via old_string.",
-        {"path": {"type": "string"}, "content": {"type": "string"},
-         "old_string": {"type": "string"}}, ["path", "content"]),
-    _fn("bash", "Shell in cwd. Output capped ~12k chars.",
+    _fn("write", "Create or overwrite a whole file.",
+        {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]),
+    _fn("edit", "Precise edits. One call may include multiple edits[] against the original file; no overlaps.",
+        {"path": {"type": "string"}, "edits": {"type": "array", "items": _EDIT_ITEM}},
+        ["path", "edits"]),
+    _fn("bash", "Shell in cwd. Output capped ~12k chars. Use for rg/grep/find/ls.",
         {"command": {"type": "string"}, "timeout": {"type": "integer"}}, ["command"]),
-    _fn("grep", "rg/grep search. Capped at 100 lines.",
-        {"pattern": {"type": "string"}, "path": {"type": "string"}, "glob": {"type": "string"}},
-        ["pattern"]),
 ]
 
 def _truncate(s: str, limit: int, *, tag: str = "truncated") -> str:
@@ -83,7 +98,7 @@ def tool_read(cwd: Path, path: str, offset: int | None = None, limit: int | None
         body = f"{body}\n{hint}]"
     return body
 
-def _write_stats(fp: Path, before: str, after: str) -> str:
+def _write_stats(fp: Path, before: str, after: str, *, kind: str = "write") -> str:
     a, b = before.splitlines(), after.splitlines()
     add = delete = 0
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b).get_opcodes():
@@ -94,13 +109,12 @@ def _write_stats(fp: Path, before: str, after: str) -> str:
         elif tag == "replace":
             delete += i2 - i1
             add += j2 - j1
-    return f"{fp}  +{add} -{delete}"
+    return f"{kind}  {fp}  +{add} -{delete}"
 
 def tool_write(
     cwd: Path,
     path: str,
     content: str,
-    old_string: str | None = None,
     on_preview: Callable[[str], None] | None = None,
 ) -> str:
     fp = _resolve(cwd, path)
@@ -108,24 +122,61 @@ def tool_write(
         before = fp.read_text(encoding="utf-8") if fp.exists() else ""
     except UnicodeDecodeError:
         return f"error: binary or non-utf8: {fp}"
-    if old_string is not None:
-        if not fp.is_file():
-            return f"error: not a file: {fp}"
-        if not old_string:
-            return "error: old_string must not be empty"
-        n = before.count(old_string)
-        if n != 1:
-            return f"error: old_string occurs {n} times in {fp}; expected exactly 1"
-        after = before.replace(old_string, content, 1)
-    else:
-        after = content
+    after = content
     if before == after and fp.is_file():
         return f"no changes: {fp}"
     if on_preview:
-        on_preview(_write_stats(fp, before, after))
+        on_preview(_write_stats(fp, before, after, kind="write"))
     fp.parent.mkdir(parents=True, exist_ok=True)
     fp.write_text(after, encoding="utf-8")
     return f"wrote {len(after.encode('utf-8'))} bytes to {fp}"
+
+def tool_edit(
+    cwd: Path,
+    path: str,
+    edits: list[dict[str, Any]],
+    on_preview: Callable[[str], None] | None = None,
+) -> str:
+    fp = _resolve(cwd, path)
+    if not fp.is_file():
+        return f"error: not a file: {fp}"
+    try:
+        before = fp.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return f"error: binary or non-utf8: {fp}"
+    if not isinstance(edits, list) or not edits:
+        return "error: edits must be a non-empty array"
+    spans: list[tuple[int, int, str, int]] = []
+    for i, ed in enumerate(edits):
+        if not isinstance(ed, dict):
+            return f"error: edits[{i}] must be an object"
+        old, new = ed.get("old_string"), ed.get("new_string")
+        if not isinstance(old, str) or not old:
+            return f"error: edits[{i}].old_string must be a non-empty string"
+        if not isinstance(new, str):
+            return f"error: edits[{i}].new_string must be a string"
+        n = before.count(old)
+        if n != 1:
+            return f"error: edits[{i}].old_string occurs {n} times in {fp}; expected exactly 1"
+        start = before.index(old)
+        spans.append((start, start + len(old), new, i))
+    ordered = sorted(spans, key=lambda s: s[0])
+    for a, b in zip(ordered, ordered[1:]):
+        if a[1] > b[0]:
+            return (
+                f"error: edits[{a[3]}] and edits[{b[3]}] overlap; "
+                "merge nearby changes into one edit"
+            )
+    after = before
+    for start, end, new, _ in sorted(spans, key=lambda s: s[0], reverse=True):
+        after = after[:start] + new + after[end:]
+    if before == after:
+        return f"no changes: {fp}"
+    if on_preview:
+        on_preview(_write_stats(fp, before, after, kind="edit"))
+    fp.write_text(after, encoding="utf-8")
+    n = len(edits)
+    return f"edited {n} span{'s' if n != 1 else ''} in {fp}"
 
 def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
     env = os.environ.copy()
@@ -148,31 +199,10 @@ def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
         parts.append("stderr:\n" + proc.stderr)
     return _truncate("\n".join(parts), MAX_BASH_CHARS)
 
-def tool_grep(cwd: Path, pattern: str, path: str | None = None, glob: str | None = None) -> str:
-    target = str(_resolve(cwd, path) if path else cwd)
-    if shutil.which("rg"):
-        cmd = ["rg", "--line-number", "--no-heading", "--color", "never", pattern, target]
-        if glob:
-            cmd[1:1] = ["--glob", glob]
-    else:
-        cmd = ["grep", "-RIn", f"--include={glob}", "--", pattern, target] if glob else [
-            "grep", "-RIn", "--", pattern, target
-        ]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=30)
-    except subprocess.TimeoutExpired:
-        return "error: grep timed out"
-    except FileNotFoundError:
-        return "error: neither rg nor grep available"
-    out = proc.stdout or ""
-    if proc.returncode not in (0, 1) and not out:
-        return _truncate(proc.stderr or f"grep failed exit={proc.returncode}", MAX_GREP_CHARS)
-    lines = out.splitlines()
-    if len(lines) > MAX_GREP_LINES:
-        out = "\n".join(lines[:MAX_GREP_LINES]) + f"\n...[{len(lines) - MAX_GREP_LINES} more]"
-    return _truncate(out or "(no matches)", MAX_GREP_CHARS)
-
-HANDLERS = {"read": tool_read, "write": tool_write, "bash": tool_bash, "grep": tool_grep}
+HANDLERS = {
+    "read": tool_read, "write": tool_write, "edit": tool_edit, "bash": tool_bash,
+}
+_PREVIEW_TOOLS = frozenset({"write", "edit"})
 
 def dispatch_tool(
     cwd: Path, name: str, args: dict[str, Any], *, on_preview: Callable[[str], None] | None = None
@@ -181,7 +211,7 @@ def dispatch_tool(
     if not fn:
         return f"error: unknown tool {name}"
     try:
-        return tool_write(cwd, **args, on_preview=on_preview) if name == "write" else fn(cwd, **args)
+        return fn(cwd, **args, on_preview=on_preview) if name in _PREVIEW_TOOLS else fn(cwd, **args)
     except TypeError as e:
         return f"error: bad args for {name}: {e}"
     except Exception as e:  # noqa: BLE001
@@ -199,13 +229,11 @@ def tool_summary(name: str, args: dict[str, Any]) -> str:
         off, lim = args.get("offset"), args.get("limit")
         return f"{path}  (offset={off} limit={lim})" if off is not None or lim is not None else path
     if name == "write":
-        action = "replace" if args.get("old_string") is not None else "write"
-        return f"{args.get('path', '')}  ({action}, {len(str(args.get('content') or ''))} chars)"
-    if name == "grep":
-        bits = [repr(args.get("pattern") or ""), "in", str(args.get("path") or ".")]
-        if args.get("glob"):
-            bits.append(str(args["glob"]))
-        return _trunc(" ".join(bits))
+        return f"{args.get('path', '')}  ({len(str(args.get('content') or ''))} chars)"
+    if name == "edit":
+        edits = args.get("edits")
+        n = len(edits) if isinstance(edits, list) else 0
+        return f"{args.get('path', '')}  ({n} edit{'s' if n != 1 else ''})"
     return _trunc(json.dumps(args, ensure_ascii=False))
 
 def should_compact(

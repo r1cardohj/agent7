@@ -5,8 +5,8 @@ from pathlib import Path
 from agent7.agent import (
     DEFAULT_READ_LINES,
     MAX_BASH_CHARS,
-    MAX_GREP_LINES,
     dispatch_tool,
+    tool_edit,
     tool_write,
 )
 
@@ -31,46 +31,7 @@ class WriteToolTests(unittest.TestCase):
         self.assertTrue(result.startswith("wrote "))
         self.assertEqual((self.cwd / "nested/hello.py").read_text(), "print('hi')\n")
         self.assertEqual(len(previews), 1)
-        self.assertEqual(previews[0], f"{self.cwd / 'nested/hello.py'}  +1 -0")
-
-    def test_old_string_replaces_one_unique_span(self) -> None:
-        path = self.cwd / "hello.py"
-        path.write_text("def hello():\n    return 'old'\n")
-        previews: list[str] = []
-
-        result = dispatch_tool(
-            self.cwd,
-            "write",
-            {
-                "path": "hello.py",
-                "old_string": "return 'old'",
-                "content": "return 'new'",
-            },
-            on_preview=previews.append,
-        )
-
-        self.assertTrue(result.startswith("wrote "))
-        self.assertEqual(path.read_text(), "def hello():\n    return 'new'\n")
-        self.assertEqual(previews, [f"{path}  +1 -1"])
-
-    def test_old_string_must_be_unique(self) -> None:
-        path = self.cwd / "hello.txt"
-        path.write_text("same\nsame\n")
-        previews: list[str] = []
-
-        result = tool_write(
-            self.cwd, "hello.txt", "different", old_string="same", on_preview=previews.append
-        )
-
-        self.assertIn("occurs 2 times", result)
-        self.assertEqual(previews, [])
-        self.assertEqual(path.read_text(), "same\nsame\n")
-
-    def test_old_string_requires_existing_file(self) -> None:
-        result = tool_write(self.cwd, "missing.txt", "new", old_string="old")
-
-        self.assertTrue(result.startswith("error: not a file:"))
-        self.assertFalse((self.cwd / "missing.txt").exists())
+        self.assertEqual(previews[0], f"write  {self.cwd / 'nested/hello.py'}  +1 -0")
 
     def test_noop_does_not_preview_or_write(self) -> None:
         path = self.cwd / "hello.txt"
@@ -82,14 +43,102 @@ class WriteToolTests(unittest.TestCase):
         self.assertTrue(result.startswith("no changes:"))
         self.assertEqual(previews, [])
 
+
+class EditToolTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cwd = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_single_span_replaces(self) -> None:
+        path = self.cwd / "hello.py"
+        path.write_text("def hello():\n    return 'old'\n")
+        previews: list[str] = []
+
+        result = dispatch_tool(
+            self.cwd,
+            "edit",
+            {
+                "path": "hello.py",
+                "edits": [{"old_string": "return 'old'", "new_string": "return 'new'"}],
+            },
+            on_preview=previews.append,
+        )
+
+        self.assertTrue(result.startswith("edited "))
+        self.assertEqual(path.read_text(), "def hello():\n    return 'new'\n")
+        self.assertEqual(previews, [f"edit  {path}  +1 -1"])
+
+    def test_multi_hunk_against_original(self) -> None:
+        path = self.cwd / "f.py"
+        path.write_text("a = 1\nb = 2\nc = 3\n")
+        result = tool_edit(
+            self.cwd,
+            "f.py",
+            [
+                {"old_string": "a = 1", "new_string": "a = 10"},
+                {"old_string": "c = 3", "new_string": "c = 30"},
+            ],
+        )
+        self.assertEqual(result, f"edited 2 spans in {path}")
+        self.assertEqual(path.read_text(), "a = 10\nb = 2\nc = 30\n")
+
+    def test_old_string_must_be_unique(self) -> None:
+        path = self.cwd / "hello.txt"
+        path.write_text("same\nsame\n")
+        previews: list[str] = []
+
+        result = tool_edit(
+            self.cwd,
+            "hello.txt",
+            [{"old_string": "same", "new_string": "different"}],
+            on_preview=previews.append,
+        )
+
+        self.assertIn("occurs 2 times", result)
+        self.assertEqual(previews, [])
+        self.assertEqual(path.read_text(), "same\nsame\n")
+
+    def test_requires_existing_file(self) -> None:
+        result = tool_edit(
+            self.cwd, "missing.txt", [{"old_string": "old", "new_string": "new"}]
+        )
+
+        self.assertTrue(result.startswith("error: not a file:"))
+        self.assertFalse((self.cwd / "missing.txt").exists())
+
     def test_empty_old_string_is_rejected(self) -> None:
         path = self.cwd / "hello.txt"
         path.write_text("content\n")
 
-        result = tool_write(self.cwd, "hello.txt", "new", old_string="")
+        result = tool_edit(
+            self.cwd, "hello.txt", [{"old_string": "", "new_string": "new"}]
+        )
 
-        self.assertIn("old_string must not be empty", result)
+        self.assertIn("old_string must be a non-empty string", result)
         self.assertEqual(path.read_text(), "content\n")
+
+    def test_overlapping_edits_are_rejected(self) -> None:
+        path = self.cwd / "f.txt"
+        path.write_text("abcdef\n")
+        result = tool_edit(
+            self.cwd,
+            "f.txt",
+            [
+                {"old_string": "abc", "new_string": "XXX"},
+                {"old_string": "bcd", "new_string": "YYY"},
+            ],
+        )
+        self.assertIn("overlap", result)
+        self.assertEqual(path.read_text(), "abcdef\n")
+
+    def test_empty_edits_rejected(self) -> None:
+        path = self.cwd / "f.txt"
+        path.write_text("x\n")
+        self.assertIn("non-empty", tool_edit(self.cwd, "f.txt", []))
+
 
 class ReadToolTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -161,15 +210,8 @@ class OutputBudgetTests(unittest.TestCase):
         self.assertIn("truncated", result)
         self.assertLess(len(result), MAX_BASH_CHARS + 200)
 
-    def test_grep_caps_matches(self) -> None:
-        sub = self.cwd / "src"
-        sub.mkdir()
-        (sub / "many.txt").write_text("hit\n" * (MAX_GREP_LINES + 55))
-
-        result = dispatch_tool(self.cwd, "grep", {"pattern": "hit", "path": "src"})
-
-        self.assertIn("more]", result)
-        self.assertLessEqual(len(result.splitlines()), MAX_GREP_LINES + 1)
+    def test_grep_tool_is_gone(self) -> None:
+        self.assertEqual(dispatch_tool(self.cwd, "grep", {"pattern": "x"}), "error: unknown tool grep")
 
 
 if __name__ == "__main__":

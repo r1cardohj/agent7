@@ -92,14 +92,17 @@ class RunAgentPreviewTests(unittest.TestCase):
         )
         return answer, messages, client
 
-    def test_replace_preview_reaches_callback_and_file_is_written(self) -> None:
+    def test_edit_preview_reaches_callback_and_file_is_written(self) -> None:
         previews: list[str] = []
         seen_tools: list[tuple[int, str, dict[str, Any], str]] = []
         turns = [
             [
                 _tool_call_chunk(
-                    "write",
-                    {"path": "app.py", "old_string": "'old'", "content": "'new'"},
+                    "edit",
+                    {
+                        "path": "app.py",
+                        "edits": [{"old_string": "'old'", "new_string": "'new'"}],
+                    },
                 )
             ],
             [_chunk(content="done")],
@@ -111,10 +114,10 @@ class RunAgentPreviewTests(unittest.TestCase):
 
         self.assertEqual(answer, "done")
         self.assertEqual(self.target.read_text(), "value = 'new'\n")
-        self.assertEqual(previews, [f"{self.target.resolve()}  +1 -1"])
+        self.assertEqual(previews, [f"edit  {self.target.resolve()}  +1 -1"])
         self.assertEqual(len(seen_tools), 1)
-        self.assertEqual(seen_tools[0][1], "write")
-        self.assertTrue(seen_tools[0][3].startswith("wrote "))
+        self.assertEqual(seen_tools[0][1], "edit")
+        self.assertTrue(seen_tools[0][3].startswith("edited "))
         self.assertEqual(len(client.chat.completions.requests), 2)
 
     def test_preview_is_optional(self) -> None:
@@ -133,7 +136,11 @@ class RunAgentPreviewTests(unittest.TestCase):
         turns = [
             [
                 _tool_call_chunk(
-                    "write", {"path": "app.py", "old_string": "missing", "content": "x"}
+                    "edit",
+                    {
+                        "path": "app.py",
+                        "edits": [{"old_string": "missing", "new_string": "x"}],
+                    },
                 )
             ],
             [_chunk(content="gave up")],
@@ -159,7 +166,7 @@ class RunAgentPreviewTests(unittest.TestCase):
 
         self.assertEqual(answer, "ok")
         self.assertEqual((self.cwd / "fresh.txt").read_text(), "one\ntwo\n")
-        self.assertEqual(previews, [f"{(self.cwd / 'fresh.txt').resolve()}  +2 -0"])
+        self.assertEqual(previews, [f"write  {(self.cwd / 'fresh.txt').resolve()}  +2 -0"])
 
     def test_noop_write_reports_no_changes_without_preview(self) -> None:
         previews: list[str] = []
