@@ -1,4 +1,3 @@
-import json
 import os
 import stat
 import tempfile
@@ -8,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent7.agent import SYSTEM
-from agent7.store import list_sessions, load, resume, resume_messages, save
+from agent7.store import load, resume, resume_messages, save, session_path, workspace_key
 
 
 class SessionStoreTests(unittest.TestCase):
@@ -28,44 +27,47 @@ class SessionStoreTests(unittest.TestCase):
         self.env.stop()
         self.tmp.cleanup()
 
-    def save(self, session_id: str, **kwargs) -> Path:
-        return save(session_id, self.state, created_at="2025-01-01T00:00:00+00:00", **kwargs)
+    def save(self, state=None, **kwargs) -> Path:
+        return save(state or self.state, created_at="2025-01-01T00:00:00+00:00", **kwargs)
 
     def test_round_trip_has_no_credentials_and_private_permissions(self) -> None:
-        path = self.save("abcdef123456", name="修复认证")
-        data = load("abcdef123456", cwd=self.cwd)
-        self.assertEqual(data["name"], "修复认证")
+        path = self.save()
+        data = load(self.cwd)
         self.assertEqual(data["messages"][1]["content"], "你好")
         self.assertEqual(data["path"], path)
+        self.assertEqual(path, session_path(self.cwd))
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-        self.assertNotIn("credential", path.read_text())
-        self.assertNotIn("api_key", path.read_text())
+        text = path.read_text()
+        self.assertNotIn("credential", text)
+        self.assertNotIn("api_key", text)
+        self.assertNotIn('"name"', text)
 
-    def test_latest_is_scoped_to_workspace_and_sorted_by_update_time(self) -> None:
-        self.save("aaaaaaaaaaaa", name="old")
-        self.save("bbbbbbbbbbbb", name="new")
-        paths = sorted((self.root / "state" / "agent7" / "sessions").glob("*.json"))
-        for path in paths:
-            data = json.loads(path.read_text())
-            data["updated_at"] = "2025-01-0" + ("2" if data["id"] == "bbbbbbbbbbbb" else "1") + "T00:00:00+00:00"
-            path.write_text(json.dumps(data))
+    def test_one_snapshot_per_workspace_and_other_cwds_stay_separate(self) -> None:
+        self.save()
+        self.state.messages.append({"role": "assistant", "content": "好"})
+        self.save()
+        files = list((self.root / "state" / "agent7" / "sessions").glob("*.json"))
+        self.assertEqual(len(files), 1)
+        self.assertEqual(load(self.cwd)["messages"][-1]["content"], "好")
+
+        other_cwd = self.root / "other"
+        other_cwd.mkdir()
         other = SimpleNamespace(**vars(self.state))
-        other.cwd = self.root / "other"
-        save("cccccccccccc", other, created_at="2025-01-01T00:00:00+00:00")
-        self.assertEqual(resume(self.cwd)["id"], "bbbbbbbbbbbb")
-        self.assertEqual([s["id"] for s in list_sessions(self.cwd)], ["bbbbbbbbbbbb", "aaaaaaaaaaaa"])
-        with self.assertRaisesRegex(ValueError, "another workspace"):
-            load("cccccccccccc", cwd=self.cwd)
+        other.cwd = other_cwd
+        self.save(other)
+        files = list((self.root / "state" / "agent7" / "sessions").glob("*.json"))
+        self.assertEqual(len(files), 2)
+        self.assertEqual(Path(resume(self.cwd)["cwd"]), self.cwd.resolve())
+        self.assertEqual(Path(resume(other_cwd)["cwd"]), other_cwd.resolve())
+        self.assertNotEqual(workspace_key(self.cwd), workspace_key(other_cwd))
 
-    def test_missing_corrupt_and_bad_id_fail_without_overwriting(self) -> None:
-        with self.assertRaisesRegex(ValueError, "no sessions"):
+    def test_missing_corrupt_fail_without_overwriting(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no session"):
             resume(self.cwd)
-        with self.assertRaisesRegex(ValueError, "invalid session id"):
-            load("../auth", cwd=self.cwd)
-        path = self.save("abcdef123456")
+        path = self.save()
         path.write_text("{broken")
         with self.assertRaisesRegex(ValueError, "cannot read"):
-            resume(self.cwd, "abcdef123456")
+            resume(self.cwd)
         self.assertEqual(path.read_text(), "{broken")
 
     def test_resume_refreshes_system_and_preserves_completed_tools(self) -> None:
@@ -118,7 +120,7 @@ class SessionStoreTests(unittest.TestCase):
         ])
 
     def test_atomic_save_leaves_no_temporary_file(self) -> None:
-        path = self.save("abcdef123456")
+        path = self.save()
         self.assertEqual(list(path.parent.iterdir()), [path])
 
 

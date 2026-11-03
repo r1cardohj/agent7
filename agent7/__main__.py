@@ -34,7 +34,7 @@ from .providers import (
     resolve_default,
 )
 from .session import Session, format_context_prompt
-from .store import list_sessions, new_id, resume, resume_messages, save, timestamp
+from .store import resume, resume_messages, save, timestamp
 
 console, err = Console(stderr=False), Console(stderr=True)
 _THINK_HEADER = "  thinking"
@@ -291,44 +291,14 @@ async def _run_agent_once(session: Session, task: str) -> str:
         err.print(f"[dim]# {notice}[/dim]")
     return answer
 
-def _print_sessions(cwd: Path) -> None:
-    print("ID\tNAME\tPATH")
-    for snapshot in list_sessions(cwd):
-        print(f"{snapshot['id']}\t{snapshot['name'] or '-'}\t{snapshot['path']}")
-
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="agent7 — minimal coding agent")
     p.add_argument("task", nargs="*", help="task; omit for REPL")
     p.add_argument("--cwd", type=Path, default=None)
     p.add_argument("--max-turns", type=int, default=None)
-    p.add_argument("-r", "--resume", nargs="?", const="latest", metavar="ID",
-                   help="resume the latest workspace session, or the given ID")
-    p.add_argument("--session-list", action="store_true", help=argparse.SUPPRESS)
-    p.add_argument("--session-name", help=argparse.SUPPRESS)
-    raw = sys.argv[1:] if argv is None else argv
-    # `session` is a reserved command; all other positional text remains a task.
-    # Only the first positional token is a command; options may have any values.
-    i = 0
-    while i < len(raw) and raw[i] != "--":
-        if raw[i] in ("--cwd", "--max-turns"):
-            i += 2
-        elif raw[i] in ("-r", "--resume"):
-            i += 2 if i + 1 < len(raw) and raw[i + 1] != "session" else 1
-        elif raw[i].startswith("-"):
-            i += 1
-        else:
-            break
-    if i < len(raw) and raw[i] == "session":
-        tail = raw[i + 1:]
-        name = " ".join(tail).strip()
-        if tail in (["-l"], ["--list"]):
-            command = ["--session-list"]
-        elif not name or any(c in name for c in "\t\r\n"):
-            p.error("session name must be non-empty and on one line")
-        else:
-            command = ["--session-name", name]
-        raw = [*raw[:i], *command]
-    return p.parse_args(raw)
+    p.add_argument("-r", "--resume", action="store_true",
+                   help="resume the last session in this workspace")
+    return p.parse_args(sys.argv[1:] if argv is None else argv)
 
 async def async_main(argv: list[str] | None = None) -> None:
     _force_utf8_stdio()
@@ -337,22 +307,11 @@ async def async_main(argv: list[str] | None = None) -> None:
     task = " ".join(args.task).strip() or None
     cwd = (args.cwd or Path.cwd()).resolve()
     snapshot = None
-    if args.session_list:
-        if args.resume or args.task:
-            raise SystemExit("session -l cannot be combined with a task or --resume")
-        _print_sessions(cwd)
-        return
-    if args.session_name is not None:
-        if args.resume:
-            raise SystemExit("session and --resume cannot be combined")
-        task = None  # A named session opens the REPL; a bare task remains one-shot.
     if args.resume:
         try:
-            snapshot = resume(cwd, args.resume)
+            snapshot = resume(cwd)
         except ValueError as e:
             raise SystemExit(str(e)) from None
-    session_id = snapshot["id"] if snapshot else new_id()
-    session_name = snapshot["name"] if snapshot else args.session_name or ""
     created_at = snapshot["created_at"] if snapshot else timestamp()
     max_turns = (
         args.max_turns if args.max_turns is not None
@@ -386,7 +345,7 @@ async def async_main(argv: list[str] | None = None) -> None:
         credential=cred, credentials=dict(all_creds),
     )
     def persist() -> None:
-        save(session_id, state, name=session_name, created_at=created_at)
+        save(state, created_at=created_at)
     try:
         ids: list[str] = []
         if all_creds:
@@ -410,9 +369,8 @@ async def async_main(argv: list[str] | None = None) -> None:
         err.print(f"[dim]# agent7  model={state.model_ref or state.model}  "
                   f"providers=[{','.join(state.credentials) or 'none'}]  "
                   f"shell={SHELL.name}  cwd={state.cwd}[/dim]")
-        label = f"  name={session_name}" if session_name else ""
         action = "resumed" if snapshot else "new"
-        err.print(f"[dim]# {action} session {session_id}{label}[/dim]")
+        err.print(f"[dim]# {action} session[/dim]")
         if task:
             try:
                 await _run_once(state, task, on_saved=persist)

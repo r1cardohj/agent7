@@ -7,12 +7,12 @@ You give it one sentence; it reads files, edits files, runs commands, then stops
 Built for people who work on one thing at a time — you hold one task in your head, and so does it.
 
 ```
-agent7/        1634 lines
+agent7/        1570 lines
   agent.py      513   tools + agent loop + compaction
-  __main__.py   472   CLI + REPL + @path completion + session wiring
+  __main__.py   430   CLI + REPL + @path completion + session wiring
   commands.py   237   slash commands + model switching
   providers.py  161   API key auth (DeepSeek, Grok)
-  store.py      149   atomic JSON session snapshots
+  store.py      127   one JSON snapshot per workspace
   session.py     99   session state
   __init__.py     3   version
 ```
@@ -50,14 +50,12 @@ You can also log in from inside the REPL:
 ```bash
 uv run agent7 "create hello.py that prints hi"   # one-shot
 uv run agent7                                    # new REPL session
-uv run agent7 -r                                 # resume latest session in this cwd
-uv run agent7 -r <session-id>                    # resume a specific session
-uv run agent7 session -l                         # list this cwd's sessions
-uv run agent7 session "fix authentication"       # new named REPL session
+uv run agent7 -r                                 # resume this cwd's session
+uv run agent7 -r "continue"                      # resume + one-shot
 ```
 
+Each workspace keeps a single snapshot — starting without `-r` replaces it.
 Sessions are saved automatically after tasks, commands, interruptions, and exit.
-`agent7 session -l` prints tab-separated `ID`, `NAME`, and `PATH` columns and needs no login.
 Snapshots contain resumable model context, not a separate full transcript; compaction is reflected
 in the saved context. Files live in `${XDG_STATE_HOME:-~/.local/state}/agent7/sessions/` and do not
 store API keys. Hard process kills can lose the in-progress turn.

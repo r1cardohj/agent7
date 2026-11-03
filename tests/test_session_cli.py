@@ -24,46 +24,36 @@ class SessionCliTests(unittest.TestCase):
         self.env.stop()
         self.tmp.cleanup()
 
-    def test_resume_defaults_to_latest_and_accepts_an_id(self) -> None:
-        self.assertIsNone(_parse_args([]).resume)
-        self.assertEqual(_parse_args(["-r"]).resume, "latest")
-        self.assertEqual(_parse_args(["-r", "abcdef123456"]).resume, "abcdef123456")
-        self.assertEqual(_parse_args(["session", "-l"]).session_list, True)
-        self.assertEqual(_parse_args(["--cwd", "/tmp", "session", "-l"]).session_list, True)
-        self.assertEqual(_parse_args(["session", "修复认证"]).session_name, "修复认证")
-        self.assertEqual(_parse_args(["fix", "session", "docs"]).task, ["fix", "session", "docs"])
+    def test_resume_is_a_flag_and_session_is_just_a_task_word(self) -> None:
+        self.assertFalse(_parse_args([]).resume)
+        self.assertTrue(_parse_args(["-r"]).resume)
+        self.assertEqual(_parse_args(["-r", "继续"]).task, ["继续"])
+        self.assertEqual(_parse_args(["session", "docs"]).task, ["session", "docs"])
 
-    def test_list_works_without_credentials(self) -> None:
-        state = type("State", (), {
-            "cwd": self.cwd, "model_ref": "deepseek/test", "max_turns": 30,
-            "messages": [{"role": "system", "content": SYSTEM}],
-        })()
-        path = save("abcdef123456", state, name="修复认证", created_at="2025-01-01T00:00:00+00:00")
-        with patch("agent7.__main__.print") as output:
-            import asyncio
-            asyncio.run(async_main(["--cwd", str(self.cwd), "session", "-l"]))
-        rows = [call.args[0] for call in output.call_args_list]
-        self.assertEqual(rows[0], "ID\tNAME\tPATH")
-        self.assertEqual(rows[1], f"abcdef123456\t修复认证\t{path}")
-
-    def test_named_session_enters_repl_and_saves_name(self) -> None:
-        import asyncio
+    def test_new_repl_overwrites_the_workspace_snapshot(self) -> None:
+        state = SimpleNamespace(
+            cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
+            messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": "old"}],
+        )
+        save(state, created_at="2025-01-01T00:00:00+00:00")
         with patch("agent7.__main__.resolve_all", return_value={}), \
              patch("agent7.__main__.resolve_default", return_value=None), \
              patch("agent7.__main__.AsyncOpenAI") as client, \
              patch("agent7.__main__.PromptSession") as prompt:
             client.return_value.close = AsyncMock()
             prompt.return_value.prompt_async.side_effect = EOFError
-            asyncio.run(async_main(["--cwd", str(self.cwd), "session", "修复认证"]))
+            asyncio.run(async_main(["--cwd", str(self.cwd)]))
         snapshots = list((self.root / "state" / "agent7" / "sessions").glob("*.json"))
         self.assertEqual(len(snapshots), 1)
-        self.assertEqual(load(snapshots[0].stem)["name"], "修复认证")
-    def test_resume_passes_saved_context_to_agent_and_keeps_identity(self) -> None:
+        data = load(self.cwd)
+        self.assertEqual(data["messages"], [{"role": "system", "content": SYSTEM}])
+
+    def test_resume_passes_saved_context_to_agent(self) -> None:
         state = SimpleNamespace(
             cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": "old"}],
         )
-        path = save("abcdef123456", state, name="旧会话", created_at="2025-01-01T00:00:00+00:00")
+        save(state, created_at="2025-01-01T00:00:00+00:00")
         seen = []
         async def fake_run(session, task, **kwargs):
             seen.append((list(session.messages), task))
@@ -77,11 +67,12 @@ class SessionCliTests(unittest.TestCase):
              patch("agent7.__main__.fetch_models", new=AsyncMock(return_value=[])), \
              patch("agent7.__main__.switch_model", new=AsyncMock(return_value=SimpleNamespace(message="ok"))), \
              patch("agent7.__main__._run_once", new=fake_run):
-            asyncio.run(async_main(["--cwd", str(self.cwd), "-r", "abcdef123456", "继续"]))
+            asyncio.run(async_main(["--cwd", str(self.cwd), "-r", "继续"]))
         self.assertEqual(seen[0][0][1:], [{"role": "user", "content": "old"}])
         self.assertEqual(seen[0][1], "继续")
-        self.assertEqual(len(list(path.parent.glob("*.json"))), 1)
-        self.assertEqual(load("abcdef123456")["name"], "旧会话")
+        snapshots = list((self.root / "state" / "agent7" / "sessions").glob("*.json"))
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(load(self.cwd)["messages"][1]["content"], "old")
 
 
 if __name__ == "__main__":
