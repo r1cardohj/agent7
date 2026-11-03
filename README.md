@@ -1,6 +1,6 @@
 # agent7
 
-**The simplest coding agent. ~1600 lines of Python, four tools, one loop.**
+**The simplest coding agent. ~1800 lines of Python, four tools, one loop.**
 
 A deliberately minimal harness — all-in on modern, carefully chosen model providers.
 Fast and precise. No seatbelt; hold on.
