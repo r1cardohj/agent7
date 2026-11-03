@@ -285,6 +285,7 @@ async def _run_agent_once(session: Session, task: str) -> str:
             context_limit=session.context_limit, prompt_tokens=session.prompt_tokens,
             on_compact=lambda n: err.print(f"[dim]# compacted {n} message(s)[/dim]"),
             on_finish=finish.append,
+            bash=session.ensure_bash(),
         )
     # never leave a tool call as the last thing on screen
     if notice := reply_notice(answer, finish[-1] if finish else None):
@@ -366,6 +367,7 @@ async def async_main(argv: list[str] | None = None) -> None:
                 await switch_model(state, ids[0])
             else:
                 state.set_model(default_model_for(state.provider_id))
+        state.refresh_system()
         err.print(f"[dim]# agent7  model={state.model_ref or state.model}  "
                   f"providers=[{','.join(state.credentials) or 'none'}]  "
                   f"shell={SHELL.name}  cwd={state.cwd}[/dim]")
@@ -421,6 +423,7 @@ async def async_main(argv: list[str] | None = None) -> None:
         try:
             persist()
         finally:
+            state.close_bash()
             await state.client.close()
 
 def main(argv: list[str] | None = None) -> None:

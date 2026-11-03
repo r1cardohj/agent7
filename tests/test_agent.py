@@ -1,3 +1,4 @@
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -201,10 +202,11 @@ class OutputBudgetTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_bash_output_is_truncated(self) -> None:
+        py = sys.executable.replace("'", "'\\''")
         result = dispatch_tool(
             self.cwd,
             "bash",
-            {"command": f"python -c \"print('x' * {MAX_BASH_CHARS * 2})\""},
+            {"command": f"'{py}' -c \"print('x' * {MAX_BASH_CHARS * 2})\""},
         )
 
         self.assertIn("truncated", result)

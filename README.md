@@ -7,13 +7,13 @@ You give it one sentence; it reads files, edits files, runs commands, then stops
 Built for people who work on one thing at a time — you hold one task in your head, and so does it.
 
 ```
-agent7/        1570 lines
-  agent.py      513   tools + agent loop + compaction
-  __main__.py   430   CLI + REPL + @path completion + session wiring
-  commands.py   237   slash commands + model switching
+agent7/        ~1800 lines
+  agent.py      711   tools + agent loop + compaction + persistent bash
+  __main__.py   433   CLI + REPL + @path completion + session wiring
+  commands.py   238   slash commands + model switching
   providers.py  161   API key auth (DeepSeek, Grok)
   store.py      127   one JSON snapshot per workspace
-  session.py     99   session state
+  session.py    123   session state
   __init__.py     3   version
 ```
 
@@ -84,18 +84,31 @@ text never ends silently: you get either `# (stopped after N turns)`,
 | `read` | Read a file with line numbers | 200 lines per call by default; page with `offset=` |
 | `write` | Create or overwrite a whole file | `+N -M` diff stats |
 | `edit` | Precise replacements; one call may include multiple `edits[]` against the original file (no overlaps) | `+N -M` diff stats |
-| `bash` | Host shell in the cwd (bash / PowerShell / cmd) | ~12k chars |
+| `bash` | Host shell in the cwd (bash / PowerShell / cmd); **cwd and env persist** across calls in a session | ~12k chars |
 
 That's it. No `grep`, no `list_dir`, no `todo`, no `task`.
 Need more capability? Let the agent use `bash`.
 
 On startup agent7 picks a shell from `sys.platform`: **Git Bash → PowerShell → cmd** on
 Windows, **bash** elsewhere. The choice is written into the system prompt so the model
-matches the host. Override with `AGENT7_SHELL=bash|powershell|cmd|/path/to/shell`.
+matches the host (except DeepSeek — see below). Override with
+`AGENT7_SHELL=bash|powershell|cmd|/path/to/shell`.
 
 Tools run **serially**, one after another — so the log always reads in order and
 you never get three outputs interleaved. Edits are applied without a confirmation
 prompt; you just get a one-line diff stat.
+
+## DeepSeek prompt
+
+When the active model is a DeepSeek model (name contains `deepseek`, or the
+provider is `deepseek`), the system prompt is the frozen RL persona from DeepSeek
+Harness Minimal — a single sentence:
+
+`You are a helpful software engineer assistant.`
+
+Other providers keep the longer coding-agent prompt. Tools stay the same four
+either way; only the system text changes. Switching `/model` refreshes the
+system message for the new model.
 
 ## Context
 
