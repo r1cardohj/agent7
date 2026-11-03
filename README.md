@@ -18,17 +18,6 @@ Built for people who work on one thing at a time — you hold one task in your h
 - **Provider login** — paste an API key for DeepSeek or Grok (`/login` or env); switch models in-session
 
 
-```
-agent7/        1570 lines
-  agent.py      513   tools + agent loop + compaction
-  __main__.py   430   CLI + REPL + @path completion + session wiring
-  commands.py   237   slash commands + model switching
-  providers.py  161   API key auth (DeepSeek, Grok)
-  store.py      127   one JSON snapshot per workspace
-  session.py     99   session state
-  __init__.py     3   version
-```
-
 ## Install
 
 ```bash
