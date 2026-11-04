@@ -1,6 +1,6 @@
 [project]
 name = "agent7"
-version = "0.1.5"
+version = "0.1.6"
 description = "The simplest coding agent — four tools, one loop, ~1800 lines of Python"
 readme = "README.md"
 license = "MIT"
