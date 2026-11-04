@@ -78,10 +78,13 @@ class ReplyPrinter:
         self._chars = 0
         if text.strip():
             console.print()
+            answer = Markdown(text)
             if console.is_terminal and sys.stdin.isatty():
-                with console.pager(styles=True):
-                    console.print(Markdown(text))
-            console.print(Markdown(text))
+                lines = console.render_lines(answer, pad=False)
+                if len(lines) > console.height:
+                    with console.pager(styles=True):
+                        console.print(answer)
+            console.print(answer)
             console.print()
 
     def _write(self, text: str) -> None:

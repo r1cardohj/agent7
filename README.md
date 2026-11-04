@@ -15,7 +15,7 @@ Built for people who work on one thing at a time — you hold one task in your h
 - **Complete CLI agent UX** — streaming thinking + answer, tool lines with ✓/✗, edit/write preview, vi-mode REPL, `@path` completion, session resume
 - **Slash commands** — `/help` `/model` `/status` `/login` `/logout` `/compact`
 - **Markdown rendering** — final replies rendered as Rich Markdown in the terminal, thanks rich.
-- **Paged final replies** — interactive answers open in your system pager (usually `less`); use the arrow keys/Space to scroll and `q` to continue. The rendered reply stays in the terminal after you quit. Redirected output is never paged.
+- **Paged final replies** — interactive answers that exceed one screen open in your system pager (usually `less`); shorter answers print directly. Use the arrow keys/Space to scroll and `q` to continue. The rendered reply stays in the terminal after you quit. Redirected output is never paged.
 - **Provider login** — paste an API key for DeepSeek, Grok, or Kimi (`/login` or env); switch models in-session
 
 
