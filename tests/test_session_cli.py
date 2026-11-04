@@ -58,6 +58,27 @@ class SessionCliTests(unittest.TestCase):
             asyncio.run(async_main(["--cwd", str(self.cwd)]))
         self.assertEqual(prompt.return_value.prompt_async.call_count, 2)
 
+    def test_new_session_reuses_last_model_with_fresh_context(self) -> None:
+        state = SimpleNamespace(
+            cwd=self.cwd, model_ref="kimi/kimi-for-coding", max_turns=30,
+            messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": "old"}],
+        )
+        save(state, created_at="2025-01-01T00:00:00+00:00")
+        client = SimpleNamespace(close=AsyncMock())
+        provider = SimpleNamespace(id="deepseek", make_client=lambda cred: client)
+        credential = SimpleNamespace(source="test")
+        switch = AsyncMock(return_value=SimpleNamespace(message="ok"))
+        with patch("agent7.__main__.resolve_all", return_value={"deepseek": credential}), \
+             patch("agent7.__main__.resolve_default", return_value=(provider, credential)), \
+             patch("agent7.__main__.fetch_models", new=AsyncMock(return_value=[])), \
+             patch("agent7.__main__.switch_model", new=switch), \
+             patch("agent7.__main__.PromptSession") as prompt:
+            prompt.return_value.prompt_async.side_effect = EOFError
+            asyncio.run(async_main(["--cwd", str(self.cwd)]))
+        switch.assert_awaited_once()
+        self.assertEqual(switch.await_args.args[1], "kimi/kimi-for-coding")
+        self.assertEqual(load(self.cwd)["messages"], [{"role": "system", "content": SYSTEM}])
+
     def test_resume_passes_saved_context_to_agent(self) -> None:
         state = SimpleNamespace(
             cwd=self.cwd, model_ref="deepseek/test", max_turns=30,

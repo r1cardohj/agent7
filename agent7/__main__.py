@@ -356,16 +356,17 @@ async def async_main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
     task = " ".join(args.task).strip() or None
     cwd = (args.cwd or Path.cwd()).resolve()
-    snapshot = None
-    if args.resume:
-        try:
-            snapshot = resume(cwd)
-        except ValueError as e:
+    saved = None
+    try:
+        saved = resume(cwd)
+    except ValueError as e:
+        if args.resume:
             raise SystemExit(str(e)) from None
+    snapshot = saved if args.resume else None
     created_at = snapshot["created_at"] if snapshot else timestamp()
     max_turns = resolve_max_turns(args)
     model = os.environ.get("AGENT7_MODEL") or (
-        snapshot.get("model_ref", "") if snapshot else ""
+        saved.get("model_ref", "") if saved else ""
     )
 
     all_creds = resolve_all()

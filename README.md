@@ -1,6 +1,6 @@
 # agent7
 
-**The simplest coding agent. ~1800 lines of Python, four tools, one loop.**
+**The simplest coding agent. Four tools, one loop.**
 
 A deliberately minimal harness — all-in on modern, carefully chosen model providers.
 Fast and precise. No seatbelt; hold on.
@@ -59,8 +59,9 @@ uv run agent7 -r                                 # resume this cwd's session
 uv run agent7 -r "continue"                      # resume + one-shot
 ```
 
-Each workspace keeps a single snapshot — starting without `-r` replaces it.
-Sessions are saved automatically after tasks, commands, interruptions, and exit.
+Each workspace keeps a single snapshot — starting without `-r` replaces the conversation but
+reuses its last selected model. Set `$AGENT7_MODEL` to override that choice. Sessions are saved
+automatically after tasks, commands, interruptions, and exit.
 Snapshots contain resumable model context, not a separate full transcript; compaction is reflected
 in the saved context. Files live in `${XDG_STATE_HOME:-~/.local/state}/agent7/sessions/` and do not
 store API keys. Hard process kills can lose the in-progress turn.
