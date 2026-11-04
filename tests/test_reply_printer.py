@@ -2,6 +2,7 @@
 
 import io
 import unittest
+from unittest.mock import patch
 
 from rich.console import Console
 
@@ -10,13 +11,14 @@ import agent7.__main__ as cli
 
 class ReplyPrinterPreviewTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.orig_err = cli.err
+        self.orig_err, self.orig_console = cli.err, cli.console
         self.stream = io.StringIO()
         cli.err = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
+        cli.console = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
         self.rp = cli.ReplyPrinter()
 
     def tearDown(self) -> None:
-        cli.err = self.orig_err
+        cli.err, cli.console = self.orig_err, self.orig_console
 
     def out(self) -> str:
         return self.stream.getvalue()
@@ -93,6 +95,36 @@ class ReplyPrinterPreviewTests(unittest.TestCase):
         self.rp.on_preview("write  x.txt  +1 -1")
         self.assertEqual(self.rp.buf, ["some streamed answer text"])
         self.assertNotIn("some streamed answer text", self.out())
+
+
+class ReplyPrinterPagerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.orig_err, self.orig_console = cli.err, cli.console
+        self.stream = io.StringIO()
+        cli.err = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
+        cli.console = Console(file=self.stream, width=80, force_terminal=True)
+
+    def tearDown(self) -> None:
+        cli.err, cli.console = self.orig_err, self.orig_console
+
+    def test_interactive_final_answer_is_paged_then_left_in_terminal(self) -> None:
+        with patch("agent7.__main__.sys.stdin.isatty", return_value=True), \
+             patch("agent7.__main__.console.pager", wraps=cli.console.pager) as get_pager, \
+             patch("rich.pager.SystemPager.show") as show:
+            with cli.ReplyPrinter() as rp:
+                rp.on_delta("**final answer**")
+        get_pager.assert_called_once_with(styles=True)
+        show.assert_called_once()
+        self.assertIn("final answer", show.call_args.args[0])
+        self.assertIn("final answer", self.stream.getvalue())
+
+    def test_non_interactive_output_does_not_open_a_pager(self) -> None:
+        cli.console = Console(file=self.stream, width=80, force_terminal=False)
+        with patch("agent7.__main__.console.pager") as get_pager:
+            with cli.ReplyPrinter() as rp:
+                rp.on_delta("final answer")
+        get_pager.assert_not_called()
+        self.assertIn("final answer", self.stream.getvalue())
 
 
 if __name__ == "__main__":

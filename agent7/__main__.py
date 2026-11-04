@@ -78,6 +78,9 @@ class ReplyPrinter:
         self._chars = 0
         if text.strip():
             console.print()
+            if console.is_terminal and sys.stdin.isatty():
+                with console.pager(styles=True):
+                    console.print(Markdown(text))
             console.print(Markdown(text))
             console.print()
 
