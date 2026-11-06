@@ -25,6 +25,7 @@ from rich.text import Text
 
 from .agent import DEFAULT_MAX_TURNS, SHELL, SYSTEM, Interrupted, run_agent, tool_summary
 from .commands import dispatch, fetch_models, known_names, switch_model
+from .mascot import print_mascot
 from .providers import (
     default_model_for,
     get_provider,
@@ -430,6 +431,8 @@ async def async_main(argv: list[str] | None = None) -> None:
             except Exception as e:  # noqa: BLE001
                 err.print(f"[red]# error: {type(e).__name__}: {e}[/red]")
             return
+        if not task and err.is_terminal and not os.environ.get("AGENT7_NO_MASCOT"):
+            print_mascot(err)
         quit_hint = "Ctrl-Z to quit" if sys.platform == "win32" else "Ctrl-D to quit"
         err.print(f"[dim]# REPL  /help · /login · /model · @file · {quit_hint}[/dim]")
         if not all_creds:

@@ -1,5 +1,9 @@
 # agent7
 
+<p align="center">
+  <img src="assets/mascot.svg" alt="Seven, agent7's pixel robot mascot" width="160">
+</p>
+
 **The simplest coding agent. Four tools, one loop.**
 
 A deliberately minimal harness — all-in on modern, carefully chosen model providers.
@@ -8,6 +12,17 @@ Fast and precise. No seatbelt; hold on.
 No orchestration: no plan mode, no subagents, no parallel tasks, no background jobs.
 You give it one sentence; it reads files, edits files, runs commands, then stops.
 Built for people who work on one thing at a time — you hold one task in your head, and so does it.
+
+## Meet Seven
+
+<img align="right" src="assets/mascot.png" alt="Seven, the little pixel robot" width="100">
+
+**Seven** is agent7's tiny coding companion: a lavender pixel robot with a seven-shaped antenna,
+cursor-green eyes, and a lucky `7` on its chest. It stays out of the way until you open the REPL.
+
+The [SVG](assets/mascot.svg) and [PNG](assets/mascot.png) are original pixel artwork with matching
+terminal art. Set `AGENT7_NO_MASCOT=1` to hide the REPL welcome; one-shot commands never show it.
+To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_mascot.py`.
 
 ## Features
 
