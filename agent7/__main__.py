@@ -40,6 +40,7 @@ from .store import resume, resume_messages, save, timestamp
 console, err = Console(stderr=False), Console(stderr=True)
 _THINK_HEADER = "  thinking"
 _THINK_PREFIX = "  │ "
+_THINK_LINES = 6
 _THINK_ON, _THINK_OFF = "\033[36;2m", "\033[0m"
 
 def _load_dotenv(path: Path = Path(".env")) -> None:
@@ -66,6 +67,8 @@ class ReplyPrinter:
         self._chars = 0
         self._thinking_open = False
         self._thinking_bol = True
+        self._thinking_text = ""
+        self._thinking_screen_rows = 0
         self._counting = False
 
     def __enter__(self) -> ReplyPrinter:
@@ -103,9 +106,17 @@ class ReplyPrinter:
     def _close_thinking(self) -> None:
         if not self._thinking_open:
             return
-        if not self._thinking_bol:
+        if err.is_terminal:
+            chunks = []
+            if self._thinking_screen_rows > 1:
+                chunks.append(f"\033[{self._thinking_screen_rows - 1}F")
+            chunks.append("\r\033[J")
+            self._write("".join(chunks))
+        elif not self._thinking_bol:
             self._write("\n")
         self._thinking_open, self._thinking_bol = False, True
+        self._thinking_text = ""
+        self._thinking_screen_rows = 0
 
     def _clear_counter(self) -> None:
         if self._counting:
@@ -121,15 +132,42 @@ class ReplyPrinter:
 
     def _open_thinking(self) -> None:
         self._thinking_open, self._thinking_bol = True, True
+        self._thinking_text = ""
+        self._thinking_screen_rows = 0
         self._write("\n" + self._paint(_THINK_HEADER) + "\n")
 
+    def _paint_thinking_viewport(self) -> None:
+        rows: list[str] = []
+        width = max(1, err.width - len(_THINK_PREFIX))
+        for line in self._thinking_text.split("\n"):
+            visual = Text(line)
+            rows.extend(
+                _THINK_PREFIX + part.plain if line else ""
+                for part in visual.wrap(err, width)
+            )
+        visible = rows[-_THINK_LINES:]
+        chunks = []
+        if self._thinking_screen_rows > 1:
+            chunks.append(f"\033[{self._thinking_screen_rows - 1}F")
+        chunks.append("\r\033[J")
+        for i, row in enumerate(visible):
+            if i:
+                chunks.append("\033[E")
+            chunks.append(self._paint(row))
+        self._thinking_screen_rows = len(visible)
+        self._write("".join(chunks))
+
     def on_thinking(self, text: str) -> None:
-        """Stream the model's reasoning as dim text under a `thinking` header."""
+        """Stream reasoning in a bounded terminal viewport, or in full to logs."""
         if not text:
             return
         self._clear_counter()
         if not self._thinking_open:
             self._open_thinking()
+        if err.is_terminal:
+            self._thinking_text += text
+            self._paint_thinking_viewport()
+            return
         lines = text.split("\n")
         chunks: list[str] = []
         for i, line in enumerate(lines):

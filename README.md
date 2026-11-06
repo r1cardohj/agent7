@@ -86,8 +86,10 @@ Exit with Ctrl-D (or Ctrl-Z on Windows). Ctrl-C discards the current input or in
 the running turn, then returns to the prompt instead of exiting the REPL.
 
 Reasoning models (DeepSeek, Grok, Kimi) stream their `reasoning_content` live: it shows up
-dimmed under a `thinking` header, before the answer and above each tool line. It is
-display only — reasoning is never replayed into the prompt or the saved session.
+dimmed under a `thinking` header, before the answer and above each tool line. In a
+terminal, the latest six visual lines scroll inside a fixed-height viewport that is cleared
+afterward; redirected output retains the full text without control codes. It is display only —
+reasoning is never replayed into the prompt or the saved session.
 
 Type `@` in the REPL to recursively complete files and directories from the cwd:
 `fix @agent7/agent.py`.

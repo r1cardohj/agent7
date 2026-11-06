@@ -97,6 +97,66 @@ class ReplyPrinterPreviewTests(unittest.TestCase):
         self.assertNotIn("some streamed answer text", self.out())
 
 
+class ReplyPrinterThinkingViewportTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.orig_err = cli.err
+        self.stream = io.StringIO()
+        cli.err = Console(
+            file=self.stream, width=20, color_system=None, force_terminal=True
+        )
+        self.rp = cli.ReplyPrinter()
+
+    def tearDown(self) -> None:
+        cli.err = self.orig_err
+
+    def test_only_the_latest_six_visual_rows_are_displayed(self) -> None:
+        self.rp.on_thinking("\n".join(f"line {i}" for i in range(3)))
+        self.rp.on_thinking("\n" + "\n".join(f"line {i}" for i in range(3, 9)))
+        text = self.stream.getvalue()
+        self.assertIn("\033[2F", text)
+        for i in range(3, 9):
+            self.assertIn(f"│ line {i}", text)
+        self.assertEqual(self.rp._thinking_screen_rows, 6)
+        # Earlier rows have already scrolled out of the viewport.
+        latest = text.rsplit("\033[2F", 1)[-1]
+        self.assertNotIn("│ line 0", latest)
+        self.assertNotIn("│ line 2", latest)
+
+    def test_incremental_deltas_share_one_viewport(self) -> None:
+        self.rp.on_thinking("first ")
+        self.rp.on_thinking("line\nsecond")
+        latest = self.stream.getvalue().rsplit("\033[1F", 1)[-1]
+        self.assertIn("│ first line", latest)
+        self.assertIn("│ second", latest)
+        self.assertEqual(self.rp._thinking_screen_rows, 2)
+
+    def test_wrapping_and_blank_lines_count_toward_the_viewport(self) -> None:
+        self.rp.on_thinking("x" * 45 + "\n\nlast")
+        self.assertEqual(self.rp._thinking_screen_rows, 5)
+        latest = self.stream.getvalue().rsplit("\033[4F", 1)[-1]
+        self.assertIn("last", latest)
+        self.assertEqual(latest.count("\033[E"), 4)
+
+    def test_closing_erases_the_viewport_before_tool_output(self) -> None:
+        self.rp.on_thinking("one\ntwo")
+        self.rp.on_tool(1, "bash", {"command": "pwd"}, "done")
+        text = self.stream.getvalue()
+        self.assertIn("\033[1F\r\033[J", text)
+        self.assertTrue(text.endswith("✓ bash  pwd\n"))
+        self.assertFalse(self.rp._thinking_open)
+        self.assertEqual(self.rp._thinking_screen_rows, 0)
+
+    def test_each_new_thinking_block_starts_below_previous_output(self) -> None:
+        self.rp.on_thinking("old")
+        self.rp.on_answer_to_thinking()
+        self.rp.on_thinking("new")
+        text = self.stream.getvalue()
+        self.assertIn("\r\033[J\n", text)
+        reopened = text.rsplit("\r\033[J\n", 1)[-1]
+        self.assertIn("thinking", reopened)
+        self.assertIn("│ new", reopened)
+
+
 class ReplyPrinterPagerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.orig_err, self.orig_console = cli.err, cli.console
