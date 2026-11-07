@@ -91,10 +91,12 @@ terminal, the latest six visual lines scroll inside a fixed-height viewport that
 afterward; redirected output retains the full text without control codes. It is display only —
 reasoning is never replayed into the prompt or the saved session.
 
-Type `@` in the REPL to recursively complete files and directories from the cwd:
+Type `@` in the REPL to complete files and directories from the cwd:
 `fix @agent7/agent.py`.
-Tab accepts, directories keep going (`@agent7/` → `@agent7/session.py`), and spaces
-are escaped (`@my\ file.txt`), so the path the model sees is the path it can read.
+Completion scans one directory at a time in a worker thread, so large working directories and
+slow disks do not block the prompt. Tab accepts, directories keep going
+(`@agent7/` → `@agent7/session.py`), and spaces are escaped (`@my\ file.txt`), so the path the
+model sees is the path it can read.
 
 `--cwd` sets the working directory. `--max-turns` caps the loop at **200 model rounds
 per task** — high enough that ordinary work never hits it, low enough to stop a runaway.

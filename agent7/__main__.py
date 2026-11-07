@@ -8,6 +8,7 @@ import os
 import re
 import sys
 from collections.abc import Callable
+from itertools import islice
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -235,7 +236,7 @@ SKIP_DIRS = frozenset({
     ".mypy_cache", ".ruff_cache", ".pytest_cache", ".tox", ".next",
     ".gradle", ".idea", ".cache",
 })
-MAX_COMPLETIONS, MAX_DEPTH = 300, 8
+MAX_COMPLETIONS, MAX_SCANNED_ENTRIES = 300, 10_000
 
 def at_path_prefix(text: str) -> str | None:
     """The path fragment after an '@' that starts the current word ('@' -> '')."""
@@ -254,34 +255,35 @@ def path_completions(cwd: Path, text: str) -> list[Completion]:
         target = cwd / target
     if not target.is_dir():
         return []
-    entries: list[tuple[Path, str]] = []
+    entries: list[tuple[str, bool]] = []
     show_hidden = prefix.startswith(".")
-    for root, dirs, files in os.walk(target):
-        # A bare '@' must not walk node_modules / .git / $HOME: prune, cap depth, cap results.
-        dirs[:] = [
-            name for name in dirs
-            if name not in SKIP_DIRS and (show_hidden or not name.startswith("."))
-        ]
-        if len(Path(root).relative_to(target).parts) >= MAX_DEPTH:
-            dirs[:] = []
-        for name in dirs + files:
-            if not name.startswith(prefix) or (name.startswith(".") and not show_hidden):
-                continue
-            p = Path(root) / name
-            entries.append((p, p.relative_to(target).as_posix()))
-            if len(entries) >= MAX_COMPLETIONS:
-                break
-        if len(entries) >= MAX_COMPLETIONS:
-            break
-    entries.sort(key=lambda entry: (not entry[0].is_dir(), entry[1].lower()))
+    try:
+        # Complete one directory at a time. Recursively walking $HOME (or another
+        # large cwd) on every keystroke makes the prompt appear completely stuck.
+        with os.scandir(target) as scanner:
+            for entry in islice(scanner, MAX_SCANNED_ENTRIES):
+                name = entry.name
+                if not name.startswith(prefix) or (name.startswith(".") and not show_hidden):
+                    continue
+                try:
+                    is_dir = entry.is_dir()
+                except OSError:
+                    continue
+                if is_dir and name in SKIP_DIRS:
+                    continue
+                entries.append((name, is_dir))
+                if len(entries) >= MAX_COMPLETIONS:
+                    break
+    except OSError:
+        return []
+    entries.sort(key=lambda entry: (not entry[1], entry[0].lower()))
     out = []
-    for p, path in entries:
-        is_dir = p.is_dir()
-        rel = f"{head}/{path}" if head else path
+    for name, is_dir in entries:
+        rel = f"{head}/{name}" if head else name
         out.append(Completion(
             (rel + "/" if is_dir else rel).replace(" ", "\\ "),
             start_position=-len(fragment),
-            display=path + ("/" if is_dir else ""),
+            display=name + ("/" if is_dir else ""),
         ))
     return out
 
@@ -315,6 +317,17 @@ class ReplCompleter(Completer):
                 for mid in names:
                     if mid.startswith(prefix.lower()):
                         yield Completion(mid, start_position=-len(prefix), display=mid)
+
+    async def get_completions_async(self, document: Document, complete_event: CompleteEvent):
+        """Keep directory I/O off prompt_toolkit's event-loop thread."""
+        text = document.text_before_cursor
+        if not text.startswith("/"):
+            completions = await asyncio.to_thread(path_completions, self.session.cwd, text)
+            for completion in completions:
+                yield completion
+            return
+        for completion in self.get_completions(document, complete_event):
+            yield completion
 
 NO_TEXT_NOTICE = "no text in the reply — the model stopped without content (retry, or /model)"
 TRUNCATED_NOTICE = "no text in the reply — the model hit the output token limit (retry with a smaller step)"

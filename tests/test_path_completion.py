@@ -1,7 +1,9 @@
 """Tests for `@path` completion in the REPL prompt."""
 
+import asyncio
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +15,7 @@ from prompt_toolkit.document import Document
 from agent7.agent import _resolve
 from agent7.__main__ import (
     MAX_COMPLETIONS,
+    MAX_SCANNED_ENTRIES,
     ReplCompleter,
     at_path_prefix,
     path_completions,
@@ -63,10 +66,7 @@ class PathCompletionTests(unittest.TestCase):
 
     def test_lists_cwd_after_bare_at(self) -> None:
         got = self.inserts("@")
-        self.assertEqual(set(got), {
-            "agent7/", "agent7/agent.py", "agent7/main.py", "docs/", "docs/guides/",
-            "docs/guides/setup.md", "README.md", "my\\ file.txt",
-        })
+        self.assertEqual(set(got), {"agent7/", "docs/", "README.md", "my\\ file.txt"})
         self.assertEqual(got["agent7/"], "agent7/")
         self.assertEqual(got["my\\ file.txt"], "my file.txt")
 
@@ -74,8 +74,10 @@ class PathCompletionTests(unittest.TestCase):
         order = [c.text for c in path_completions(self.cwd, "@")]
         self.assertEqual(order[0], "agent7/")
 
-    def test_nested_paths_are_displayed_with_their_directory(self) -> None:
-        self.assertEqual(self.inserts("@")["docs/guides/setup.md"], "docs/guides/setup.md")
+    def test_nested_paths_require_descending_into_the_directory(self) -> None:
+        self.assertNotIn("docs/guides/", self.inserts("@"))
+        self.assertEqual(set(self.inserts("@docs/")), {"docs/guides/"})
+        self.assertEqual(self.inserts("@docs/guides/"), {"docs/guides/setup.md": "setup.md"})
 
     def test_hidden_files_need_dot_prefix(self) -> None:
         self.assertNotIn(".env", self.inserts("@"))
@@ -122,6 +124,20 @@ class PathCompletionTests(unittest.TestCase):
 
         self.assertEqual(len(path_completions(self.cwd, "@f")), MAX_COMPLETIONS)
 
+    def test_scan_is_bounded_when_no_names_match(self) -> None:
+        scanned = []
+
+        def entries():
+            for i in range(MAX_SCANNED_ENTRIES + 1):
+                scanned.append(i)
+                yield SimpleNamespace(name=f"other-{i}")
+
+        with patch("agent7.__main__.os.scandir") as scandir:
+            scandir.return_value.__enter__.return_value = entries()
+            self.assertEqual(path_completions(self.cwd, "@wanted"), [])
+
+        self.assertEqual(len(scanned), MAX_SCANNED_ENTRIES)
+
 
 class ReplCompleterTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -138,6 +154,26 @@ class ReplCompleterTests(unittest.TestCase):
 
     def test_completes_paths(self) -> None:
         self.assertEqual(self.texts("read @not"), ["notes.md"])
+
+    def test_path_io_runs_off_event_loop_thread(self) -> None:
+        caller = threading.get_ident()
+        workers = []
+
+        def fake_completions(cwd: Path, text: str):
+            workers.append(threading.get_ident())
+            return []
+
+        async def collect() -> None:
+            async for _ in self.completer.get_completions_async(
+                Document("read @not"), CompleteEvent(text_inserted=True),
+            ):
+                pass
+
+        with patch("agent7.__main__.path_completions", side_effect=fake_completions):
+            asyncio.run(collect())
+
+        self.assertEqual(len(workers), 1)
+        self.assertNotEqual(workers[0], caller)
 
     def test_slash_commands_still_work(self) -> None:
         self.assertIn("model", self.texts("/mod"))
