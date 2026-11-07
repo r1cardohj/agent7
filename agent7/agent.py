@@ -24,6 +24,7 @@ COMPACT_THRESHOLD, KEEP_USER_TURNS, KEEP_TOOL_RESULTS = 0.75, 3, 4
 TOOL_MAX_CHARS, ASSISTANT_MAX_CHARS = 2_000, 4_000
 OVERFLOW_RETRIES = 2
 RETRY_SLEEPS = (0.5, 1.5, 3.0)
+STREAM_CLOSE_TIMEOUT = 2.0
 RETRY_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 OVERFLOW_STATUS = frozenset({400, 413, 422})
 
@@ -503,6 +504,11 @@ async def _open_stream(client: AsyncOpenAI, kwargs: dict[str, Any]) -> Any:
         except (asyncio.CancelledError, KeyboardInterrupt) as e:
             raise Interrupted() from e
 
+def _consume_close_result(task: asyncio.Task) -> None:
+    """Retrieve a detached close task's exception after an interrupted cleanup."""
+    if not task.cancelled():
+        task.exception()
+
 async def _stream_once(
     client: AsyncOpenAI, kwargs: dict[str, Any], *, on_delta, on_thinking,
     on_answer_to_thinking, on_finish,
@@ -558,7 +564,20 @@ async def _stream_once(
             with suppress(Exception):
                 result = close()
                 if asyncio.iscoroutine(result):
-                    await result
+                    interrupted = isinstance(sys.exc_info()[1], Interrupted)
+                    # Shield the close so its timeout cannot wait for cleanup that
+                    # ignores cancellation. Detached tasks still report their errors.
+                    closing = asyncio.create_task(result)
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(closing), timeout=STREAM_CLOSE_TIMEOUT
+                        )
+                    except BaseException:
+                        closing.cancel()
+                        closing.add_done_callback(_consume_close_result)
+                        if not interrupted:
+                            raise
+                        # Preserve the original interrupt over cleanup cancellation.
     return "".join(parts), [
         {"id": tool_acc[i]["id"], "type": "function",
          "function": {"name": tool_acc[i]["name"], "arguments": tool_acc[i]["arguments"] or "{}"}}
@@ -600,7 +619,7 @@ async def run_agent(
     task: str, *, cwd: Path, client: AsyncOpenAI, model: str, max_turns: int = DEFAULT_MAX_TURNS,
     messages: list[dict[str, Any]], on_delta=None, on_thinking=None, on_answer_to_thinking=None,
     on_tool=None, on_preview=None, on_usage=None, context_limit: int | None = None,
-    prompt_tokens: int | None = None, on_compact=None, on_finish=None,
+    prompt_tokens: int | None = None, on_compact=None, on_finish=None, on_model_start=None,
 ) -> str:
     cwd = cwd.resolve()
     messages.append({"role": "user", "content": task})
@@ -616,6 +635,8 @@ async def run_agent(
                     messages[:] = new_msgs
                     last_prompt = None
                     await _emit(on_compact, n)
+            # The gap after a tool result is a new model wait, not a running tool.
+            await _emit(on_model_start, turns + 1)
             try:
                 content, tool_calls, usage = await _stream_completion(
                     client, model=model, messages=messages, on_delta=on_delta,
