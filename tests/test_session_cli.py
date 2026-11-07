@@ -1,6 +1,7 @@
 import asyncio
 import io
 import os
+import signal
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from prompt_toolkit.keys import Keys
 from rich.console import Console
 
-from agent7.__main__ import _parse_args, async_main, print_history, repl_key_bindings
-from agent7.agent import SYSTEM
+from agent7.__main__ import _parse_args, _run_once, async_main, main, print_history, repl_key_bindings
+from agent7.agent import SYSTEM, Interrupted
 from agent7.store import load, save
 
 
@@ -75,6 +76,84 @@ class SessionCliTests(unittest.TestCase):
             prompt.return_value.prompt_async.side_effect = [KeyboardInterrupt, EOFError]
             asyncio.run(async_main(["--cwd", str(self.cwd)]))
         self.assertEqual(prompt.return_value.prompt_async.call_count, 2)
+
+    def test_repeated_ctrl_c_cancels_turn_without_escalating(self) -> None:
+        started = asyncio.Event()
+        saved = []
+
+        async def stuck_agent(session, task):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                try:  # mimic a cancelled network stream's asynchronous cleanup
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError as e:
+                    raise Interrupted from e
+                raise Interrupted
+
+        async def exercise() -> None:
+            before = signal.getsignal(signal.SIGINT)
+            state = SimpleNamespace()
+            with patch("agent7.__main__._run_agent_once", new=stuck_agent):
+                task = asyncio.create_task(_run_once(state, "go", on_saved=lambda: saved.append(True)))
+                await started.wait()
+                os.kill(os.getpid(), signal.SIGINT)
+                await asyncio.sleep(0)
+                os.kill(os.getpid(), signal.SIGINT)
+                with self.assertRaises(Interrupted):
+                    await task
+            self.assertIs(signal.getsignal(signal.SIGINT), before)
+
+        asyncio.run(exercise())
+        self.assertEqual(saved, [True])
+
+    def test_one_shot_repeated_ctrl_c_is_handled(self) -> None:
+        started = asyncio.Event()
+
+        async def stuck_agent(session, task):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await asyncio.Event().wait()
+
+        async def exercise() -> None:
+            async def interrupt_twice() -> None:
+                await started.wait()
+                os.kill(os.getpid(), signal.SIGINT)
+                await asyncio.sleep(0)
+                os.kill(os.getpid(), signal.SIGINT)
+
+            client = SimpleNamespace(close=AsyncMock())
+            provider = SimpleNamespace(id="deepseek", make_client=lambda cred: client)
+            credential = SimpleNamespace(source="test")
+            with patch("agent7.__main__.resolve_all", return_value={"deepseek": credential}), \
+                 patch("agent7.__main__.resolve_default", return_value=(provider, credential)), \
+                 patch("agent7.__main__.fetch_models", new=AsyncMock(return_value=[])), \
+                 patch("agent7.__main__.switch_model", new=AsyncMock(
+                     return_value=SimpleNamespace(message="ok")
+                 )), \
+                 patch("agent7.__main__._run_agent_once", new=stuck_agent):
+                sender = asyncio.create_task(interrupt_twice())
+                try:
+                    await async_main(["--cwd", str(self.cwd), "go"])
+                finally:
+                    await sender
+
+        stream = io.StringIO()
+        with patch("agent7.__main__.err", new=Console(file=stream, color_system=None)):
+            asyncio.run(exercise())
+        self.assertIn("# interrupted", stream.getvalue())
+
+    def test_top_level_ctrl_c_is_a_notice_not_a_traceback(self) -> None:
+        def interrupt(coro):
+            coro.close()
+            raise KeyboardInterrupt
+        with patch("agent7.__main__.asyncio.run", side_effect=interrupt), \
+             patch("agent7.__main__.err") as err:
+            main([])
+        err.print.assert_called_once_with("\n[dim]# interrupted[/dim]")
 
     def test_new_session_reuses_last_model_with_fresh_context(self) -> None:
         state = SimpleNamespace(
