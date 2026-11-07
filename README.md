@@ -76,10 +76,12 @@ uv run agent7 -r "continue"                      # resume + one-shot
 
 Each workspace keeps a single snapshot — starting without `-r` replaces the conversation but
 reuses its last selected model. Set `$AGENT7_MODEL` to override that choice. Sessions are saved
-automatically after tasks, commands, interruptions, and exit.
+automatically after tasks, commands, interruptions, and exit. With `-r`, the saved user/assistant
+conversation is printed before the REPL prompt or one-shot task; system and tool messages are omitted.
 Snapshots contain resumable model context, not a separate full transcript; compaction is reflected
-in the saved context. Files live in `${XDG_STATE_HOME:-~/.local/state}/agent7/sessions/` and do not
-store API keys. Hard process kills can lose the in-progress turn.
+in both the saved context and the displayed history. Files live in
+`${XDG_STATE_HOME:-~/.local/state}/agent7/sessions/` and do not store API keys. Hard process kills
+can lose the in-progress turn.
 
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
 Exit with Ctrl-D (or Ctrl-Z on Windows). Ctrl-C discards the current input or interrupts

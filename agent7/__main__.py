@@ -373,6 +373,24 @@ async def _run_agent_once(session: Session, task: str) -> str:
             err.print(f"[{style}]# {line}[/{style}]")
     return answer
 
+def print_history(messages: list[dict]) -> None:
+    """Replay the conversation text saved in a resumed session."""
+    entries = [
+        (message["role"], content)
+        for message in messages
+        if message.get("role") in ("user", "assistant")
+        and isinstance(content := message.get("content"), str)
+        and content.strip()
+    ]
+    if not entries:
+        return
+    console.print("[dim]# previous conversation[/dim]")
+    for role, content in entries:
+        console.print()
+        console.print(f"[bold]{'you' if role == 'user' else 'assistant'}[/bold]")
+        console.print(Markdown(content) if role == "assistant" else Text(content))
+    console.print()
+
 def _positive_int(raw: str) -> int:
     value = int(raw)
     if value < 1:
@@ -474,6 +492,8 @@ async def async_main(argv: list[str] | None = None) -> None:
                   f"shell={SHELL.name}  cwd={state.cwd}[/dim]")
         action = "resumed" if snapshot else "new"
         err.print(f"[dim]# {action} session[/dim]")
+        if snapshot:
+            print_history(snapshot["messages"])
         if task:
             try:
                 await _run_once(state, task, on_saved=persist)
