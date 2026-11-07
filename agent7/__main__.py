@@ -6,7 +6,9 @@ import argparse
 import asyncio
 import os
 import re
+import signal
 import sys
+import threading
 from collections.abc import Callable
 from itertools import islice
 from pathlib import Path
@@ -73,6 +75,7 @@ class ReplyPrinter:
         self._thinking_text = ""
         self._thinking_screen_rows = 0
         self._counting = False
+        self._waiting = False
 
     def __enter__(self) -> ReplyPrinter:
         return self
@@ -80,6 +83,7 @@ class ReplyPrinter:
     def __exit__(self, *exc: object) -> None:
         self._close_thinking()
         self._clear_counter()
+        self._clear_waiting()
         text = "".join(self.buf)
         self.buf.clear()
         self._chars = 0
@@ -126,7 +130,27 @@ class ReplyPrinter:
             self._clear_status_line()
             self._counting = False
 
+    def _clear_waiting(self) -> None:
+        if not self._waiting:
+            return
+        self._clear_status_line()
+        self._waiting = False
+
+    def on_model_start(self, turn: int) -> None:
+        """Mark the otherwise silent gap before a model's first streamed delta."""
+        self._close_thinking()
+        self._clear_counter()
+        if not err.is_terminal:
+            return
+        self._waiting = True
+        self._write(f"\r\033[K  {self._paint('waiting...')}")
+
+    def on_compact(self, count: int) -> None:
+        self._clear_waiting()
+        err.print(f"[dim]# compacted {count} message(s)[/dim]")
+
     def _show_counter(self) -> None:
+        self._clear_waiting()
         if not err.is_terminal:
             return
         self._close_thinking()
@@ -164,6 +188,7 @@ class ReplyPrinter:
         """Stream reasoning in a bounded terminal viewport, or in full to logs."""
         if not text:
             return
+        self._clear_waiting()
         self._clear_counter()
         if not self._thinking_open:
             self._open_thinking()
@@ -187,6 +212,7 @@ class ReplyPrinter:
     def on_answer_to_thinking(self) -> None:
         # Content streamed before a tool call is not the final answer: drop it,
         # and end the thinking block so later reasoning opens a fresh one.
+        self._clear_waiting()
         self._close_thinking()
         if not self.buf:
             return
@@ -200,6 +226,7 @@ class ReplyPrinter:
         self._show_counter()
 
     def on_tool(self, turn: int, name: str, args: dict, result: str) -> None:
+        self._clear_waiting()
         self._close_thinking()
         self._clear_counter()
         self.buf.clear()
@@ -214,6 +241,7 @@ class ReplyPrinter:
         err.print(f"  {mark} [bold]{name:<5}[/bold] [dim]{tool_summary(name, args)}[/dim]{meta}")
 
     def on_preview(self, stats: str) -> None:
+        self._clear_waiting()
         self._close_thinking()
         self._clear_counter()
         line = (stats.splitlines() or [""])[0]
@@ -365,9 +393,18 @@ def reply_notice(answer: str, finish_reason: str | None = None) -> str | None:
     return TRUNCATED_NOTICE if finish_reason == "length" else NO_TEXT_NOTICE
 
 async def _run_once(session: Session, task: str, *, on_saved: Callable[[], None] | None = None) -> str:
+    current = asyncio.current_task()
+    previous_sigint = None
+    if current and threading.current_thread() is threading.main_thread():
+        # asyncio.run escalates its second SIGINT to KeyboardInterrupt, even when
+        # the REPL handled the first one. Always cancel just this turn instead.
+        previous_sigint = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, lambda *_: current.cancel())
     try:
         return await _run_agent_once(session, task)
     finally:
+        if previous_sigint is not None:
+            signal.signal(signal.SIGINT, previous_sigint)
         if on_saved:
             on_saved()
 
@@ -380,8 +417,9 @@ async def _run_agent_once(session: Session, task: str) -> str:
             on_delta=rp.on_delta, on_thinking=rp.on_thinking,
             on_answer_to_thinking=rp.on_answer_to_thinking, on_tool=rp.on_tool,
             on_preview=rp.on_preview, on_usage=session.update_usage,
+            on_model_start=rp.on_model_start,
             context_limit=session.context_limit, prompt_tokens=session.prompt_tokens,
-            on_compact=lambda n: err.print(f"[dim]# compacted {n} message(s)[/dim]"),
+            on_compact=rp.on_compact,
             on_finish=finish.append,
         )
     # A turn-limit pause is a warning, not an invisible or successful final answer.
@@ -515,7 +553,7 @@ async def async_main(argv: list[str] | None = None) -> None:
         if task:
             try:
                 await _run_once(state, task, on_saved=persist)
-            except Interrupted:
+            except (Interrupted, asyncio.CancelledError, KeyboardInterrupt):
                 err.print("\n[dim]# interrupted[/dim]")
             except Exception as e:  # noqa: BLE001
                 err.print(f"[red]# error: {type(e).__name__}: {e}[/red]")
@@ -577,7 +615,11 @@ async def async_main(argv: list[str] | None = None) -> None:
             await state.client.close()
 
 def main(argv: list[str] | None = None) -> None:
-    asyncio.run(async_main(argv))
+    try:
+        asyncio.run(async_main(argv))
+    except KeyboardInterrupt:
+        # Startup/cleanup is outside the per-turn handler above.
+        err.print("\n[dim]# interrupted[/dim]")
 
 if __name__ == "__main__":
     main()

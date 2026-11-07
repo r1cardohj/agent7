@@ -146,6 +146,30 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         self.assertFalse(self.rp._thinking_open)
         self.assertEqual(self.rp._thinking_screen_rows, 0)
 
+    def test_model_wait_is_visible_until_thinking_starts(self) -> None:
+        with patch.object(self.rp, "_paint", side_effect=lambda text: text):
+            self.rp.on_model_start(2)
+            self.assertTrue(self.rp._waiting)
+            self.assertIn("waiting...", self.stream.getvalue())
+            self.assertNotIn("round", self.stream.getvalue())
+            self.rp.on_thinking("next step")
+        self.assertFalse(self.rp._waiting)
+        self.assertIn("\r\033[K\n  thinking", self.stream.getvalue())
+
+    def test_compaction_clears_model_wait_before_printing(self) -> None:
+        self.rp.on_model_start(1)
+        self.rp.on_compact(3)
+        self.assertFalse(self.rp._waiting)
+        compacted = self.stream.getvalue().rsplit("\r\033[K", 1)[-1]
+        self.assertNotIn("waiting", compacted)
+        self.assertEqual(compacted.split(), ["#", "compacted", "3", "message(s)"])
+
+    def test_interruption_clears_model_wait(self) -> None:
+        with self.rp:
+            self.rp.on_model_start(1)
+        self.assertFalse(self.rp._waiting)
+        self.assertTrue(self.stream.getvalue().endswith("\r\033[K"))
+
     def test_each_new_thinking_block_starts_below_previous_output(self) -> None:
         self.rp.on_thinking("old")
         self.rp.on_answer_to_thinking()

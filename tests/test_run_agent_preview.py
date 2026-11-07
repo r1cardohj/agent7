@@ -120,6 +120,29 @@ class RunAgentPreviewTests(unittest.TestCase):
         self.assertTrue(seen_tools[0][3].startswith("edited "))
         self.assertEqual(len(client.chat.completions.requests), 2)
 
+    def test_each_model_round_including_the_one_after_edit_has_a_start_event(self) -> None:
+        events: list[object] = []
+        turns = [
+            [
+                _tool_call_chunk(
+                    "edit",
+                    {
+                        "path": "app.py",
+                        "edits": [{"old_string": "'old'", "new_string": "'new'"}],
+                    },
+                )
+            ],
+            [_chunk(content="done")],
+        ]
+
+        self._run(
+            turns,
+            on_model_start=lambda turn: events.append(("model", turn)),
+            on_preview=lambda stats: events.append("edit finished"),
+        )
+
+        self.assertEqual(events, [("model", 1), "edit finished", ("model", 2)])
+
     def test_preview_is_optional(self) -> None:
         turns = [
             [_tool_call_chunk("write", {"path": "new.txt", "content": "hi\n"})],
