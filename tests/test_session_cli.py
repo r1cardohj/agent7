@@ -5,11 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from prompt_toolkit.keys import Keys
 from rich.console import Console
 
-from agent7.__main__ import _parse_args, async_main, print_history
+from agent7.__main__ import _parse_args, async_main, print_history, repl_key_bindings
 from agent7.agent import SYSTEM
 from agent7.store import load, save
 
@@ -26,6 +27,20 @@ class SessionCliTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.env.stop()
         self.tmp.cleanup()
+
+    def _binding(self, key: Keys):
+        return repl_key_bindings().get_bindings_for_keys((key,))[-1]
+
+    def test_enter_accepts_multiline_input(self) -> None:
+        event = MagicMock()
+        self._binding(Keys.ControlM).handler(event)
+        event.current_buffer.validate_and_handle.assert_called_once_with()
+
+    def test_ctrl_e_returns_from_editor_without_submitting(self) -> None:
+        event = MagicMock()
+        self._binding(Keys.ControlE).handler(event)
+        event.current_buffer.open_in_editor.assert_called_once_with(validate_and_handle=False)
+        event.current_buffer.validate_and_handle.assert_not_called()
 
     def test_resume_is_a_flag_and_session_is_just_a_task_word(self) -> None:
         self.assertFalse(_parse_args([]).resume)

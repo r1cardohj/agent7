@@ -16,9 +16,11 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.completion import Completer, Completion, CompleteEvent
 from prompt_toolkit.document import Document
-from prompt_toolkit.enums import EditingMode
+from prompt_toolkit.enums import DEFAULT_BUFFER, EditingMode
+from prompt_toolkit.filters import has_focus
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.key_binding.vi_state import InputMode
 from rich.console import Console
 from rich.markdown import Markdown
@@ -287,6 +289,22 @@ def path_completions(cwd: Path, text: str) -> list[Completion]:
         ))
     return out
 
+def repl_key_bindings() -> KeyBindings:
+    """Enter submits; Ctrl-E edits the whole prompt in the external editor."""
+    bindings = KeyBindings()
+    default_focused = has_focus(DEFAULT_BUFFER)
+
+    @bindings.add("enter", filter=default_focused)
+    def _accept(event: KeyPressEvent) -> None:
+        event.current_buffer.validate_and_handle()
+
+    @bindings.add("c-e", filter=default_focused)
+    def _edit(event: KeyPressEvent) -> None:
+        # Do not validate_and_handle: :wq returns to the prompt for review.
+        event.current_buffer.open_in_editor(validate_and_handle=False)
+
+    return bindings
+
 class ReplCompleter(Completer):
     """Slash commands, plus `@path` file completion from the cwd."""
 
@@ -505,7 +523,7 @@ async def async_main(argv: list[str] | None = None) -> None:
         if not task and err.is_terminal and not os.environ.get("AGENT7_NO_MASCOT"):
             print_mascot(err)
         quit_hint = "Ctrl-Z to quit" if sys.platform == "win32" else "Ctrl-D to quit"
-        err.print(f"[dim]# REPL  /help · /login · /model · @file · {quit_hint}[/dim]")
+        err.print(f"[dim]# REPL  /help · /login · /model · @file · Ctrl-E editor · {quit_hint}[/dim]")
         if not all_creds:
             err.print(f"[dim]# no credentials — {login_hints()}[/dim]")
 
@@ -521,6 +539,8 @@ async def async_main(argv: list[str] | None = None) -> None:
             completer=ReplCompleter(state),
             complete_while_typing=True,
             editing_mode=EditingMode.VI,
+            multiline=True,
+            key_bindings=repl_key_bindings(),
             rprompt=_vi_rprompt,
         )
         while True:

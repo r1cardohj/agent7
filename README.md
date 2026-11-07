@@ -84,6 +84,8 @@ in both the saved context and the displayed history. Files live in
 can lose the in-progress turn.
 
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
+Press Ctrl-E to edit multiline input in `$VISUAL` / `$EDITOR` (falling back to the system editor).
+After `:wq`, the text returns to the prompt for review; Enter submits it. Set `EDITOR=vim` to use Vim.
 Exit with Ctrl-D (or Ctrl-Z on Windows). Ctrl-C discards the current input or interrupts
 the running turn, then returns to the prompt instead of exiting the REPL.
 
