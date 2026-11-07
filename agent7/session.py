@@ -61,6 +61,25 @@ def format_context_prompt(session: Session) -> str:
     u = fmt_tokens(session.prompt_tokens) if session.prompt_tokens is not None else "?"
     return u if session.context_limit is None else f"{u}/{fmt_limit(session.context_limit)}"
 
+def context_pressure(session: Session) -> int | None:
+    """Share of the context window in use, as a percentage, or None if unknown."""
+    if session.prompt_tokens is None or not session.context_limit:
+        return None
+    return min(100, round(100 * session.prompt_tokens / session.context_limit))
+
+def fmt_cwd(path: Path, *, limit: int = 44) -> str:
+    """The workspace as `~`-relative text, shortened from the left when long."""
+    text, home = str(path), str(Path.home())
+    if text == home:
+        text = "~"
+    elif text.startswith(home.rstrip("/") + "/"):
+        text = "~" + text[len(home):]
+    if limit > 1 and len(text) > limit:
+        tail = text[1 - limit:]
+        cut = tail.find("/")
+        text = "…" + (tail[cut:] if 0 <= cut < len(tail) - 1 else tail)
+    return text
+
 def format_usage(session: Session) -> str:
     if session.prompt_tokens is None:
         return "usage=none" + (
@@ -72,8 +91,7 @@ def format_usage(session: Session) -> str:
     ]
     if session.total_tokens is not None:
         parts.append(f"total_tokens={fmt_tokens(session.total_tokens)}")
-    if session.context_limit is not None:
-        pct = min(100, round(100 * session.prompt_tokens / session.context_limit))
+    if (pct := context_pressure(session)) is not None:
         parts.append(f"context_limit={fmt_limit(session.context_limit)} ({pct}%)")
     return "  ".join(parts)
 

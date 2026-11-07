@@ -20,10 +20,10 @@ from prompt_toolkit.completion import Completer, Completion, CompleteEvent
 from prompt_toolkit.document import Document
 from prompt_toolkit.enums import DEFAULT_BUFFER, EditingMode
 from prompt_toolkit.filters import has_focus
-from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.key_binding.vi_state import InputMode
+from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
@@ -39,7 +39,12 @@ from .providers import (
     resolve_all,
     resolve_default,
 )
-from .session import Session, format_context_prompt
+from .session import (
+    Session,
+    context_pressure,
+    fmt_cwd,
+    format_context_prompt,
+)
 from .store import resume, resume_messages, save, timestamp
 
 console, err = Console(stderr=False), Console(stderr=True)
@@ -333,6 +338,54 @@ def repl_key_bindings() -> KeyBindings:
 
     return bindings
 
+_STATUS_SEP = ("fg:ansibrightblack", " · ")
+
+def vi_mode_label() -> tuple[str, str]:
+    """The current vi input mode, and the color it is drawn in."""
+    mode = get_app().vi_state.input_mode
+    if mode in (InputMode.INSERT, InputMode.INSERT_MULTIPLE):
+        return "INSERT", "ansigreen"
+    if mode == InputMode.NAVIGATION:
+        return "NORMAL", "ansiyellow"
+    return "REPLACE", "ansired"
+
+def context_tone(pct: int | None) -> str:
+    """Green while there is room, yellow when it gets tight, red near the limit."""
+    if pct is None or pct < 60:
+        return "ansigreen"
+    return "ansiyellow" if pct < 85 else "ansired"
+
+def status_bar(
+    state: Session,
+    *,
+    mode: tuple[str, str] | None = None,
+    width: int | None = None,
+) -> list[tuple[str, str]]:
+    """One docked line under the prompt: model, context, cwd — mode on the right.
+
+    Returned as prompt_toolkit formatted text so it can be rebuilt on every
+    redraw: the context gauge and the vi mode change while you type.
+    """
+    if width is None:
+        width = get_app().output.get_size().columns
+    label, color = mode or vi_mode_label()
+    pct = context_pressure(state)
+    tone = context_tone(pct)
+    segments = [("", " "), ("bold", state.model_ref or state.model or "?")]
+    segments += [_STATUS_SEP, (f"fg:{tone}", format_context_prompt(state))]
+    if pct is not None:
+        segments.append((f"fg:{tone}", f" {pct}%"))
+    cwd = [_STATUS_SEP, ("fg:ansibrightblack", fmt_cwd(state.cwd))]
+    right = [(f"fg:{color}", f" {label} ")]
+
+    def used(parts: list[tuple[str, str]]) -> int:
+        return sum(len(text) for _, text in parts)
+
+    if used(segments + cwd + right) + 1 > width:
+        cwd = []  # a narrow terminal keeps the model, the gauge, and the mode
+    gap = max(1, width - used(segments + cwd + right))
+    return segments + cwd + [("", " " * gap)] + right
+
 class ReplCompleter(Completer):
     """Slash commands, plus `@path` file completion from the cwd."""
 
@@ -565,13 +618,9 @@ async def async_main(argv: list[str] | None = None) -> None:
         if not all_creds:
             err.print(f"[dim]# no credentials — {login_hints()}[/dim]")
 
-        def _vi_rprompt() -> HTML:
-            mode = get_app().vi_state.input_mode
-            label, color = ("INSERT", "ansigreen") if mode in (InputMode.INSERT, InputMode.INSERT_MULTIPLE) else (
-                ("NORMAL", "ansiyellow") if mode == InputMode.NAVIGATION else ("REPLACE", "ansired")
-            )
-            return HTML(f'<style fg="{color}">-- {label} --</style>')
-
+        # Status and mode live in a bar docked under the prompt, so the prompt
+        # itself stays a bare `> ` however much state the session carries.
+        bar = None if os.environ.get("AGENT7_NO_STATUSBAR") else (lambda: status_bar(state))
         prompt = PromptSession(
             history=InMemoryHistory(),
             completer=ReplCompleter(state),
@@ -579,11 +628,14 @@ async def async_main(argv: list[str] | None = None) -> None:
             editing_mode=EditingMode.VI,
             multiline=True,
             key_bindings=repl_key_bindings(),
-            rprompt=_vi_rprompt,
+            bottom_toolbar=bar,
+            # prompt_toolkit reverses this area by default, which paints a
+            # background across the whole line. Keep the terminal background.
+            style=Style.from_dict({"bottom-toolbar": "noreverse bg:default"}),
         )
         while True:
             try:
-                line = (await prompt.prompt_async(lambda: f"{format_context_prompt(state)} > ")).strip()
+                line = (await prompt.prompt_async("> ")).strip()
             except EOFError:
                 print(file=sys.stderr)
                 break

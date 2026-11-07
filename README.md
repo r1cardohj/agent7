@@ -27,7 +27,7 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 ## Features
 
 - **Deliberately minimal harness** — four tools, one loop, no orchestration
-- **Complete CLI agent UX** — streaming thinking + answer, tool lines with ✓/✗, edit/write preview, vi-mode REPL, `@path` completion, session resume
+- **Complete CLI agent UX** — streaming thinking + answer, tool lines with ✓/✗, edit/write preview, vi-mode REPL with a bottom status bar, `@path` completion, session resume
 - **Slash commands** — `/help` `/model` `/status` `/login` `/logout` `/compact`
 - **Markdown rendering** — final replies rendered as Rich Markdown in the terminal, thanks rich.
 - **Paged final replies** — interactive answers that exceed one screen open in your system pager (usually `less`); shorter answers print directly. Use the arrow keys/Space to scroll and `q` to continue. The rendered reply stays in the terminal after you quit. Redirected output is never paged.
@@ -84,6 +84,10 @@ in both the saved context and the displayed history. Files live in
 can lose the in-progress turn.
 
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
+Status lives in a bar docked to the bottom row of the terminal while you type:
+`model · context · cwd`, with the context gauge turning yellow then red as the window fills,
+and the vi mode (`INSERT` / `NORMAL` / `REPLACE`) on the right. The prompt itself stays a bare
+`>`. Set `AGENT7_NO_STATUSBAR=1` to go back to a plain prompt.
 Press Ctrl-E to edit multiline input in `$VISUAL` / `$EDITOR` (falling back to the system editor).
 After `:wq`, the text returns to the prompt for review; Enter submits it. Set `EDITOR=vim` to use Vim.
 Exit with Ctrl-D (or Ctrl-Z on Windows). Ctrl-C discards the current input or interrupts
