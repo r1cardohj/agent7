@@ -17,6 +17,7 @@ from itertools import islice
 from pathlib import Path
 
 from fzp.fuzzy import Match, fuzzy_filter, fuzzy_match
+from fzp.tui import Picker
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.completion import Completer, Completion, CompleteEvent
@@ -492,6 +493,24 @@ class ReplCompleter(Completer):
             return
         for completion in self.get_completions(document, complete_event):
             yield completion
+
+def model_choices(models: list[str], current: str = "") -> list[str]:
+    """Menu entries for a model pick: the current model first, then the rest.
+
+    fzp's Picker deals in plain strings, so the model already in use is marked
+    by position instead of a prefix that would leak into the chosen ref.
+    """
+    refs = [current, *models] if current else list(models)
+    return list(dict.fromkeys(ref for ref in refs if ref))
+
+async def pick_model(models: list[str], *, current: str = "") -> str | None:
+    """Fuzzy-pick a model ref with fzp's Picker; None when the user aborts."""
+    items = model_choices(models, current)
+    if not items:
+        return None
+    # pick_async runs the picker on the caller's loop, so it fits inside the
+    # one-shot coroutine; Ctrl-C / Esc resolve to None rather than raising.
+    return await Picker(items).pick_async()
 
 NO_TEXT_NOTICE = "no text in the reply — the model stopped without content (retry, or /model)"
 TRUNCATED_NOTICE = "no text in the reply — the model hit the output token limit (retry with a smaller step)"

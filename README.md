@@ -69,10 +69,12 @@ You can also log in from inside the REPL:
 
 ```bash
 uv run agent7 "create hello.py that prints hi"   # one-shot
+uv run agent7 -m deepseek-flash "say hi"         # one-shot on a chosen model
+uv run agent7 -m                                 # pick the model from a menu
 uv run agent7                                    # new REPL session
 uv run agent7 -r                                 # resume this cwd's session
 uv run agent7 -r "continue"                      # resume + one-shot
-uv run agent7 --help                             # --cwd, --max-turns, -r, --version
+uv run agent7 --help                             # --cwd, --max-turns, -m, -r, --version
 ```
 
 The command line is a [click](https://click.palletsprojects.com) command in `agent7/cli.py`
@@ -89,6 +91,16 @@ Snapshots contain resumable model context, not a separate full transcript; compa
 in both the saved context and the displayed history. Files live in
 `${XDG_STATE_HOME:-~/.local/state}/agent7/sessions/` and do not store API keys. Hard process kills
 can lose the in-progress turn.
+
+`-m/--model` chooses the model for this run. `-m deepseek-flash` resolves a name exactly like
+`/model` does; a bare `-m` opens an [fzp](https://github.com/r1cardohj/fzp) picker over every model
+the logged-in providers offer — type to filter, Enter to choose, Esc or Ctrl-C to cancel. The menu
+starts from the model the workspace would otherwise use, and falls back to each provider's default
+when the model list cannot be fetched. Precedence is `-m` > `$AGENT7_MODEL` > the workspace's last
+model. A `-m` that names nothing usable stops the run instead of quietly picking another model, and
+a run that never starts (cancelled menu, bad `-m`) leaves the workspace snapshot untouched. Because
+`-m` takes the following word as its value, a bare `-m` before a task needs a separator:
+`agent7 -m -- "fix it"` (or put the task first: `agent7 "fix it" -m`).
 
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
 Status lives in a bar docked to the bottom row of the terminal while you type:

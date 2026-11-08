@@ -22,14 +22,18 @@ from .providers import (
     default_model_for,
     get_provider,
     list_providers,
+    login_hints,
     resolve_all,
     resolve_default,
 )
-from .repl import err, print_history, repl_loop, run_turn
+from .repl import err, pick_model, print_history, repl_loop, run_turn
 from .session import Session
 from .store import resume, resume_messages, save, timestamp
 
 PROG = "agent7"
+# What a bare `-m` parses to: pick the model for this run from a menu instead
+# of naming it. No model ref is empty, so the sentinel cannot collide.
+PICK_MODEL = ""
 
 @dataclass(frozen=True)
 class Options:
@@ -39,6 +43,7 @@ class Options:
     cwd: Path | None = None
     max_turns: int | None = None
     resume: bool = False
+    model: str | None = None  # None: default; PICK_MODEL: ask; else the ref
 
     @classmethod
     def parse(cls, argv: list[str] | None = None) -> Options:
@@ -88,12 +93,17 @@ def _force_utf8_stdio() -> None:
               help="working directory (default: the current one)")
 @click.option("--max-turns", type=int, callback=_positive_int, default=None, metavar="N",
               help=f"model rounds per task (default {DEFAULT_MAX_TURNS}, or $AGENT7_MAX_TURNS)")
+@click.option("-m", "--model", "model", is_flag=False, flag_value=PICK_MODEL, default=None,
+              metavar="REF",
+              help="model for this run, e.g. deepseek-flash; a bare -m picks one from a menu")
 @click.option("-r", "--resume", is_flag=True,
               help="resume the last session in this workspace")
-def main(task: tuple[str, ...], cwd: Path | None, max_turns: int | None, resume: bool) -> None:
+def main(task: tuple[str, ...], cwd: Path | None, max_turns: int | None, resume: bool,
+         model: str | None) -> None:
     _force_utf8_stdio()
     _load_dotenv()
-    options = Options(task=" ".join(task).strip(), cwd=cwd, max_turns=max_turns, resume=resume)
+    options = Options(task=" ".join(task).strip(), cwd=cwd, max_turns=max_turns, resume=resume,
+                      model=model)
     try:
         asyncio.run(async_main(options))
     except KeyboardInterrupt:
@@ -118,6 +128,34 @@ def resolve_max_turns(options: Options) -> int:
         err.print(f"[dim]# ignoring bad AGENT7_MAX_TURNS={raw!r}[/dim]")
     return DEFAULT_MAX_TURNS
 
+def can_pick_models() -> bool:
+    """fzp's Picker needs a terminal on both ends; a pipe cannot choose a model."""
+    return bool(
+        sys.stdin and sys.stdin.isatty() and sys.stderr and sys.stderr.isatty()
+    )
+
+def model_menu(session: Session, ids: list[str]) -> list[str]:
+    """The refs a bare `-m` offers: the fetched list, else each provider's default."""
+    if ids:
+        return list(ids)
+    return [
+        f"{p.id}/{p.default_model}"
+        for p in list_providers()
+        if p.default_model and p.id in session.credentials
+    ]
+
+async def choose_model(session: Session, ids: list[str], *, current: str = "") -> str:
+    """Pick this run's model from a fuzzy menu; exits instead of guessing."""
+    items = model_menu(session, ids)
+    if not items:
+        err.print(f"[red]# no models to pick from — log in first: {login_hints()}[/red]")
+        raise SystemExit(1)
+    picked = await pick_model(items, current=current)
+    if picked is None:
+        err.print("[dim]# no model picked — cancelled[/dim]")
+        raise SystemExit(1)
+    return picked
+
 async def async_main(options: Options) -> None:
     """Run one task, or open the REPL, for an already-parsed command line."""
     task = options.task or None
@@ -131,9 +169,18 @@ async def async_main(options: Options) -> None:
     snapshot = saved if options.resume else None
     created_at = snapshot["created_at"] if snapshot else timestamp()
     max_turns = resolve_max_turns(options)
-    model = os.environ.get("AGENT7_MODEL") or (
+    # A bare `-m` asks for the menu. Only the option itself can carry that: an
+    # empty model from $AGENT7_MODEL or the snapshot keeps its old meaning.
+    pick = options.model == PICK_MODEL
+    # `-m` > $AGENT7_MODEL > the workspace's last model.
+    workspace_model = os.environ.get("AGENT7_MODEL", "").strip() or (
         saved.get("model_ref", "") if saved else ""
     )
+    model = workspace_model if options.model is None else options.model
+    if pick and not can_pick_models():
+        err.print("[red]# a bare -m shows a menu, which needs a terminal — "
+                  "name the model instead: agent7 -m deepseek-flash[/red]")
+        raise SystemExit(1)
 
     all_creds = resolve_all()
     picked = resolve_default()
@@ -158,7 +205,9 @@ async def async_main(options: Options) -> None:
         provider_id=prov.id if prov else None, cred_source=cred.source if cred else None,
         credential=cred, credentials=dict(all_creds),
     )
-    committed = bool(task)
+    # A one-shot becomes a real session only once it runs: a run that never
+    # starts (bad -m, menu cancelled) must not replace the workspace snapshot.
+    committed = False
 
     def persist(commit: bool = False) -> None:
         # Merely opening a new REPL must not replace the snapshot used by -r.
@@ -175,10 +224,15 @@ async def async_main(options: Options) -> None:
                 ids = await fetch_models(state)
             except Exception as e:  # noqa: BLE001
                 err.print(f"[dim]# models fetch failed: {e}[/dim]")
+        if pick:
+            model = await choose_model(state, ids, current=workspace_model)
         if model:
             result = await switch_model(state, model)
             if result.message.startswith(("unknown", "ambiguous")):
                 err.print(f"[dim]# {result.message}[/dim]")
+                if options.model is not None:
+                    # A ref the user typed must not quietly become another model.
+                    raise SystemExit(1)
                 if ids:
                     await switch_model(state, ids[0])
                 else:
@@ -196,6 +250,7 @@ async def async_main(options: Options) -> None:
         if snapshot:
             print_history(snapshot["messages"])
         if task:
+            committed = True  # from here on the run owns the workspace snapshot
             try:
                 await run_turn(state, task, on_saved=persist)
             except (Interrupted, asyncio.CancelledError, KeyboardInterrupt):
