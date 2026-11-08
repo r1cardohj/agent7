@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agent7.__main__ import context_tone, status_bar
+from agent7.repl import context_tone, status_bar
 from agent7.session import Session, context_pressure, fmt_cwd
 
 

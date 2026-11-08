@@ -11,8 +11,8 @@ from typing import Any
 
 from rich.console import Console
 
-import agent7.__main__ as cli
-from agent7.__main__ import NO_TEXT_NOTICE, TRUNCATED_NOTICE, reply_notice
+import agent7.repl as repl
+from agent7.repl import NO_TEXT_NOTICE, TRUNCATED_NOTICE, reply_notice
 
 
 def _chunk(
@@ -91,13 +91,13 @@ class RunOnceSilenceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.cwd = Path(self.tmp.name)
-        self.orig = cli.err, cli.console
+        self.orig = repl.err, repl.console
         self.stream = io.StringIO()
-        cli.err = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
-        cli.console = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
+        repl.err = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
+        repl.console = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
 
     def tearDown(self) -> None:
-        cli.err, cli.console = self.orig
+        repl.err, repl.console = self.orig
         self.tmp.cleanup()
 
     def out(self) -> str:
@@ -109,7 +109,7 @@ class RunOnceSilenceTests(unittest.TestCase):
             max_turns=kwargs.get("max_turns", 30), messages=[],
             context_limit=None, prompt_tokens=None, update_usage=lambda u: None,
         )
-        return asyncio.run(cli._run_once(session, "go"))
+        return asyncio.run(repl.run_turn(session, "go"))
 
     def test_empty_reply_after_tool_call_says_so(self) -> None:
         answer = self.run_once([[_bash("echo hi")], [_chunk(content="")]])

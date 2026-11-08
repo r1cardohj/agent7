@@ -14,10 +14,11 @@ from unittest.mock import patch
 
 from rich.console import Console
 
-import agent7.__main__ as cli
-from agent7.__main__ import _parse_args, resolve_max_turns
-from agent7.agent import DEFAULT_MAX_TURNS
+import agent7.cli as cli
+from agent7.agent import DEFAULT_MAX_TURNS, run_agent
+from agent7.cli import Options, resolve_max_turns
 from agent7.session import Session
+from agent7.store import save
 
 
 def _turn(content: str = "", **extra: Any) -> list[Any]:
@@ -72,7 +73,7 @@ class TurnBudgetTests(unittest.TestCase):
     def run_agent(self, turns: list[list[Any]], **kwargs: Any) -> tuple[str, _Client]:
         client = _Client(turns)
         answer = asyncio.run(
-            cli.run_agent(
+            run_agent(
                 "go", cwd=self.cwd, client=client, model="test-model", messages=[],
                 on_tool=lambda *a: None, on_compact=lambda n: None, **kwargs,
             )
@@ -127,7 +128,7 @@ class TurnBudgetTests(unittest.TestCase):
 
         client.chat = SimpleNamespace(completions=SimpleNamespace(create=flaky))
         answer = asyncio.run(
-            cli.run_agent(
+            run_agent(
                 "go", cwd=self.cwd, client=client, model="test-model", messages=list(big),
                 max_turns=1, on_tool=lambda *a: None, on_compact=lambda n: None,
             )
@@ -149,7 +150,7 @@ class TurnBudgetTests(unittest.TestCase):
 
         with self.assertRaises(Overflow):
             asyncio.run(
-                cli.run_agent(
+                run_agent(
                     "go", cwd=self.cwd, client=client, model="test-model", messages=big,
                     max_turns=5, on_tool=lambda *a: None, on_compact=lambda n: None,
                 )
@@ -166,36 +167,36 @@ class ResolveMaxTurnsTests(unittest.TestCase):
         self.env.stop()
 
     def test_default(self) -> None:
-        self.assertEqual(resolve_max_turns(_parse_args([])), DEFAULT_MAX_TURNS)
+        self.assertEqual(resolve_max_turns(Options.parse([])), DEFAULT_MAX_TURNS)
 
     def test_env_var(self) -> None:
         os.environ["AGENT7_MAX_TURNS"] = "500"
 
-        self.assertEqual(resolve_max_turns(_parse_args([])), 500)
+        self.assertEqual(resolve_max_turns(Options.parse([])), 500)
 
     def test_flag_beats_env(self) -> None:
         os.environ["AGENT7_MAX_TURNS"] = "500"
 
-        self.assertEqual(resolve_max_turns(_parse_args(["--max-turns", "7"])), 7)
+        self.assertEqual(resolve_max_turns(Options.parse(["--max-turns", "7"])), 7)
 
     def test_bad_env_value_is_ignored(self) -> None:
         os.environ["AGENT7_MAX_TURNS"] = "lots"
         stream = io.StringIO()
         with patch.object(cli, "err", Console(file=stream, width=200, color_system=None)):
-            self.assertEqual(resolve_max_turns(_parse_args([])), DEFAULT_MAX_TURNS)
+            self.assertEqual(resolve_max_turns(Options.parse([])), DEFAULT_MAX_TURNS)
         self.assertIn("ignoring bad AGENT7_MAX_TURNS", stream.getvalue())
 
     def test_zero_and_negative_are_rejected_on_the_command_line(self) -> None:
         for raw in ("0", "-3"):
             with self.assertRaises(SystemExit) as caught, redirect_stderr(io.StringIO()):
-                _parse_args(["--max-turns", raw])
+                Options.parse(["--max-turns", raw])
             self.assertEqual(caught.exception.code, 2)
 
     def test_help_mentions_the_default(self) -> None:
         stream = io.StringIO()
         with self.assertRaises(SystemExit), redirect_stderr(stream), \
              patch("sys.stdout", stream):
-            _parse_args(["--help"])
+            Options.parse(["--help"])
         self.assertIn(str(DEFAULT_MAX_TURNS), stream.getvalue())
 
 
@@ -217,7 +218,7 @@ class ResumeBudgetTests(unittest.TestCase):
             cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
             messages=[{"role": "system", "content": "sys"}, {"role": "user", "content": "old"}],
         )
-        cli.save(old, created_at="2025-01-01T00:00:00+00:00")
+        save(old, created_at="2025-01-01T00:00:00+00:00")
 
     def resumed_max_turns(self, argv: list[str]) -> int:
         seen: list[int] = []
@@ -231,8 +232,8 @@ class ResumeBudgetTests(unittest.TestCase):
              patch.object(cli, "resolve_default", return_value=(provider, SimpleNamespace(source="t"))), \
              patch.object(cli, "fetch_models", new=_async_empty), \
              patch.object(cli, "switch_model", new=_async_ok), \
-             patch.object(cli, "_run_once", new=fake_run):
-            asyncio.run(cli.async_main(["--cwd", str(self.cwd), "-r", "continue", *argv]))
+             patch.object(cli, "run_turn", new=fake_run):
+            asyncio.run(cli.async_main(Options.parse(["--cwd", str(self.cwd), "-r", "continue", *argv])))
         return seen[0]
 
     def test_stale_snapshot_value_is_ignored(self) -> None:

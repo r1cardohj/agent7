@@ -13,7 +13,7 @@ from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
 
 from agent7.agent import _resolve
-from agent7.__main__ import (
+from agent7.repl import (
     MAX_COMPLETIONS,
     MAX_SCANNED_ENTRIES,
     ReplCompleter,
@@ -79,6 +79,18 @@ class PathCompletionTests(unittest.TestCase):
         self.assertEqual(set(self.inserts("@docs/")), {"docs/guides/"})
         self.assertEqual(self.inserts("@docs/guides/"), {"docs/guides/setup.md": "setup.md"})
 
+    def test_bare_fragment_searches_the_whole_tree(self) -> None:
+        self.assertEqual(self.inserts("@setup"), {"docs/guides/setup.md": "docs/guides/setup.md"})
+
+    def test_bare_fragment_can_span_directories(self) -> None:
+        self.assertEqual(self.inserts("@docset"), {"docs/guides/setup.md": "docs/guides/setup.md"})
+
+    def test_recursive_search_skips_generated_directories(self) -> None:
+        (self.cwd / "node_modules" / "pkg").mkdir(parents=True)
+        (self.cwd / "node_modules" / "pkg" / "index.js").write_text("x", encoding="utf-8")
+
+        self.assertNotIn("node_modules/pkg/index.js", self.inserts("@index"))
+
     def test_hidden_files_need_dot_prefix(self) -> None:
         self.assertNotIn(".env", self.inserts("@"))
         self.assertNotIn(".git/config", self.inserts("@"))
@@ -130,9 +142,9 @@ class PathCompletionTests(unittest.TestCase):
         def entries():
             for i in range(MAX_SCANNED_ENTRIES + 1):
                 scanned.append(i)
-                yield SimpleNamespace(name=f"other-{i}")
+                yield SimpleNamespace(name=f"other-{i}", is_dir=lambda: False)
 
-        with patch("agent7.__main__.os.scandir") as scandir:
+        with patch("agent7.repl.os.scandir") as scandir:
             scandir.return_value.__enter__.return_value = entries()
             self.assertEqual(path_completions(self.cwd, "@wanted"), [])
 
@@ -169,7 +181,7 @@ class ReplCompleterTests(unittest.TestCase):
             ):
                 pass
 
-        with patch("agent7.__main__.path_completions", side_effect=fake_completions):
+        with patch("agent7.repl.path_completions", side_effect=fake_completions):
             asyncio.run(collect())
 
         self.assertEqual(len(workers), 1)

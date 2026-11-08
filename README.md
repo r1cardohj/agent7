@@ -27,7 +27,7 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 ## Features
 
 - **Deliberately minimal harness** — four tools, one loop, no orchestration
-- **Complete CLI agent UX** — streaming thinking + answer, tool lines with ✓/✗, edit/write preview, vi-mode REPL with a bottom status bar, `@path` completion, session resume
+- **Complete CLI agent UX** — streaming thinking + answer, tool lines with ✓/✗, edit/write preview, vi-mode REPL with a bottom status bar, fuzzy `@path` completion, session resume
 - **Slash commands** — `/help` `/model` `/status` `/login` `/logout` `/compact`
 - **Markdown rendering** — final replies rendered as Rich Markdown in the terminal, thanks rich.
 - **Paged final replies** — interactive answers that exceed one screen open in your system pager (usually `less`); shorter answers print directly. Use the arrow keys/Space to scroll and `q` to continue. The rendered reply stays in the terminal after you quit. Redirected output is never paged.
@@ -72,7 +72,12 @@ uv run agent7 "create hello.py that prints hi"   # one-shot
 uv run agent7                                    # new REPL session
 uv run agent7 -r                                 # resume this cwd's session
 uv run agent7 -r "continue"                      # resume + one-shot
+uv run agent7 --help                             # --cwd, --max-turns, -r, --version
 ```
+
+The command line is a [click](https://click.palletsprojects.com) command in `agent7/cli.py`
+(options, session bootstrap, one-shot runs); the prompt, completion menu and reply rendering
+live in `agent7/repl.py`.
 
 Each workspace keeps a single snapshot — starting without `-r` begins a fresh conversation but
 reuses the last selected model. Opening or leaving an empty REPL does not touch the saved snapshot;
@@ -103,10 +108,18 @@ reasoning is never replayed into the prompt or the saved session.
 
 Type `@` in the REPL to complete files and directories from the cwd:
 `fix @agent7/agent.py`.
-Completion scans one directory at a time in a worker thread, so large working directories and
-slow disks do not block the prompt. Tab accepts, directories keep going
-(`@agent7/` → `@agent7/session.py`), and spaces are escaped (`@my\ file.txt`), so the path the
-model sees is the path it can read.
+A bare `@` lists the cwd, `@dir/` lists that directory, and a typed fragment searches the whole
+tree (`@setup` → `docs/guides/setup.md`). Scanning runs in a worker thread and stops after
+10k entries, skipping generated directories, so a large working directory or a slow disk never
+blocks the prompt. Tab accepts, directories keep going (`@agent7/` → `@agent7/session.py`),
+and spaces are escaped (`@my\ file.txt`), so the path the model sees is the path it can read.
+
+The menu is fuzzy, powered by [fzp](https://github.com/r1cardohj/fzp): `@mn` finds `main.py`,
+`/mdl` finds `/model`, `/model sonnet` finds `anthropic/claude-sonnet-4`. Candidates are
+subsequence-matched and ranked by score (consecutive hits and word starts win), and the
+matched characters are highlighted in color and bold — foreground only, no background block,
+so the menu stays on your terminal's own colors. Commands, `@paths`, `/model` refs and
+`/login` providers all go through the same scorer.
 
 `--cwd` sets the working directory. `--max-turns` caps the loop at **200 model rounds
 per task** — high enough that ordinary work never hits it, low enough to stop a runaway.

@@ -6,19 +6,19 @@ from unittest.mock import patch
 
 from rich.console import Console
 
-import agent7.__main__ as cli
+import agent7.repl as repl
 
 
 class ReplyPrinterPreviewTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.orig_err, self.orig_console = cli.err, cli.console
+        self.orig_err, self.orig_console = repl.err, repl.console
         self.stream = io.StringIO()
-        cli.err = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
-        cli.console = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
-        self.rp = cli.ReplyPrinter()
+        repl.err = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
+        repl.console = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
+        self.rp = repl.ReplyPrinter()
 
     def tearDown(self) -> None:
-        cli.err, cli.console = self.orig_err, self.orig_console
+        repl.err, repl.console = self.orig_err, self.orig_console
 
     def out(self) -> str:
         return self.stream.getvalue()
@@ -99,15 +99,15 @@ class ReplyPrinterPreviewTests(unittest.TestCase):
 
 class ReplyPrinterThinkingViewportTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.orig_err = cli.err
+        self.orig_err = repl.err
         self.stream = io.StringIO()
-        cli.err = Console(
+        repl.err = Console(
             file=self.stream, width=20, color_system=None, force_terminal=True
         )
-        self.rp = cli.ReplyPrinter()
+        self.rp = repl.ReplyPrinter()
 
     def tearDown(self) -> None:
-        cli.err = self.orig_err
+        repl.err = self.orig_err
 
     def test_only_the_latest_six_visual_rows_are_displayed(self) -> None:
         self.rp.on_thinking("\n".join(f"line {i}" for i in range(3)))
@@ -210,28 +210,28 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
 
 class ReplyPrinterPagerTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.orig_err, self.orig_console = cli.err, cli.console
+        self.orig_err, self.orig_console = repl.err, repl.console
         self.stream = io.StringIO()
-        cli.err = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
-        cli.console = Console(file=self.stream, width=80, height=5, force_terminal=True)
+        repl.err = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
+        repl.console = Console(file=self.stream, width=80, height=5, force_terminal=True)
 
     def tearDown(self) -> None:
-        cli.err, cli.console = self.orig_err, self.orig_console
+        repl.err, repl.console = self.orig_err, self.orig_console
 
     def test_short_interactive_answer_is_printed_without_a_pager(self) -> None:
-        with patch("agent7.__main__.sys.stdin.isatty", return_value=True), \
-             patch("agent7.__main__.console.pager") as get_pager:
-            with cli.ReplyPrinter() as rp:
+        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
+             patch("agent7.repl.console.pager") as get_pager:
+            with repl.ReplyPrinter() as rp:
                 rp.on_delta("**final answer**")
         get_pager.assert_not_called()
         self.assertIn("final answer", self.stream.getvalue())
 
     def test_long_interactive_answer_is_paged_then_left_in_terminal(self) -> None:
         answer = "\n\n".join(f"paragraph {i}" for i in range(4))
-        with patch("agent7.__main__.sys.stdin.isatty", return_value=True), \
-             patch("agent7.__main__.console.pager", wraps=cli.console.pager) as get_pager, \
+        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
+             patch("agent7.repl.console.pager", wraps=repl.console.pager) as get_pager, \
              patch("rich.pager.SystemPager.show") as show:
-            with cli.ReplyPrinter() as rp:
+            with repl.ReplyPrinter() as rp:
                 rp.on_delta(answer)
         get_pager.assert_called_once_with(styles=True)
         show.assert_called_once()
@@ -240,23 +240,23 @@ class ReplyPrinterPagerTests(unittest.TestCase):
 
     def test_answer_fitting_exactly_one_screen_is_not_paged(self) -> None:
         answer = "\n\n".join(f"line {i}" for i in range(3))
-        with patch("agent7.__main__.sys.stdin.isatty", return_value=True), \
-             patch("agent7.__main__.console.pager") as get_pager:
-            with cli.ReplyPrinter() as rp:
+        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
+             patch("agent7.repl.console.pager") as get_pager:
+            with repl.ReplyPrinter() as rp:
                 rp.on_delta(answer)
         get_pager.assert_not_called()
 
     def test_wrapping_counts_toward_the_screen_height(self) -> None:
-        with patch("agent7.__main__.sys.stdin.isatty", return_value=True), \
-             patch("agent7.__main__.console.pager") as get_pager:
-            with cli.ReplyPrinter() as rp:
+        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
+             patch("agent7.repl.console.pager") as get_pager:
+            with repl.ReplyPrinter() as rp:
                 rp.on_delta(" ".join(["word"] * 160))
         get_pager.assert_called_once_with(styles=True)
 
     def test_non_interactive_output_does_not_open_a_pager(self) -> None:
-        cli.console = Console(file=self.stream, width=80, force_terminal=False)
-        with patch("agent7.__main__.console.pager") as get_pager:
-            with cli.ReplyPrinter() as rp:
+        repl.console = Console(file=self.stream, width=80, force_terminal=False)
+        with patch("agent7.repl.console.pager") as get_pager:
+            with repl.ReplyPrinter() as rp:
                 rp.on_delta("final answer")
         get_pager.assert_not_called()
         self.assertIn("final answer", self.stream.getvalue())

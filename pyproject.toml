@@ -36,6 +36,8 @@ dependencies = [
     "openai>=1.40.0",
     "rich>=13.0.0",
     "prompt-toolkit>=3.0.0",
+    "fzp>=0.2.2",
+    "click>=8.1",
 ]
 
 [project.urls]
@@ -44,7 +46,7 @@ Repository = "https://github.com/r1cardohj/agent7"
 Issues = "https://github.com/r1cardohj/agent7/issues"
 
 [project.scripts]
-agent7 = "agent7.__main__:main"
+agent7 = "agent7.cli:main"
 
 [build-system]
 requires = ["hatchling"]
