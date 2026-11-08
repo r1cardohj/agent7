@@ -28,6 +28,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.text import Text
 
+from . import __version__
 from .agent import DEFAULT_MAX_TURNS, SHELL, SYSTEM, Interrupted, run_agent, tool_summary
 from .commands import dispatch, fetch_models, known_names, switch_model
 from .mascot import print_mascot
@@ -535,7 +536,8 @@ def _positive_int(raw: str) -> int:
     return value
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="agent7 — minimal coding agent")
+    p = argparse.ArgumentParser(prog="agent7", description="agent7 — minimal coding agent")
+    p.add_argument("--version", action="version", version=f"agent7 {__version__}")
     p.add_argument("task", nargs="*", help="task; omit for REPL")
     p.add_argument("--cwd", type=Path, default=None)
     p.add_argument("--max-turns", type=_positive_int, default=None,
@@ -629,7 +631,7 @@ async def async_main(argv: list[str] | None = None) -> None:
                 await switch_model(state, ids[0])
             else:
                 state.set_model(default_model_for(state.provider_id))
-        err.print(f"[dim]# agent7  model={state.model_ref or state.model}  "
+        err.print(f"[dim]# agent7 v{__version__}  model={state.model_ref or state.model}  "
                   f"providers=[{','.join(state.credentials) or 'none'}]  "
                   f"shell={SHELL.name}  cwd={state.cwd}[/dim]")
         action = "resumed" if snapshot else "new"
