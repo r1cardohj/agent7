@@ -602,8 +602,13 @@ async def async_main(argv: list[str] | None = None) -> None:
         provider_id=prov.id if prov else None, cred_source=cred.source if cred else None,
         credential=cred, credentials=dict(all_creds),
     )
+    dirty = False
+
     def persist() -> None:
-        save(state, created_at=created_at)
+        # Merely opening a new REPL must not replace the snapshot used by -r.
+        # The first agent turn makes it a real session and arms future saves.
+        if dirty or task:
+            save(state, created_at=created_at)
     try:
         ids: list[str] = []
         if all_creds:
@@ -682,6 +687,7 @@ async def async_main(argv: list[str] | None = None) -> None:
             if state.credential is None:
                 err.print(f"[yellow]# login first: {login_hints()}[/yellow]")
                 continue
+            dirty = True
             try:
                 await _run_once(state, line, on_saved=persist)
             except (Interrupted, asyncio.CancelledError, KeyboardInterrupt):

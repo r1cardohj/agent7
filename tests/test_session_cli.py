@@ -49,12 +49,13 @@ class SessionCliTests(unittest.TestCase):
         self.assertEqual(_parse_args(["-r", "继续"]).task, ["继续"])
         self.assertEqual(_parse_args(["session", "docs"]).task, ["session", "docs"])
 
-    def test_new_repl_overwrites_the_workspace_snapshot(self) -> None:
+    def test_empty_new_repl_preserves_the_workspace_snapshot(self) -> None:
         state = SimpleNamespace(
             cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": "old"}],
         )
-        save(state, created_at="2025-01-01T00:00:00+00:00")
+        path = save(state, created_at="2025-01-01T00:00:00+00:00")
+        original = path.read_bytes()
         with patch("agent7.__main__.resolve_all", return_value={}), \
              patch("agent7.__main__.resolve_default", return_value=None), \
              patch("agent7.__main__.AsyncOpenAI") as client, \
@@ -62,10 +63,18 @@ class SessionCliTests(unittest.TestCase):
             client.return_value.close = AsyncMock()
             prompt.return_value.prompt_async.side_effect = EOFError
             asyncio.run(async_main(["--cwd", str(self.cwd)]))
-        snapshots = list((self.root / "state" / "agent7" / "sessions").glob("*.json"))
-        self.assertEqual(len(snapshots), 1)
-        data = load(self.cwd)
-        self.assertEqual(data["messages"], [{"role": "system", "content": SYSTEM}])
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(load(self.cwd)["messages"], state.messages)
+
+    def test_empty_new_repl_does_not_create_a_snapshot(self) -> None:
+        with patch("agent7.__main__.resolve_all", return_value={}), \
+             patch("agent7.__main__.resolve_default", return_value=None), \
+             patch("agent7.__main__.AsyncOpenAI") as client, \
+             patch("agent7.__main__.PromptSession") as prompt:
+            client.return_value.close = AsyncMock()
+            prompt.return_value.prompt_async.side_effect = EOFError
+            asyncio.run(async_main(["--cwd", str(self.cwd)]))
+        self.assertFalse((self.root / "state" / "agent7" / "sessions").exists())
 
     def test_ctrl_c_discards_input_and_returns_to_the_prompt(self) -> None:
         with patch("agent7.__main__.resolve_all", return_value={}), \
@@ -174,7 +183,45 @@ class SessionCliTests(unittest.TestCase):
             asyncio.run(async_main(["--cwd", str(self.cwd)]))
         switch.assert_awaited_once()
         self.assertEqual(switch.await_args.args[1], "kimi/kimi-for-coding")
-        self.assertEqual(load(self.cwd)["messages"], [{"role": "system", "content": SYSTEM}])
+        self.assertEqual(load(self.cwd)["messages"], state.messages)
+
+    def test_new_repl_replaces_the_snapshot_after_an_agent_task(self) -> None:
+        state = SimpleNamespace(
+            cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
+            messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": "old"}],
+        )
+        path = save(state, created_at="2025-01-01T00:00:00+00:00")
+        original = path.read_bytes()
+
+        async def fake_run(session, task, **kwargs):
+            session.messages.extend([
+                {"role": "user", "content": task},
+                {"role": "assistant", "content": "new answer"},
+            ])
+            kwargs["on_saved"]()
+            return "new answer"
+
+        inputs = iter(["new task", EOFError()])
+
+        async def fake_prompt(*args, **kwargs):
+            value = next(inputs)
+            if isinstance(value, BaseException):
+                raise value
+            return value
+
+        with patch("agent7.__main__.resolve_all", return_value={}), \
+             patch("agent7.__main__.resolve_default", return_value=None), \
+             patch("agent7.__main__.AsyncOpenAI") as client, \
+             patch("agent7.__main__.PromptSession") as prompt, \
+             patch("agent7.__main__._run_once", new=fake_run):
+            client.return_value.close = AsyncMock()
+            prompt.return_value.prompt_async.side_effect = fake_prompt
+            asyncio.run(async_main(["--cwd", str(self.cwd)]))
+        self.assertNotEqual(path.read_bytes(), original)
+        self.assertEqual(load(self.cwd)["messages"][1:], [
+            {"role": "user", "content": "new task"},
+            {"role": "assistant", "content": "new answer"},
+        ])
 
     def test_history_shows_conversation_text_without_internal_messages(self) -> None:
         stream = io.StringIO()

@@ -74,10 +74,12 @@ uv run agent7 -r                                 # resume this cwd's session
 uv run agent7 -r "continue"                      # resume + one-shot
 ```
 
-Each workspace keeps a single snapshot — starting without `-r` replaces the conversation but
-reuses its last selected model. Set `$AGENT7_MODEL` to override that choice. Sessions are saved
-automatically after tasks, commands, interruptions, and exit. With `-r`, the saved user/assistant
-conversation is printed before the REPL prompt or one-shot task; system and tool messages are omitted.
+Each workspace keeps a single snapshot — starting without `-r` begins a fresh conversation but
+reuses the last selected model. Opening or leaving an empty REPL does not touch the saved snapshot;
+a new conversation replaces it only after the first agent task. Set `$AGENT7_MODEL` to override the
+model choice. Active sessions are saved automatically after tasks, commands, interruptions, and exit.
+With `-r`, the saved user/assistant conversation is printed before the REPL prompt or one-shot task;
+system and tool messages are omitted.
 Snapshots contain resumable model context, not a separate full transcript; compaction is reflected
 in both the saved context and the displayed history. Files live in
 `${XDG_STATE_HOME:-~/.local/state}/agent7/sessions/` and do not store API keys. Hard process kills
