@@ -208,12 +208,17 @@ class SessionCliTests(unittest.TestCase):
                 raise value
             return value
 
-        with patch("agent7.__main__.resolve_all", return_value={}), \
-             patch("agent7.__main__.resolve_default", return_value=None), \
-             patch("agent7.__main__.AsyncOpenAI") as client, \
+        client = SimpleNamespace(close=AsyncMock())
+        provider = SimpleNamespace(id="deepseek", make_client=lambda cred: client)
+        credential = SimpleNamespace(source="test")
+        with patch("agent7.__main__.resolve_all", return_value={"deepseek": credential}), \
+             patch("agent7.__main__.resolve_default", return_value=(provider, credential)), \
+             patch("agent7.__main__.fetch_models", new=AsyncMock(return_value=[])), \
+             patch("agent7.__main__.switch_model", new=AsyncMock(
+                 return_value=SimpleNamespace(message="ok")
+             )), \
              patch("agent7.__main__.PromptSession") as prompt, \
              patch("agent7.__main__._run_once", new=fake_run):
-            client.return_value.close = AsyncMock()
             prompt.return_value.prompt_async.side_effect = fake_prompt
             asyncio.run(async_main(["--cwd", str(self.cwd)]))
         self.assertEqual(load(self.cwd)["messages"][1:], [
