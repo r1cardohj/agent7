@@ -7,8 +7,47 @@ from types import SimpleNamespace
 
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
+from prompt_toolkit.styles.defaults import default_ui_style
+from prompt_toolkit.styles.style import merge_styles
 
-from agent7.repl import MATCH_STYLE, ReplCompleter, path_completions
+from agent7.repl import MATCH_STYLE, PROMPT_STYLE, ReplCompleter, path_completions
+
+
+def menu_style(*styles: str):
+    """Resolve a menu style the way the running application does."""
+    return merge_styles([default_ui_style(), PROMPT_STYLE]).get_attrs_for_style_str(
+        " ".join(styles)
+    )
+
+
+class MenuStyleTests(unittest.TestCase):
+    """Color is for the match, background is for the selection — never both."""
+
+    row = "class:completion-menu.completion.current"
+
+    def test_a_match_paints_no_background(self) -> None:
+        attrs = PROMPT_STYLE.get_attrs_for_style_str(MATCH_STYLE)
+
+        self.assertFalse(attrs.bgcolor)
+        self.assertTrue(attrs.bold)
+
+    def test_the_selected_row_has_a_background(self) -> None:
+        attrs = menu_style(self.row)
+
+        self.assertTrue(attrs.bgcolor and attrs.bgcolor != "default")
+        self.assertFalse(attrs.reverse)  # reverse would turn a green match into a block
+
+    def test_a_match_inside_the_selected_row_keeps_its_background(self) -> None:
+        row, matched = menu_style(self.row), menu_style(self.row, MATCH_STYLE)
+
+        self.assertEqual(matched.bgcolor, row.bgcolor)
+        self.assertEqual(matched.color, "ansibrightgreen")
+        self.assertTrue(matched.bold)
+
+    def test_unselected_rows_stay_on_the_terminal_background(self) -> None:
+        attrs = menu_style("class:completion-menu.completion")
+
+        self.assertEqual(attrs.bgcolor, "default")
 
 
 class HighlightTests(unittest.TestCase):

@@ -276,18 +276,23 @@ SKIP_DIRS = frozenset({
     ".gradle", ".idea", ".cache",
 })
 MAX_COMPLETIONS, MAX_SCANNED_ENTRIES = 300, 10_000
-# Matched characters are marked with color and weight only: a background fill
-# fights with the terminal theme (and with the selected row).
+# A matched character is marked by color and weight only, never by a background:
+# the background belongs to the row (see SELECTION_BG), so the hits of the
+# selected row still read as one solid bar instead of green holes in it.
 MATCH_STYLE = "fg:ansibrightgreen bold"
+SELECTION_BG = "bg:#5f5f87"
 PROMPT_STYLE = Style.from_dict({
     "bottom-toolbar": "noreverse bg:default",
     # prompt_toolkit paints the completion menu on grey unless told otherwise;
     # `fg:default bg:default` keeps it on the terminal's own colors.
     "completion-menu": "fg:default bg:default",
     "completion-menu.completion": "fg:default bg:default",
-    "completion-menu.completion.current": "fg:ansibrightcyan bg:default noreverse bold underline",
+    # The selected row is the only thing that gets a background. `noreverse`
+    # matters: with reverse on, the bright green of a match would turn into a
+    # green block again.
+    "completion-menu.completion.current": f"fg:#ffffff {SELECTION_BG} noreverse bold",
     "completion-menu.meta.completion": "fg:default bg:default",
-    "completion-menu.meta.completion.current": "fg:ansibrightcyan bg:default",
+    "completion-menu.meta.completion.current": f"fg:#c6c6d7 {SELECTION_BG}",
     "scrollbar.background": "bg:default",
     "scrollbar.button": "bg:default fg:ansibrightblack",
     "scrollbar.arrow": "bg:default fg:ansibrightblack",

@@ -116,10 +116,10 @@ and spaces are escaped (`@my\ file.txt`), so the path the model sees is the path
 
 The menu is fuzzy, powered by [fzp](https://github.com/r1cardohj/fzp): `@mn` finds `main.py`,
 `/mdl` finds `/model`, `/model sonnet` finds `anthropic/claude-sonnet-4`. Candidates are
-subsequence-matched and ranked by score (consecutive hits and word starts win), and the
-matched characters are highlighted in color and bold — foreground only, no background block,
-so the menu stays on your terminal's own colors. Commands, `@paths`, `/model` refs and
-`/login` providers all go through the same scorer.
+subsequence-matched and ranked by score (consecutive hits and word starts win). Matched
+characters are marked in bright green and bold, foreground only; the background is reserved
+for the selected row, so a match never punches a colored hole in the highlight. Commands,
+`@paths`, `/model` refs and `/login` providers all go through the same scorer.
 
 `--cwd` sets the working directory. `--max-turns` caps the loop at **200 model rounds
 per task** — high enough that ordinary work never hits it, low enough to stop a runaway.
