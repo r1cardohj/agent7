@@ -120,6 +120,21 @@ class RunAgentPreviewTests(unittest.TestCase):
         self.assertTrue(seen_tools[0][3].startswith("edited "))
         self.assertEqual(len(client.chat.completions.requests), 2)
 
+    def test_tool_start_event_precedes_execution_and_result(self) -> None:
+        events: list[tuple[object, ...]] = []
+        turns = [
+            [_tool_call_chunk("bash", {"command": "printf done"})],
+            [_chunk(content="done")],
+        ]
+
+        self._run(
+            turns,
+            on_tool_start=lambda turn, name, args: events.append(("start", turn, name)),
+            on_tool=lambda turn, name, args, result: events.append(("finish", turn, name)),
+        )
+
+        self.assertEqual(events, [("start", 1, "bash"), ("finish", 1, "bash")])
+
     def test_each_model_round_including_the_one_after_edit_has_a_start_event(self) -> None:
         events: list[object] = []
         turns = [

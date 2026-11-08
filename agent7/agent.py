@@ -618,7 +618,7 @@ def _answer_pending(
 async def run_agent(
     task: str, *, cwd: Path, client: AsyncOpenAI, model: str, max_turns: int = DEFAULT_MAX_TURNS,
     messages: list[dict[str, Any]], on_delta=None, on_thinking=None, on_answer_to_thinking=None,
-    on_tool=None, on_preview=None, on_usage=None, context_limit: int | None = None,
+    on_tool=None, on_tool_start=None, on_preview=None, on_usage=None, context_limit: int | None = None,
     prompt_tokens: int | None = None, on_compact=None, on_finish=None, on_model_start=None,
 ) -> str:
     cwd = cwd.resolve()
@@ -681,6 +681,7 @@ async def run_agent(
                 except json.JSONDecodeError:
                     args, result = {}, f"error: invalid JSON arguments: {raw_args!r}"
                 else:
+                    await _emit(on_tool_start, turns, name, args)
                     try:
                         result = await asyncio.to_thread(
                             dispatch_tool, cwd, name, args, on_preview=on_preview

@@ -81,6 +81,7 @@ class ReplyPrinter:
         self._thinking_screen_rows = 0
         self._counting = False
         self._waiting = False
+        self._tool_running = False
 
     def __enter__(self) -> ReplyPrinter:
         return self
@@ -89,6 +90,7 @@ class ReplyPrinter:
         self._close_thinking()
         self._clear_counter()
         self._clear_waiting()
+        self._clear_tool()
         text = "".join(self.buf)
         self.buf.clear()
         self._chars = 0
@@ -141,8 +143,18 @@ class ReplyPrinter:
         self._clear_status_line()
         self._waiting = False
 
+    def _clear_tool(self) -> None:
+        if not self._tool_running:
+            return
+        if err.is_terminal:
+            self._clear_status_line()
+        else:
+            self._write("\n")
+        self._tool_running = False
+
     def on_model_start(self, turn: int) -> None:
         """Mark the otherwise silent gap before a model's first streamed delta."""
+        self._clear_tool()
         self._close_thinking()
         self._clear_counter()
         if not err.is_terminal:
@@ -230,8 +242,22 @@ class ReplyPrinter:
         self._chars += len(text)
         self._show_counter()
 
+    def on_tool_start(self, turn: int, name: str, args: dict) -> None:
+        self._clear_waiting()
+        self._close_thinking()
+        self._clear_counter()
+        self._clear_tool()
+        self.buf.clear()
+        self._chars = 0
+        self._tool_running = True
+        err.print(
+            f"  [dim]•[/dim] [bold]{name:<5}[/bold] [dim]{tool_summary(name, args)}[/dim]",
+            end="", soft_wrap=True,
+        )
+
     def on_tool(self, turn: int, name: str, args: dict, result: str) -> None:
         self._clear_waiting()
+        self._clear_tool()
         self._close_thinking()
         self._clear_counter()
         self.buf.clear()
@@ -247,6 +273,7 @@ class ReplyPrinter:
 
     def on_preview(self, stats: str) -> None:
         self._clear_waiting()
+        self._clear_tool()
         self._close_thinking()
         self._clear_counter()
         line = (stats.splitlines() or [""])[0]
@@ -469,6 +496,7 @@ async def _run_agent_once(session: Session, task: str) -> str:
             max_turns=session.max_turns, messages=session.messages,
             on_delta=rp.on_delta, on_thinking=rp.on_thinking,
             on_answer_to_thinking=rp.on_answer_to_thinking, on_tool=rp.on_tool,
+            on_tool_start=rp.on_tool_start,
             on_preview=rp.on_preview, on_usage=session.update_usage,
             on_model_start=rp.on_model_start,
             context_limit=session.context_limit, prompt_tokens=session.prompt_tokens,

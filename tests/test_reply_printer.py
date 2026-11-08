@@ -137,6 +137,33 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         self.assertIn("last", latest)
         self.assertEqual(latest.count("\033[E"), 4)
 
+    def test_tool_shows_a_dot_until_it_finishes(self) -> None:
+        self.rp.on_tool_start(1, "bash", {"command": "pwd"})
+        running = self.stream.getvalue()
+        self.assertTrue(running.endswith("  • bash  pwd"))
+        self.assertNotIn("✓", running)
+        self.assertTrue(self.rp._tool_running)
+
+        self.rp.on_tool(1, "bash", {"command": "pwd"}, "done")
+        text = self.stream.getvalue()
+        self.assertIn("  • bash  pwd\r\033[K  ✓ bash  pwd\n", text)
+        self.assertTrue(text.endswith("  ✓ bash  pwd\n"))
+        self.assertFalse(self.rp._tool_running)
+
+    def test_preview_clears_the_running_dot_before_its_own_output(self) -> None:
+        self.rp.on_tool_start(1, "write", {"path": "x.txt", "content": "new"})
+        self.rp.on_preview("write  x.txt  +1 -0")
+        self.rp.on_tool(1, "write", {"path": "x.txt", "content": "new"}, "wrote x.txt")
+        text = self.stream.getvalue()
+        self.assertIn("• write x.txt  (3 chars)\r\033[K# write", text)
+        self.assertIn("✓ write x.txt", text.rsplit("# write", 1)[-1])
+
+    def test_interruption_clears_the_running_dot(self) -> None:
+        with self.rp:
+            self.rp.on_tool_start(1, "bash", {"command": "sleep 10"})
+        self.assertFalse(self.rp._tool_running)
+        self.assertTrue(self.stream.getvalue().endswith("\r\033[K"))
+
     def test_closing_erases_the_viewport_before_tool_output(self) -> None:
         self.rp.on_thinking("one\ntwo")
         self.rp.on_tool(1, "bash", {"command": "pwd"}, "done")
