@@ -1,69 +1,13 @@
 """End-to-end run_agent test: the preview callback is wired through the tool loop."""
 
 import asyncio
-import json
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 from agent7.agent import run_agent
-
-
-def _chunk(
-    *,
-    content: str | None = None,
-    tool_calls: list[Any] | None = None,
-    usage: Any = None,
-) -> Any:
-    delta = SimpleNamespace(
-        content=content, tool_calls=tool_calls, reasoning_content=None, model_extra=None
-    )
-    choices = [SimpleNamespace(delta=delta)] if (content is not None or tool_calls) else []
-    return SimpleNamespace(choices=choices, usage=usage)
-
-
-def _tool_call_chunk(name: str, arguments: dict[str, Any]) -> Any:
-    return _chunk(
-        tool_calls=[
-            SimpleNamespace(
-                index=0,
-                id="call_1",
-                function=SimpleNamespace(name=name, arguments=json.dumps(arguments)),
-            )
-        ]
-    )
-
-
-class _FakeStream:
-    def __init__(self, chunks: list[Any]) -> None:
-        self._chunks = chunks
-
-    def __aiter__(self):
-        async def gen():
-            for chunk in self._chunks:
-                yield chunk
-
-        return gen()
-
-    async def close(self) -> None:
-        pass
-
-
-class _FakeCompletions:
-    def __init__(self, turns: list[list[Any]]) -> None:
-        self._turns = list(turns)
-        self.requests: list[dict[str, Any]] = []
-
-    async def create(self, **kwargs: Any) -> _FakeStream:
-        self.requests.append(kwargs)
-        return _FakeStream(self._turns.pop(0))
-
-
-class _FakeClient:
-    def __init__(self, turns: list[list[Any]]) -> None:
-        self.chat = SimpleNamespace(completions=_FakeCompletions(turns))
+from responses_fakes import FakeClient, call_turn, text_turn
 
 
 class RunAgentPreviewTests(unittest.TestCase):
@@ -77,7 +21,7 @@ class RunAgentPreviewTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _run(self, turns, **kwargs):
-        client = _FakeClient(turns)
+        client = FakeClient(turns)
         messages: list[dict[str, Any]] = []
         kwargs.setdefault("on_tool", lambda *a: None)  # keep stderr quiet
         answer = asyncio.run(
@@ -96,16 +40,11 @@ class RunAgentPreviewTests(unittest.TestCase):
         previews: list[str] = []
         seen_tools: list[tuple[int, str, dict[str, Any], str]] = []
         turns = [
-            [
-                _tool_call_chunk(
-                    "edit",
-                    {
-                        "path": "app.py",
-                        "edits": [{"old_string": "'old'", "new_string": "'new'"}],
-                    },
-                )
-            ],
-            [_chunk(content="done")],
+            call_turn(("edit", {
+                "path": "app.py",
+                "edits": [{"old_string": "'old'", "new_string": "'new'"}],
+            })),
+            text_turn("done"),
         ]
 
         answer, messages, client = self._run(
@@ -118,13 +57,13 @@ class RunAgentPreviewTests(unittest.TestCase):
         self.assertEqual(len(seen_tools), 1)
         self.assertEqual(seen_tools[0][1], "edit")
         self.assertTrue(seen_tools[0][3].startswith("edited "))
-        self.assertEqual(len(client.chat.completions.requests), 2)
+        self.assertEqual(len(client.responses.requests), 2)
 
     def test_tool_start_event_precedes_execution_and_result(self) -> None:
         events: list[tuple[object, ...]] = []
         turns = [
-            [_tool_call_chunk("bash", {"command": "printf done"})],
-            [_chunk(content="done")],
+            call_turn(("bash", {"command": "printf done"})),
+            text_turn("done"),
         ]
 
         self._run(
@@ -138,16 +77,11 @@ class RunAgentPreviewTests(unittest.TestCase):
     def test_each_model_round_including_the_one_after_edit_has_a_start_event(self) -> None:
         events: list[object] = []
         turns = [
-            [
-                _tool_call_chunk(
-                    "edit",
-                    {
-                        "path": "app.py",
-                        "edits": [{"old_string": "'old'", "new_string": "'new'"}],
-                    },
-                )
-            ],
-            [_chunk(content="done")],
+            call_turn(("edit", {
+                "path": "app.py",
+                "edits": [{"old_string": "'old'", "new_string": "'new'"}],
+            })),
+            text_turn("done"),
         ]
 
         self._run(
@@ -160,8 +94,8 @@ class RunAgentPreviewTests(unittest.TestCase):
 
     def test_preview_is_optional(self) -> None:
         turns = [
-            [_tool_call_chunk("write", {"path": "new.txt", "content": "hi\n"})],
-            [_chunk(content="done")],
+            call_turn(("write", {"path": "new.txt", "content": "hi\n"})),
+            text_turn("done"),
         ]
 
         answer, _, _ = self._run(turns)
@@ -172,16 +106,11 @@ class RunAgentPreviewTests(unittest.TestCase):
     def test_tool_error_does_not_preview(self) -> None:
         previews: list[str] = []
         turns = [
-            [
-                _tool_call_chunk(
-                    "edit",
-                    {
-                        "path": "app.py",
-                        "edits": [{"old_string": "missing", "new_string": "x"}],
-                    },
-                )
-            ],
-            [_chunk(content="gave up")],
+            call_turn(("edit", {
+                "path": "app.py",
+                "edits": [{"old_string": "missing", "new_string": "x"}],
+            })),
+            text_turn("gave up"),
         ]
 
         answer, messages, _ = self._run(turns, on_preview=previews.append)
@@ -196,8 +125,8 @@ class RunAgentPreviewTests(unittest.TestCase):
     def test_whole_file_write_previews_with_zero_deletions(self) -> None:
         previews: list[str] = []
         turns = [
-            [_tool_call_chunk("write", {"path": "fresh.txt", "content": "one\ntwo\n"})],
-            [_chunk(content="ok")],
+            call_turn(("write", {"path": "fresh.txt", "content": "one\ntwo\n"})),
+            text_turn("ok"),
         ]
 
         answer, _, _ = self._run(turns, on_preview=previews.append)
@@ -209,8 +138,8 @@ class RunAgentPreviewTests(unittest.TestCase):
     def test_noop_write_reports_no_changes_without_preview(self) -> None:
         previews: list[str] = []
         turns = [
-            [_tool_call_chunk("write", {"path": "app.py", "content": "value = 'old'\n"})],
-            [_chunk(content="nothing to do")],
+            call_turn(("write", {"path": "app.py", "content": "value = 'old'\n"})),
+            text_turn("nothing to do"),
         ]
 
         answer, messages, _ = self._run(turns, on_preview=previews.append)

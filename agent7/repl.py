@@ -559,6 +559,7 @@ async def _run_agent_once(session: Session, task: str) -> str:
             context_limit=session.context_limit, prompt_tokens=session.prompt_tokens,
             on_compact=rp.on_compact,
             on_finish=finish.append,
+            provider_id=getattr(session, "provider_id", None),
         )
     # A turn-limit pause is a warning, not an invisible or successful final answer.
     if notice := reply_notice(answer, finish[-1] if finish else None):

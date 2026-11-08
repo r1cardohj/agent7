@@ -18,6 +18,22 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from .responses import (
+    RAW_ITEMS_KEY,
+    ResponseTurn,
+    discard_raw_output,
+    output_text,
+    plain_item,
+    portable_history,
+    public_call,
+    raw_state,
+    reasoning_text,
+    request_input,
+    response_status,
+    response_tools,
+    response_usage,
+)
+
 MAX_READ_CHARS, MAX_BASH_CHARS = 50_000, 12_000
 DEFAULT_READ_LINES, DEFAULT_MAX_TURNS = 200, 200  # turns are a safety net, not a budget
 COMPACT_THRESHOLD, KEEP_USER_TURNS, KEEP_TOOL_RESULTS = 0.75, 3, 4
@@ -430,19 +446,6 @@ async def _emit(cb: Callable[..., Any] | None, *args: Any) -> None:
     if cb and asyncio.iscoroutine(maybe := cb(*args)):
         await maybe
 
-def _delta_reasoning(delta: Any) -> str | None:
-    if text := getattr(delta, "reasoning_content", None):
-        return text
-    extra = getattr(delta, "model_extra", None) or {}
-    return str(extra["reasoning_content"]) if isinstance(extra, dict) and extra.get("reasoning_content") else None
-
-def _usage_from_chunk(chunk: Any) -> dict[str, int] | None:
-    usage = getattr(chunk, "usage", None)
-    if not usage:
-        return None
-    out = {k: int(v) for k in ("prompt_tokens", "completion_tokens", "total_tokens")
-           if (v := getattr(usage, k, None)) is not None}
-    return out or None
 
 class _Retryable(Exception):
     """Failed before any text reached the screen, so the request can be replayed."""
@@ -462,14 +465,6 @@ def _retryable(exc: BaseException) -> bool:
         return status in RETRY_STATUS
     return type(exc).__name__ in _RETRY_ERRORS
 
-def _bad_stream_options(exc: BaseException) -> bool:
-    """The provider may not accept `stream_options` (client-side TypeError or a 400)."""
-    if isinstance(exc, TypeError):
-        return True
-    if getattr(exc, "status_code", None) not in (400, 404, 422):
-        return False
-    text = f"{exc}".lower()
-    return any(k in text for k in ("stream_options", "unexpected keyword", "unrecognized"))
 
 def _is_context_overflow(exc: BaseException) -> bool:
     if getattr(exc, "status_code", None) not in OVERFLOW_STATUS:
@@ -490,19 +485,10 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     return chars // 4 + 1
 
 async def _open_stream(client: AsyncOpenAI, kwargs: dict[str, Any]) -> Any:
-    """Open the stream, dropping `stream_options` once for providers that reject it."""
     try:
-        return await client.chat.completions.create(**kwargs)
+        return await client.responses.create(**kwargs)
     except (asyncio.CancelledError, KeyboardInterrupt) as e:
         raise Interrupted() from e
-    except Exception as e:
-        if "stream_options" not in kwargs or not _bad_stream_options(e):
-            raise
-        retry = {k: v for k, v in kwargs.items() if k != "stream_options"}
-        try:
-            return await client.chat.completions.create(**retry)
-        except (asyncio.CancelledError, KeyboardInterrupt) as e:
-            raise Interrupted() from e
 
 def _consume_close_result(task: asyncio.Task) -> None:
     """Retrieve a detached close task's exception after an interrupted cleanup."""
@@ -512,7 +498,7 @@ def _consume_close_result(task: asyncio.Task) -> None:
 async def _stream_once(
     client: AsyncOpenAI, kwargs: dict[str, Any], *, on_delta, on_thinking,
     on_answer_to_thinking, on_finish,
-) -> tuple[str, list[dict[str, Any]], dict[str, int] | None]:
+) -> ResponseTurn:
     try:
         stream = await _open_stream(client, kwargs)
     except Interrupted:
@@ -520,37 +506,60 @@ async def _stream_once(
     except Exception as e:
         raise _Retryable(e) from e
     parts: list[str] = []
-    tool_acc: dict[int, dict[str, str]] = {}
-    saw_tools, emitted, usage = False, False, None
+    output: list[dict[str, Any]] = []
+    saw_tools = emitted = False
+    response = None
     try:
-        async for chunk in stream:
-            if u := _usage_from_chunk(chunk):
-                usage = u
-            if not chunk.choices:
-                continue
-            if finish := getattr(chunk.choices[0], "finish_reason", None):
-                await _emit(on_finish, finish)  # "stop" | "length" | "tool_calls" | ...
-            delta = chunk.choices[0].delta
-            if r := _delta_reasoning(delta):
-                emitted = True
-                await _emit(on_thinking, r)
-            if delta.tool_calls:
-                if not saw_tools:
-                    saw_tools = True
-                    await _emit(on_answer_to_thinking)
-                for tc in delta.tool_calls:
-                    slot = tool_acc.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
-                    if tc.id:
-                        slot["id"] = tc.id
-                    if tc.function:
-                        if tc.function.name:
-                            slot["name"] = tc.function.name
-                        if tc.function.arguments:
-                            slot["arguments"] += tc.function.arguments
-            if delta.content:
-                emitted = True
-                parts.append(delta.content)
-                await _emit(on_thinking if saw_tools else on_delta, delta.content)
+        async for event in stream:
+            kind = getattr(event, "type", "")
+            if kind == "response.output_item.done":
+                item = plain_item(event.item)
+                output.append(item)
+                if item.get("type") == "function_call":
+                    if not saw_tools:
+                        saw_tools = True
+                        await _emit(on_answer_to_thinking)
+                elif item.get("type") == "message":
+                    text = output_text([item])
+                    if text and text != "".join(parts):
+                        # Some compatible endpoints return a final item but no deltas.
+                        emitted = True
+                        parts.append(text)
+                        await _emit(on_thinking if saw_tools else on_delta, text)
+                elif item.get("type") == "reasoning" and not emitted:
+                    # Delta-less compatible endpoints still expose useful summaries.
+                    if text := reasoning_text(item):
+                        emitted = True
+                        await _emit(on_thinking, text)
+            elif kind in (
+                "response.reasoning_text.delta", "response.reasoning_summary_text.delta",
+            ):
+                if text := getattr(event, "delta", ""):
+                    emitted = True
+                    await _emit(on_thinking, text)
+            elif kind == "response.output_text.delta":
+                if text := getattr(event, "delta", ""):
+                    emitted = True
+                    parts.append(text)
+                    await _emit(on_thinking if saw_tools else on_delta, text)
+            elif kind in ("response.completed", "response.incomplete"):
+                response = event.response
+                final_output = [plain_item(item) for item in getattr(response, "output", None) or []]
+                if final_output:
+                    output = final_output
+                    if not parts and (text := output_text(output)):
+                        parts.append(text)
+                        emitted = True
+                        await _emit(on_thinking if saw_tools else on_delta, text)
+                finish, _ = response_status(response)
+                await _emit(on_finish, finish)
+            elif kind == "response.failed":
+                response = event.response
+                error = getattr(response, "error", None)
+                raise RuntimeError(getattr(error, "message", None) or "Responses API request failed")
+            elif kind == "response.error":
+                error = getattr(event, "error", None)
+                raise RuntimeError(getattr(error, "message", None) or "Responses API stream failed")
     except Interrupted:
         raise
     except (asyncio.CancelledError, KeyboardInterrupt) as e:
@@ -578,20 +587,28 @@ async def _stream_once(
                         if not interrupted:
                             raise
                         # Preserve the original interrupt over cleanup cancellation.
-    return "".join(parts), [
-        {"id": tool_acc[i]["id"], "type": "function",
-         "function": {"name": tool_acc[i]["name"], "arguments": tool_acc[i]["arguments"] or "{}"}}
-        for i in sorted(tool_acc)
-    ], usage
+    finish = response_status(response)[0] if response is not None else None
+    return ResponseTurn(
+        text="".join(parts), output=output, usage=response_usage(response),
+        finish_reason=finish,
+    )
 
 async def _stream_completion(
     client: AsyncOpenAI, *, model: str, messages: list[dict[str, Any]],
     on_delta, on_thinking, on_answer_to_thinking, on_finish=None,
-) -> tuple[str, list[dict[str, Any]], dict[str, int] | None]:
+    provider_id: str | None = None,
+) -> ResponseTurn:
+    inputs, instructions = request_input(messages, provider_id)
     kwargs: dict[str, Any] = {
-        "model": model, "messages": messages, "tools": TOOLS, "stream": True,
-        "stream_options": {"include_usage": True},
+        "model": model, "input": inputs, "tools": response_tools(TOOLS), "stream": True,
     }
+    if instructions is not None:
+        kwargs["instructions"] = instructions
+    if model.startswith("deepseek-") and portable_history(messages, provider_id):
+        # DeepSeek rejects thinking-mode replay when legacy/other-provider
+        # history has no reasoning items. Degrade only until fresh raw output
+        # is available again; other providers keep their own defaults.
+        kwargs["reasoning"] = {"effort": "none"}
     for attempt in range(len(RETRY_SLEEPS) + 1):
         try:
             return await _stream_once(
@@ -620,6 +637,7 @@ async def run_agent(
     messages: list[dict[str, Any]], on_delta=None, on_thinking=None, on_answer_to_thinking=None,
     on_tool=None, on_tool_start=None, on_preview=None, on_usage=None, context_limit: int | None = None,
     prompt_tokens: int | None = None, on_compact=None, on_finish=None, on_model_start=None,
+    provider_id: str | None = None,
 ) -> str:
     cwd = cwd.resolve()
     messages.append({"role": "user", "content": task})
@@ -632,17 +650,21 @@ async def run_agent(
             if should_compact(prompt, context_limit):
                 new_msgs, n = compact_messages(messages)
                 if n:
+                    discard_raw_output(new_msgs)
                     messages[:] = new_msgs
                     last_prompt = None
                     await _emit(on_compact, n)
             # The gap after a tool result is a new model wait, not a running tool.
             await _emit(on_model_start, turns + 1)
             try:
-                content, tool_calls, usage = await _stream_completion(
+                turn = await _stream_completion(
                     client, model=model, messages=messages, on_delta=on_delta,
                     on_thinking=on_thinking, on_answer_to_thinking=on_answer_to_thinking,
-                    on_finish=on_finish,
+                    on_finish=on_finish, provider_id=provider_id,
                 )
+                content = turn.text
+                tool_calls = [public_call(call) for call in turn.calls]
+                usage = turn.usage
             except Interrupted as e:
                 if e.partial:
                     messages.append({"role": "assistant", "content": e.partial})
@@ -659,6 +681,7 @@ async def run_agent(
                     )
                 if not n:
                     raise
+                discard_raw_output(squeezed)
                 messages[:] = squeezed
                 last_prompt = None
                 await _emit(on_compact, n)
@@ -668,7 +691,10 @@ async def run_agent(
             if usage:
                 await _emit(on_usage, usage)
                 last_prompt = usage.get("prompt_tokens", last_prompt)
-            assistant: dict[str, Any] = {"role": "assistant", "content": content}
+            assistant: dict[str, Any] = {
+                "role": "assistant", "content": content,
+                RAW_ITEMS_KEY: raw_state(provider_id, turn.output),
+            }
             if tool_calls:
                 assistant["tool_calls"] = tool_calls
             messages.append(assistant)

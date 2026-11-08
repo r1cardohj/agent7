@@ -2,7 +2,6 @@
 
 import asyncio
 import io
-import json
 import os
 import tempfile
 import unittest
@@ -19,47 +18,7 @@ from agent7.agent import DEFAULT_MAX_TURNS, run_agent
 from agent7.cli import Options, resolve_max_turns
 from agent7.session import Session
 from agent7.store import save
-
-
-def _turn(content: str = "", **extra: Any) -> list[Any]:
-    delta = SimpleNamespace(
-        content=content or None, tool_calls=None, reasoning_content=None, model_extra=None
-    )
-    return [SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None, **extra)]
-
-
-def _bash(cmd: str) -> list[Any]:
-    call = SimpleNamespace(
-        index=0, id=f"call_{cmd}", function=SimpleNamespace(name="bash", arguments=json.dumps({"command": cmd}))
-    )
-    delta = SimpleNamespace(content=None, tool_calls=[call], reasoning_content=None, model_extra=None)
-    return [SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None)]
-
-
-class _Stream:
-    def __init__(self, chunks: list[Any]) -> None:
-        self._chunks = chunks
-
-    def __aiter__(self):
-        async def gen():
-            for c in self._chunks:
-                yield c
-
-        return gen()
-
-    async def close(self) -> None:
-        pass
-
-
-class _Client:
-    def __init__(self, turns: list[list[Any]]) -> None:
-        self._turns = list(turns)
-        self.requests: list[dict[str, Any]] = []
-        self.chat = SimpleNamespace(completions=self)
-
-    async def create(self, **kwargs: Any) -> _Stream:
-        self.requests.append(kwargs)
-        return _Stream(self._turns.pop(0) if len(self._turns) > 1 else self._turns[0])
+from responses_fakes import FakeClient, FakeStream, call_turn, text_turn
 
 
 class TurnBudgetTests(unittest.TestCase):
@@ -70,8 +29,8 @@ class TurnBudgetTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def run_agent(self, turns: list[list[Any]], **kwargs: Any) -> tuple[str, _Client]:
-        client = _Client(turns)
+    def run_agent(self, turns: list[list[Any]], **kwargs: Any) -> tuple[str, FakeClient]:
+        client = FakeClient(turns)
         answer = asyncio.run(
             run_agent(
                 "go", cwd=self.cwd, client=client, model="test-model", messages=[],
@@ -85,7 +44,7 @@ class TurnBudgetTests(unittest.TestCase):
         self.assertEqual(Session(model="m", cwd=self.cwd, client=None).max_turns, DEFAULT_MAX_TURNS)
 
     def test_default_budget_is_used_when_no_flag_is_given(self) -> None:
-        answer, client = self.run_agent([_turn("done")])
+        answer, client = self.run_agent([text_turn("done")])
 
         self.assertEqual(answer, "done")
         self.assertEqual(len(client.requests), 1)
@@ -93,7 +52,7 @@ class TurnBudgetTests(unittest.TestCase):
     def test_long_tool_chain_is_not_cut_short(self) -> None:
         """31 tool rounds used to be impossible; they are ordinary work now."""
         answer, client = self.run_agent(
-            [_bash(f"echo {i}") for i in range(31)] + [_turn("done")]
+            [call_turn(("bash", {"command": f"echo {i}"})) for i in range(31)] + [text_turn("done")]
         )
 
         self.assertEqual(answer, "done")
@@ -101,7 +60,7 @@ class TurnBudgetTests(unittest.TestCase):
 
     def test_explicit_budget_still_caps_the_loop(self) -> None:
         answer, client = self.run_agent(
-            [_bash(f"echo {i}") for i in range(5)], max_turns=3
+            [call_turn(("bash", {"command": f"echo {i}"})) for i in range(5)], max_turns=3
         )
 
         self.assertEqual(answer, "(stopped after 3 turns)")
@@ -116,17 +75,17 @@ class TurnBudgetTests(unittest.TestCase):
         big = [{"role": "user", "content": "earlier"}]
         big += [{"role": "tool", "tool_call_id": f"c{i}", "content": "z" * 3_000} for i in range(3)]
 
-        client = _Client([_turn("done")])
+        client = FakeClient([text_turn("done")])
         calls = {"n": 0}
-        original = client.create
+        original = client.responses.create
 
-        async def flaky(**kwargs: Any) -> _Stream:
+        async def flaky(**kwargs: Any) -> FakeStream:
             calls["n"] += 1
             if calls["n"] == 1:
                 raise Overflow("maximum context length is 8192 tokens")
             return await original(**kwargs)
 
-        client.chat = SimpleNamespace(completions=SimpleNamespace(create=flaky))
+        client.responses.create = flaky
         answer = asyncio.run(
             run_agent(
                 "go", cwd=self.cwd, client=client, model="test-model", messages=list(big),
@@ -144,8 +103,8 @@ class TurnBudgetTests(unittest.TestCase):
         def create(**kwargs: Any) -> None:
             raise Overflow("maximum context length exceeded")
 
-        client = _Client([_turn("done")])
-        client.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
+        client = FakeClient([text_turn("done")])
+        client.responses.create = create
         big = [{"role": "tool", "tool_call_id": "c", "content": "z" * 9_000}]
 
         with self.assertRaises(Overflow):

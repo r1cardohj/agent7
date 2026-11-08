@@ -1,64 +1,21 @@
 """Transient failures are retried; a context overflow compacts and retries."""
 
 import asyncio
-import json
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 import agent7.agent as A
 from agent7.agent import estimate_tokens, run_agent
+from responses_fakes import FakeClient, FakeStream, text_turn, usage_turn
 
 
 class _Status(Exception):
     def __init__(self, status: int, message: str = "") -> None:
         self.status_code = status
         super().__init__(message or f"status {status}")
-
-
-def _chunk(*, content: str | None = None, usage: dict[str, int] | None = None) -> Any:
-    delta = SimpleNamespace(
-        content=content, tool_calls=None, reasoning_content=None, model_extra=None
-    )
-    choices = [SimpleNamespace(delta=delta)] if content is not None else []
-    return SimpleNamespace(choices=choices, usage=SimpleNamespace(**usage) if usage else None)
-
-
-class _Stream:
-    def __init__(self, chunks: list[Any], fail: BaseException | None = None) -> None:
-        self._chunks, self._fail = chunks, fail
-
-    def __aiter__(self):
-        async def gen():
-            for chunk in self._chunks:
-                yield chunk
-            if self._fail is not None:
-                raise self._fail
-
-        return gen()
-
-    async def close(self) -> None:
-        pass
-
-
-class _Client:
-    """Script items: an exception to raise, or chunks to stream (optionally failing at the end)."""
-
-    def __init__(self, script: list[Any]) -> None:
-        self.script = list(script)
-        self.calls = 0
-        self.chat = SimpleNamespace(completions=self)
-
-    async def create(self, **kwargs: Any) -> _Stream:
-        self.calls += 1
-        item = self.script.pop(0) if len(self.script) > 1 else self.script[0]
-        if isinstance(item, BaseException):
-            raise item
-        chunks, fail = item if isinstance(item, tuple) else (item, None)
-        return _Stream(chunks, fail)
 
 
 class RetryTests(unittest.TestCase):
@@ -72,8 +29,8 @@ class RetryTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def run_agent(self, script: list[Any], **kwargs: Any) -> tuple[str, _Client]:
-        client = _Client(script)
+    def run_agent(self, script: list[Any], **kwargs: Any) -> tuple[str, FakeClient]:
+        client = FakeClient(script)
         kwargs.setdefault("on_tool", lambda *a: None)
         answer = asyncio.run(
             run_agent(
@@ -84,7 +41,7 @@ class RetryTests(unittest.TestCase):
         return answer, client
 
     def test_rate_limit_is_retried(self) -> None:
-        answer, client = self.run_agent([_Status(429), [_chunk(content="ok")]])
+        answer, client = self.run_agent([_Status(429), text_turn("ok")])
 
         self.assertEqual(answer, "ok")
         self.assertEqual(client.calls, 2)
@@ -93,7 +50,7 @@ class RetryTests(unittest.TestCase):
         class APIConnectionError(Exception):
             pass
 
-        answer, client = self.run_agent([APIConnectionError("boom"), [_chunk(content="ok")]])
+        answer, client = self.run_agent([APIConnectionError("boom"), text_turn("ok")])
 
         self.assertEqual(answer, "ok")
         self.assertEqual(client.calls, 2)
@@ -112,18 +69,21 @@ class RetryTests(unittest.TestCase):
         seen: list[str] = []
         with self.assertRaises(_Status):
             self.run_agent(
-                [([_chunk(content="partial")], _Status(503))],
+                [(text_turn("partial"), _Status(503))],
                 on_delta=seen.append,
             )
 
         self.assertEqual(seen, ["partial"])
 
-    def test_stream_options_is_dropped_only_for_bad_param_errors(self) -> None:
-        bad = _Status(400, "Unrecognized request argument supplied: stream_options")
-        answer, client = self.run_agent([bad, [_chunk(content="ok")]])
+    def test_usage_comes_from_the_completed_response(self) -> None:
+        seen: list[dict[str, int]] = []
+        answer, _ = self.run_agent(
+            [usage_turn("ok", {"input_tokens": 12, "output_tokens": 3, "total_tokens": 15})],
+            on_usage=seen.append,
+        )
 
         self.assertEqual(answer, "ok")
-        self.assertEqual(client.calls, 2)
+        self.assertEqual(seen, [{"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}])
 
 
 class CompactionFallbackTests(unittest.TestCase):
@@ -137,7 +97,7 @@ class CompactionFallbackTests(unittest.TestCase):
     def run_agent(
         self, script: list[Any], seed: list[dict[str, Any]] | None = None, **kwargs: Any
     ) -> tuple[str, list[int]]:
-        client = _Client(script)
+        client = FakeClient(script)
         compacted: list[int] = []
         kwargs.setdefault("on_tool", lambda *a: None)
         answer = asyncio.run(
@@ -160,7 +120,7 @@ class CompactionFallbackTests(unittest.TestCase):
         ]
 
     def test_missing_usage_still_triggers_the_compaction_check(self) -> None:
-        """No usage chunk at all: the 75% check must fall back to an estimate."""
+        """No usage in the final response: the 75% check uses an estimate."""
         calls: list[list[dict[str, Any]]] = []
         real = A.compact_messages
 
@@ -168,7 +128,9 @@ class CompactionFallbackTests(unittest.TestCase):
             calls.append(messages)
             return real(messages, **kwargs)
 
-        client = _Client([[_chunk(content="a")]])
+        events = text_turn("a")
+        events[-1].response.usage = None
+        client = FakeClient([events])
         with patch.object(A, "compact_messages", side_effect=spy):
             asyncio.run(
                 run_agent(
@@ -183,11 +145,11 @@ class CompactionFallbackTests(unittest.TestCase):
         overflow = _Status(400, "This model's maximum context length is 8192 tokens")
 
         answer, compacted = self.run_agent(
-            [overflow, [_chunk(content="done")]], seed=self.history(3)
+            [overflow, text_turn("done")], seed=self.history(3)
         )
 
         self.assertEqual(answer, "done")
-        self.assertEqual(compacted, [3])  # every old tool result was shrunk, then the turn retried
+        self.assertEqual(compacted, [3])
 
 
 class EstimateTokensTests(unittest.TestCase):
@@ -196,7 +158,7 @@ class EstimateTokensTests(unittest.TestCase):
             {"role": "user", "content": "x" * 400},
             {"role": "assistant", "content": "", "tool_calls": [
                 {"id": "c", "type": "function",
-                 "function": {"name": "read", "arguments": json.dumps({"path": "y" * 400})}}
+                 "function": {"name": "read", "arguments": '{"path": "' + 'y' * 400 + '"}'}}
             ]},
         ]
 

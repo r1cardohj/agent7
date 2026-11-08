@@ -87,6 +87,10 @@ a new conversation replaces it only after the first agent task. Set `$AGENT7_MOD
 model choice. Active sessions are saved automatically after tasks, commands, interruptions, and exit.
 With `-r`, the saved user/assistant conversation is printed before the REPL prompt or one-shot task;
 system and tool messages are omitted.
+Model calls use the OpenAI Responses API with local function tools. Sessions replay raw output
+items to their originating provider where required, without using server-side conversation state;
+older snapshots and provider switches use portable function calls and results instead.
+
 Snapshots contain resumable model context, not a separate full transcript; compaction is reflected
 in both the saved context and the displayed history. Files live in
 `${XDG_STATE_HOME:-~/.local/state}/agent7/sessions/` and do not store API keys. Hard process kills
@@ -112,11 +116,11 @@ After `:wq`, the text returns to the prompt for review; Enter submits it. Set `E
 Exit with Ctrl-D (or Ctrl-Z on Windows). Ctrl-C discards the current input or interrupts
 the running turn, then returns to the prompt instead of exiting the REPL.
 
-Reasoning models (DeepSeek, Grok, Kimi) stream their `reasoning_content` live: it shows up
-dimmed under a `thinking` header, before the answer and above each tool line. In a
+Reasoning models (DeepSeek, Grok, Kimi) stream their Responses reasoning events live: they
+show up dimmed under a `thinking` header, before the answer and above each tool line. In a
 terminal, the latest six visual lines scroll inside a fixed-height viewport that is cleared
-afterward; redirected output retains the full text without control codes. It is display only —
-reasoning is never replayed into the prompt or the saved session.
+afterward; redirected output retains the full text without control codes. Reasoning text is
+display only; opaque protocol items needed to continue a tool call are kept with the session.
 
 Type `@` in the REPL to complete files and directories from the cwd:
 `fix @agent7/agent.py`.
