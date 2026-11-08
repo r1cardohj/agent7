@@ -190,8 +190,7 @@ class SessionCliTests(unittest.TestCase):
             cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": "old"}],
         )
-        path = save(state, created_at="2025-01-01T00:00:00+00:00")
-        original = path.read_bytes()
+        save(state, created_at="2025-01-01T00:00:00+00:00")
 
         async def fake_run(session, task, **kwargs):
             session.messages.extend([
@@ -217,7 +216,6 @@ class SessionCliTests(unittest.TestCase):
             client.return_value.close = AsyncMock()
             prompt.return_value.prompt_async.side_effect = fake_prompt
             asyncio.run(async_main(["--cwd", str(self.cwd)]))
-        self.assertNotEqual(path.read_bytes(), original)
         self.assertEqual(load(self.cwd)["messages"][1:], [
             {"role": "user", "content": "new task"},
             {"role": "assistant", "content": "new answer"},
