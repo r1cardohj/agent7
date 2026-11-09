@@ -1,8 +1,11 @@
 # agent7
 
 <p align="center">
-  <img src="assets/mascot.svg" alt="Seven, agent7's pixel robot mascot" width="160">
+  <img src="https://raw.githubusercontent.com/r1cardohj/agent7/master/assets/demo.gif"
+       alt="A real agent7 session: the REPL opens with Seven, one sentence is typed, and agent7 changes and tests greet.py" width="820">
 </p>
+
+<p align="center"><sub>A real session — one sentence in, four tools out.</sub></p>
 
 **The simplest coding agent. Four tools, one loop.**
 
@@ -15,7 +18,7 @@ Built for people who work on one thing at a time — you hold one task in your h
 
 ## Meet Seven
 
-<img align="right" src="assets/mascot.png" alt="Seven, the little pixel robot" width="100">
+<img align="right" src="https://raw.githubusercontent.com/r1cardohj/agent7/master/assets/mascot.png" alt="Seven, the little pixel robot" width="100">
 
 **Seven** is agent7's tiny coding companion: a lavender pixel robot with a seven-shaped antenna,
 cursor-green eyes, and a lucky `7` on its chest. It stays out of the way until you open the REPL.
