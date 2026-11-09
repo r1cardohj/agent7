@@ -604,10 +604,10 @@ async def _stream_completion(
     }
     if instructions is not None:
         kwargs["instructions"] = instructions
-    if model.startswith("deepseek-") and portable_history(messages, provider_id):
+    if provider_id == "deepseek" and portable_history(messages, provider_id):
         # DeepSeek rejects thinking-mode replay when legacy/other-provider
-        # history has no reasoning items. Degrade only until fresh raw output
-        # is available again; other providers keep their own defaults.
+        # history has no reasoning items. Key off the provider, not the model
+        # name. Degrade only until fresh raw output is available again.
         kwargs["reasoning"] = {"effort": "none"}
     for attempt in range(len(RETRY_SLEEPS) + 1):
         try:

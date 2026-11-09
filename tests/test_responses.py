@@ -109,6 +109,22 @@ class ResponsesRequestTests(unittest.TestCase):
         ))
         self.assertNotIn("reasoning", client.requests[0])
 
+    def test_deepseek_fallback_follows_provider_not_model_name(self) -> None:
+        old = [{"role": "assistant", "content": "answer"}]
+        client = FakeClient([text_turn("new")])
+        asyncio.run(run_agent(
+            "continue", cwd=self.cwd, client=client, model="custom-model",
+            messages=list(old), provider_id="deepseek", on_tool=lambda *a: None,
+        ))
+        self.assertEqual(client.requests[0]["reasoning"], {"effort": "none"})
+
+        client = FakeClient([text_turn("new")])
+        asyncio.run(run_agent(
+            "continue", cwd=self.cwd, client=client, model="deepseek-flash",
+            messages=list(old), provider_id="xai", on_tool=lambda *a: None,
+        ))
+        self.assertNotIn("reasoning", client.requests[0])
+
     def test_parallel_calls_get_distinct_outputs(self) -> None:
         answer, messages, client = self.run_agent([
             call_turn([("bash", {"command": "printf one"}), ("bash", {"command": "printf two"})]),
