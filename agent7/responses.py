@@ -129,7 +129,19 @@ def response_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         })
     return converted
 
+def _first_int(get: Any, *keys: str) -> int | None:
+    for key in keys:
+        value = get(key)
+        if value is not None:
+            return int(value)
+    return None
+
 def response_usage(response: Any) -> dict[str, int] | None:
+    """Map Responses or Chat Completions usage onto the UI's token names.
+
+    Responses reports input_tokens/output_tokens. Some compatible endpoints
+    still report prompt_tokens/completion_tokens. Prefer the Responses names.
+    """
     usage = getattr(response, "usage", None)
     if usage is None and isinstance(response, dict):
         usage = response.get("usage")
@@ -138,28 +150,43 @@ def response_usage(response: Any) -> dict[str, int] | None:
     get = usage.get if isinstance(usage, dict) else (
         lambda key, default=None: getattr(usage, key, default)
     )
+    prompt = _first_int(get, "input_tokens", "prompt_tokens")
+    completion = _first_int(get, "output_tokens", "completion_tokens")
+    total = _first_int(get, "total_tokens")
+    if total is None and prompt is not None and completion is not None:
+        total = prompt + completion
     out = {
-        external: int(value)
-        for external, internal in (
-            ("prompt_tokens", "input_tokens"),
-            ("completion_tokens", "output_tokens"),
-            ("total_tokens", "total_tokens"),
+        key: value
+        for key, value in (
+            ("prompt_tokens", prompt),
+            ("completion_tokens", completion),
+            ("total_tokens", total),
         )
-        if (value := get(internal)) is not None
+        if value is not None
     }
     return out or None
 
 def response_status(response: Any) -> tuple[str | None, str | None]:
-    """Return (UI-compatible finish reason, incomplete reason)."""
+    """Return (UI finish reason, incomplete reason).
+
+    Responses reports status/incomplete_details. Compatible endpoints may still
+    report Chat Completions finish_reason. Known cases become stop/length so
+    the truncation notice does not depend on which name arrived.
+    """
     get = response.get if isinstance(response, dict) else (
         lambda key, default=None: getattr(response, key, default)
     )
     status = get("status")
     details = get("incomplete_details") or {}
     reason = details.get("reason") if isinstance(details, dict) else getattr(details, "reason", None)
-    if status == "incomplete" and reason == "max_output_tokens":
+    finish = get("finish_reason")
+    if reason == "max_output_tokens" or finish == "length":
         return "length", reason
-    return status, reason
+    if status == "completed" or finish == "stop":
+        return "stop", reason
+    if isinstance(finish, str) and finish:
+        return finish, reason
+    return status if isinstance(status, str) else None, reason
 
 def output_text(items: list[dict[str, Any]]) -> str:
     """Fallback for providers that send output items without text deltas."""

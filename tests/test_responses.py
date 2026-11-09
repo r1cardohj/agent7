@@ -14,6 +14,7 @@ from agent7.responses import (
     output_text,
     portable_history,
     request_input,
+    response_status,
     response_tools,
     response_usage,
 )
@@ -244,6 +245,37 @@ class ResponsesStreamTests(unittest.TestCase):
         self.assertEqual(response_usage(response), {
             "prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14,
         })
+
+    def test_chat_usage_names_are_accepted(self) -> None:
+        response = {"usage": {"prompt_tokens": 8, "completion_tokens": 2}}
+        self.assertEqual(response_usage(response), {
+            "prompt_tokens": 8, "completion_tokens": 2, "total_tokens": 10,
+        })
+
+    def test_responses_usage_names_win_when_both_are_present(self) -> None:
+        response = ns(usage=ns(
+            input_tokens=10, prompt_tokens=1, output_tokens=4, completion_tokens=1,
+        ))
+        mapped = response_usage(response)
+        self.assertEqual(mapped["prompt_tokens"], 10)
+        self.assertEqual(mapped["completion_tokens"], 4)
+        self.assertEqual(mapped["total_tokens"], 14)
+
+    def test_finish_reason_accepts_responses_and_chat_names(self) -> None:
+        self.assertEqual(response_status(ns(status="completed", incomplete_details=None)), ("stop", None))
+        self.assertEqual(
+            response_status(ns(status="incomplete", incomplete_details=ns(reason="max_output_tokens"))),
+            ("length", "max_output_tokens"),
+        )
+        self.assertEqual(
+            response_status({"status": "completed", "finish_reason": "length"}),
+            ("length", None),
+        )
+        self.assertEqual(response_status({"finish_reason": "tool_calls"}), ("tool_calls", None))
+        self.assertEqual(
+            response_status(ns(status="incomplete", incomplete_details=ns(reason="content_filter"))),
+            ("incomplete", "content_filter"),
+        )
 
     def test_output_text_extracts_only_message_text(self) -> None:
         self.assertEqual(output_text([
