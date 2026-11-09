@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .session import Session
 
-VERSION = 1
+VERSION = 2
+READABLE_VERSIONS = frozenset({1, 2})  # 1: chat history; 2: same, plus Responses raw items
 
 def session_dir() -> Path:
     xdg = os.environ.get("XDG_STATE_HOME", "").strip()
@@ -109,7 +110,10 @@ def _read_snapshot(path: Path) -> dict[str, Any]:
         raise ValueError(f"session not found: {path}") from None
     except (OSError, json.JSONDecodeError) as e:
         raise ValueError(f"cannot read session {path}: {e}") from None
-    if not isinstance(data, dict) or data.get("version") != VERSION:
+    # Version 2 is what we write. Version 1 still loads; missing raw items are
+    # replayed as portable calls. Anything else is refused so a newer snapshot
+    # is not sent blindly.
+    if not isinstance(data, dict) or data.get("version") not in READABLE_VERSIONS:
         raise ValueError(f"unsupported session format: {path}")
     if not isinstance(data.get("messages"), list):
         raise ValueError(f"invalid session snapshot: {path}")
