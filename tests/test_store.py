@@ -1,3 +1,4 @@
+import json
 import os
 import stat
 import tempfile
@@ -7,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent7.agent import SYSTEM
-from agent7.store import load, resume, resume_messages, save, session_path, workspace_key
+from agent7.store import VERSION, load, resume, resume_messages, save, session_path, workspace_key
 
 
 class SessionStoreTests(unittest.TestCase):
@@ -122,6 +123,34 @@ class SessionStoreTests(unittest.TestCase):
     def test_atomic_save_leaves_no_temporary_file(self) -> None:
         path = self.save()
         self.assertEqual(list(path.parent.iterdir()), [path])
+
+    def _write_snapshot(self, version: int) -> Path:
+        path = session_path(self.cwd)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "version": version,
+            "cwd": str(self.cwd.resolve()),
+            "model_ref": "deepseek/test",
+            "max_turns": 12,
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "updated_at": "2025-01-01T00:00:00+00:00",
+            "messages": [{"role": "user", "content": "old"}],
+        }), encoding="utf-8")
+        return path
+
+    def test_save_writes_responses_snapshot_version(self) -> None:
+        path = self.save()
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["version"], VERSION)
+        self.assertEqual(VERSION, 2)
+
+    def test_version_1_snapshot_still_loads(self) -> None:
+        self._write_snapshot(1)
+        self.assertEqual(load(self.cwd)["messages"][0]["content"], "old")
+
+    def test_unknown_snapshot_version_is_refused(self) -> None:
+        self._write_snapshot(3)
+        with self.assertRaisesRegex(ValueError, "unsupported session format"):
+            load(self.cwd)
 
 
 if __name__ == "__main__":

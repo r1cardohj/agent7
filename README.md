@@ -90,6 +90,8 @@ system and tool messages are omitted.
 Model calls use the OpenAI Responses API with local function tools. Sessions replay raw output
 items to their originating provider where required, without using server-side conversation state;
 older snapshots and provider switches use portable function calls and results instead.
+New files are snapshot format 2. Format 1 still loads; older releases refuse format 2
+instead of replaying fields they do not know.
 
 Snapshots contain resumable model context, not a separate full transcript; compaction is reflected
 in both the saved context and the displayed history. Files live in
