@@ -2,11 +2,15 @@
 
 import io
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
+from prompt_toolkit.formatted_text import to_formatted_text
+from prompt_toolkit.keys import Keys
 from rich.console import Console
 
 import agent7.repl as repl
+from agent7.pager import PromptToolkitPager
 
 
 class ReplyPrinterPreviewTests(unittest.TestCase):
@@ -208,6 +212,57 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         self.assertIn("│ new", reopened)
 
 
+class PromptToolkitPagerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        with patch("agent7.pager.Application") as application:
+            PromptToolkitPager().show("\033[31mfirst\033[0m\nsecond")
+        self.application = application
+        self.kwargs = application.call_args.kwargs
+        self.window = self.kwargs["layout"].current_window
+        self.bindings = self.kwargs["key_bindings"]
+
+    def press(self, key: str, event: SimpleNamespace) -> None:
+        self.bindings.get_bindings_for_keys((key,))[-1].handler(event)
+
+    def event(self) -> SimpleNamespace:
+        layout = SimpleNamespace(current_window=self.window)
+        return SimpleNamespace(app=SimpleNamespace(layout=layout))
+
+    def test_preserves_all_text_and_runs_outside_the_agent_event_loop(self) -> None:
+        fragments = to_formatted_text(self.window.content.text)
+        self.assertEqual("".join(part[1] for part in fragments), "first\nsecond")
+        self.assertTrue(self.kwargs["full_screen"])
+        self.application.return_value.run.assert_called_once_with(in_thread=True)
+
+    def test_arrow_and_page_keys_scroll_in_both_directions(self) -> None:
+        self.window.render_info = SimpleNamespace(content_height=20, window_height=5)
+        event = self.event()
+        self.press(Keys.Down, event)
+        self.assertEqual(self.window.vertical_scroll, 1)
+        self.assertEqual(self.window.content.get_cursor_position().y, 1)
+        self.press(" ", event)
+        self.assertEqual(self.window.vertical_scroll, 5)
+        self.press(Keys.PageDown, event)
+        self.assertEqual(self.window.vertical_scroll, 9)
+        self.press(Keys.PageUp, event)
+        self.assertEqual(self.window.vertical_scroll, 5)
+        self.press(Keys.Up, event)
+        self.assertEqual(self.window.vertical_scroll, 4)
+
+    def test_scrolling_stops_at_the_actual_bottom(self) -> None:
+        self.window.render_info = SimpleNamespace(content_height=20, window_height=5)
+        self.window.vertical_scroll = 14
+        event = self.event()
+        self.press(Keys.Down, event)
+        self.press(" ", event)
+        self.assertEqual(self.window.vertical_scroll, 15)
+
+    def test_q_exits(self) -> None:
+        event = MagicMock()
+        self.press("q", event)
+        event.app.exit.assert_called_once_with()
+
+
 class ReplyPrinterPagerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.orig_err, self.orig_console = repl.err, repl.console
@@ -233,10 +288,23 @@ class ReplyPrinterPagerTests(unittest.TestCase):
              patch("rich.pager.SystemPager.show") as show:
             with repl.ReplyPrinter() as rp:
                 rp.on_delta(answer)
-        get_pager.assert_called_once_with(styles=True)
+        get_pager.assert_called_once_with(pager=None, styles=True)
         show.assert_called_once()
         self.assertIn("paragraph 3", show.call_args.args[0])
         self.assertIn("paragraph 3", self.stream.getvalue())
+
+    def test_windows_long_answer_uses_the_builtin_pager(self) -> None:
+        answer = "\n\n".join(f"paragraph {i}" for i in range(4))
+        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
+             patch("agent7.repl.sys.platform", "win32"), \
+             patch("agent7.repl.console.pager", wraps=repl.console.pager) as get_pager, \
+             patch("agent7.repl.PromptToolkitPager.show") as show:
+            with repl.ReplyPrinter() as rp:
+                rp.on_delta(answer)
+        pager = get_pager.call_args.kwargs["pager"]
+        self.assertIsInstance(pager, PromptToolkitPager)
+        get_pager.assert_called_once_with(pager=pager, styles=True)
+        self.assertIn("paragraph 3", show.call_args.args[0])
 
     def test_answer_fitting_exactly_one_screen_is_not_paged(self) -> None:
         answer = "\n\n".join(f"line {i}" for i in range(3))
@@ -251,7 +319,7 @@ class ReplyPrinterPagerTests(unittest.TestCase):
              patch("agent7.repl.console.pager") as get_pager:
             with repl.ReplyPrinter() as rp:
                 rp.on_delta(" ".join(["word"] * 160))
-        get_pager.assert_called_once_with(styles=True)
+        get_pager.assert_called_once_with(pager=None, styles=True)
 
     def test_non_interactive_output_does_not_open_a_pager(self) -> None:
         repl.console = Console(file=self.stream, width=80, force_terminal=False)

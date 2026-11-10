@@ -35,6 +35,7 @@ from rich.text import Text
 from .agent import Interrupted, run_agent, tool_summary
 from .commands import dispatch, known_names
 from .mascot import print_mascot
+from .pager import PromptToolkitPager
 from .providers import list_providers, login_hints
 from .session import (
     Session,
@@ -78,7 +79,10 @@ class ReplyPrinter:
             if console.is_terminal and sys.stdin.isatty():
                 lines = console.render_lines(answer, pad=False)
                 if len(lines) > console.height:
-                    with console.pager(styles=True):
+                    # pydoc falls back to more.com on Windows, which does not
+                    # provide working arrow/page navigation in PowerShell.
+                    pager = PromptToolkitPager() if sys.platform == "win32" else None
+                    with console.pager(pager=pager, styles=True):
                         console.print(answer)
             console.print(answer)
             console.print()
