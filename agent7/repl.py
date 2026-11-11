@@ -12,6 +12,7 @@ import re
 import signal
 import sys
 import threading
+import time
 from collections.abc import Callable, Iterator
 from itertools import islice
 from pathlib import Path
@@ -77,6 +78,7 @@ class ReplyPrinter:
         self._counting = False
         self._waiting = False
         self._tool_running = False
+        self._tool_started_at: float | None = None
 
     def __enter__(self) -> ReplyPrinter:
         return self
@@ -86,6 +88,7 @@ class ReplyPrinter:
         self._clear_counter()
         self._clear_waiting()
         self._clear_tool()
+        self._tool_started_at = None
         text = "".join(self.buf)
         self.buf.clear()
         self._chars = 0
@@ -253,6 +256,7 @@ class ReplyPrinter:
         self.buf.clear()
         self._chars = 0
         self._tool_running = True
+        self._tool_started_at = time.monotonic()
         err.print(
             f"  [dim]•[/dim] [bold]{name:<5}[/bold] [dim]{tool_summary(name, args)}[/dim]",
             end="", soft_wrap=True,
@@ -268,10 +272,14 @@ class ReplyPrinter:
         ok = not result.startswith("error:")
         mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
         meta = ""
+        if self._tool_started_at is not None:
+            elapsed = max(0, round(time.monotonic() - self._tool_started_at))
+            meta = f"  [dim]{elapsed}s[/dim]"
+            self._tool_started_at = None
         if name == "bash" and result.startswith("exit="):
             code = result.split("\n", 1)[0].removeprefix("exit=")
             color = "green" if code == "0" else "yellow"
-            meta = f"  [{color}]exit={code}[/{color}]"
+            meta += f"  [{color}]exit={code}[/{color}]"
         err.print(f"  {mark} [bold]{name:<5}[/bold] [dim]{tool_summary(name, args)}[/dim]{meta}")
 
     def on_preview(self, stats: str) -> None:

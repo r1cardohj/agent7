@@ -142,17 +142,26 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         self.assertEqual(latest.count("\033[E"), 4)
 
     def test_tool_shows_a_dot_until_it_finishes(self) -> None:
-        self.rp.on_tool_start(1, "bash", {"command": "pwd"})
-        running = self.stream.getvalue()
-        self.assertTrue(running.endswith("  • bash  pwd"))
-        self.assertNotIn("✓", running)
-        self.assertTrue(self.rp._tool_running)
+        with patch("agent7.repl.time.monotonic", side_effect=[10.0, 12.4]):
+            self.rp.on_tool_start(1, "bash", {"command": "pwd"})
+            running = self.stream.getvalue()
+            self.assertTrue(running.endswith("  • bash  pwd"))
+            self.assertNotIn("✓", running)
+            self.assertTrue(self.rp._tool_running)
 
-        self.rp.on_tool(1, "bash", {"command": "pwd"}, "done")
+            self.rp.on_tool(1, "bash", {"command": "pwd"}, "done")
         text = self.stream.getvalue()
-        self.assertIn("  • bash  pwd\r\033[K  ✓ bash  pwd\n", text)
-        self.assertTrue(text.endswith("  ✓ bash  pwd\n"))
+        self.assertIn("  • bash  pwd\r\033[K  ✓ bash  pwd  2s\n", text)
+        self.assertTrue(text.endswith("  ✓ bash  pwd  2s\n"))
         self.assertFalse(self.rp._tool_running)
+
+    def test_tool_elapsed_time_does_not_replace_bash_exit_status(self) -> None:
+        with patch("agent7.repl.time.monotonic", side_effect=[20.0, 23.0]):
+            self.rp.on_tool_start(1, "bash", {"command": "pwd"})
+            self.rp.on_tool(1, "bash", {"command": "pwd"}, "exit=0\nstdout:\n/tmp")
+        text = self.stream.getvalue()
+        self.assertIn("✓ bash  pwd  3s", text)
+        self.assertIn("exit=0", text)
 
     def test_preview_clears_the_running_dot_before_its_own_output(self) -> None:
         self.rp.on_tool_start(1, "write", {"path": "x.txt", "content": "new"})
@@ -166,6 +175,7 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         with self.rp:
             self.rp.on_tool_start(1, "bash", {"command": "sleep 10"})
         self.assertFalse(self.rp._tool_running)
+        self.assertIsNone(self.rp._tool_started_at)
         self.assertTrue(self.stream.getvalue().endswith("\r\033[K"))
 
     def test_closing_erases_the_viewport_before_tool_output(self) -> None:
