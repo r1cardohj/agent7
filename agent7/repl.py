@@ -20,7 +20,7 @@ from pathlib import Path
 from fzp.fuzzy import Match, fuzzy_filter, fuzzy_match
 from fzp.tui import Picker
 from prompt_toolkit import PromptSession
-from prompt_toolkit.application.current import get_app
+from prompt_toolkit.application.current import get_app, get_app_session
 from prompt_toolkit.completion import Completer, Completion, CompleteEvent
 from prompt_toolkit.document import Document
 from prompt_toolkit.enums import DEFAULT_BUFFER, EditingMode
@@ -36,6 +36,7 @@ from rich.text import Text
 from .agent import Interrupted, run_agent, tool_summary
 from .commands import dispatch, known_names
 from .hooks import emit_lifecycle
+from .interrupt import run_with_interrupt_keys
 from .mascot import print_mascot
 from .pager import PromptToolkitPager
 from .providers import list_providers, login_hints
@@ -616,7 +617,11 @@ async def run_turn(session: Session, task: str, *, on_saved: Callable[[], None] 
         signal.signal(signal.SIGINT, lambda *_: current.cancel())
     emit_lifecycle(session, "turn_started")
     try:
-        answer = await _run_agent_once(session, task)
+        work = _run_agent_once(session, task)
+        if sys.stdin is not None and sys.stdin.isatty():
+            answer = await run_with_interrupt_keys(work, input_obj=get_app_session().input)
+        else:
+            answer = await work
     except (Interrupted, asyncio.CancelledError, KeyboardInterrupt):
         emit_lifecycle(session, "turn_interrupted")
         raise

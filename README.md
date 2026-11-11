@@ -191,11 +191,11 @@ conversation.
 
 ### Interrupts
 
-Herdr sends Esc to a reporting agent unless its terminal template declares another stop key.
-To make `hc interrupt` send agent7's Ctrl-C, install [the supplied template](assets/herdr-agent7.md)
-as `agent7.md` in `~/.config/herdr-core/templates` (`%APPDATA%\herdr-core\templates` on Windows),
-then start the agent with `hc run agent7`. The template contains `stop: ctrl+c`.
-For an agent7 started directly without that template, use `hc keys <terminal> ctrl+c` instead.
+During a turn, both Esc and Ctrl-C interrupt agent7, so direct launches work with `hc interrupt`.
+Input typed while a task runs is preserved for the next prompt. To force Ctrl-C instead, install
+[the supplied template](assets/herdr-agent7.md) as `agent7.md` in
+`~/.config/herdr-core/templates` (`%APPDATA%\herdr-core\templates` on Windows), then start the
+agent with `hc run agent7`; it contains `stop: ctrl+c`.
 
 ### Windows and WSL
 
