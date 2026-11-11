@@ -7,6 +7,7 @@ import difflib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -336,6 +337,34 @@ def _head(f: Any) -> str:
     f.seek(0)
     return f.read(_BASH_HEAD_BYTES).decode("utf-8", "replace")
 
+def _process_group_options() -> dict[str, Any]:
+    if os.name == "posix":
+        return {"start_new_session": True}
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {}
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    if os.name == "posix":
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        return
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5, check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    if proc.poll() is None:
+        proc.kill()
+
+
 def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
@@ -343,16 +372,21 @@ def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
     env.setdefault("LC_ALL", "C.UTF-8")
     argv = [*SHELL.argv, command]
     limit = timeout or 60
-    # Output goes to temp files: subprocess.run keeps its timeout/kill semantics
-    # and we read back only the head instead of buffering everything in memory.
+    # Output goes to temp files instead of buffering everything in memory. The
+    # shell gets its own process group so a timeout kills its children as well.
     with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
         try:
-            proc = subprocess.run(
-                argv, cwd=cwd, stdout=out_f, stderr=err_f, timeout=limit, env=env,
+            proc = subprocess.Popen(
+                argv, cwd=cwd, stdout=out_f, stderr=err_f, env=env,
+                **_process_group_options(),
             )
         except FileNotFoundError:
             return f"error: shell not found: {SHELL.argv[0]}"
+        try:
+            proc.wait(timeout=limit)
         except subprocess.TimeoutExpired:
+            _kill_process_tree(proc)
+            proc.wait()
             return _truncate(
                 f"timeout after {limit}s\n{_head(out_f)}{_head(err_f)}", MAX_BASH_CHARS
             )

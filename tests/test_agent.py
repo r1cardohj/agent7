@@ -1,5 +1,9 @@
+import os
+import shlex
+import signal
 import sys
 import tempfile
+import time
 import tracemalloc
 import unittest
 from pathlib import Path
@@ -264,6 +268,50 @@ class ReadToolTests(unittest.TestCase):
         self.assertIn("of 200000", result)
         self.assertIn("continue with offset=201", result)
         self.assertLess(peak, 4_000_000)
+
+
+class BashTimeoutTests(unittest.TestCase):
+    @staticmethod
+    def _process_running(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        stat = Path(f"/proc/{pid}/stat")
+        if stat.exists():
+            try:
+                # A killed orphan can briefly remain as a zombie before init
+                # reaps it; a zombie is no longer running the command.
+                return stat.read_text().rpartition(") ")[2].split(maxsplit=1)[0] != "Z"
+            except FileNotFoundError:
+                return False
+        return True
+
+    @unittest.skipUnless(os.name == "posix", "POSIX process-group integration test")
+    def test_timeout_kills_shell_children(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pidfile = Path(tmp) / "child.pid"
+            command = (
+                "sleep 30 & child=$!; "
+                f"printf '%s\\n' \"$child\" > {shlex.quote(str(pidfile))}; "
+                "wait \"$child\""
+            )
+            pid = None
+            try:
+                started = time.monotonic()
+                result = dispatch_tool(
+                    Path(tmp), "bash", {"command": command, "timeout": 1},
+                )
+                self.assertLess(time.monotonic() - started, 5)
+                self.assertIn("timeout after 1s", result)
+                pid = int(pidfile.read_text().strip())
+                deadline = time.monotonic() + 2
+                while self._process_running(pid) and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertFalse(self._process_running(pid), "timed-out child is still running")
+            finally:
+                if pid is not None and self._process_running(pid):
+                    os.kill(pid, signal.SIGKILL)
 
 
 class OutputBudgetTests(unittest.TestCase):
