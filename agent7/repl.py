@@ -66,6 +66,7 @@ _THINK_HEADER = "  thinking"
 _THINK_PREFIX = "  │ "
 _THINK_LINES = 6
 _THINK_ON, _THINK_OFF = "\033[36;2m", "\033[0m"
+_TOOL_TICK_INTERVAL = 1.0
 
 class ReplyPrinter:
     def __init__(self) -> None:
@@ -79,6 +80,8 @@ class ReplyPrinter:
         self._waiting = False
         self._tool_running = False
         self._tool_started_at: float | None = None
+        self._tool_serial = 0
+        self._tool_lock = threading.RLock()
 
     def __enter__(self) -> ReplyPrinter:
         return self
@@ -248,6 +251,34 @@ class ReplyPrinter:
         self._chars += len(text)
         self._show_counter()
 
+    def _draw_running_tool(
+        self, name: str, args: dict, elapsed: int, serial: int,
+    ) -> None:
+        with self._tool_lock:
+            if not self._tool_running or serial != self._tool_serial:
+                return
+            if err.is_terminal:
+                self._clear_status_line()
+            err.print(
+                f"  [dim]•[/dim] [bold]{name:<5}[/bold] "
+                f"[dim]{tool_summary(name, args)}  {elapsed}s[/dim]",
+                end="", soft_wrap=True,
+            )
+
+    async def _tick_tool(self, name: str, args: dict, serial: int) -> None:
+        shown = 0
+        while self._tool_running and serial == self._tool_serial:
+            await asyncio.sleep(_TOOL_TICK_INTERVAL)
+            if not self._tool_running or serial != self._tool_serial:
+                return
+            started = self._tool_started_at
+            if started is None:
+                return
+            elapsed = max(0, round(time.monotonic() - started))
+            if elapsed != shown:
+                shown = elapsed
+                self._draw_running_tool(name, args, elapsed, serial)
+
     def on_tool_start(self, turn: int, name: str, args: dict) -> None:
         self._clear_waiting()
         self._close_thinking()
@@ -256,11 +287,17 @@ class ReplyPrinter:
         self.buf.clear()
         self._chars = 0
         self._tool_running = True
+        self._tool_serial += 1
+        serial = self._tool_serial
         self._tool_started_at = time.monotonic()
-        err.print(
-            f"  [dim]•[/dim] [bold]{name:<5}[/bold] [dim]{tool_summary(name, args)}[/dim]",
-            end="", soft_wrap=True,
-        )
+        self._draw_running_tool(name, args, 0, serial)
+        if err.is_terminal:
+            try:
+                # The serial check stops stale timers without cross-thread
+                # Task.cancel(): on_preview runs in the tool worker thread.
+                asyncio.get_running_loop().create_task(self._tick_tool(name, args, serial))
+            except RuntimeError:
+                pass  # Synchronous embedding still gets the initial 0s line.
 
     def on_tool(self, turn: int, name: str, args: dict, result: str) -> None:
         self._clear_waiting()
@@ -283,6 +320,12 @@ class ReplyPrinter:
         err.print(f"  {mark} [bold]{name:<5}[/bold] [dim]{tool_summary(name, args)}[/dim]{meta}")
 
     def on_preview(self, stats: str) -> None:
+        # dispatch_tool invokes this from a worker thread; do not let a timer
+        # repaint the running line in the middle of the preview.
+        with self._tool_lock:
+            self._print_preview(stats)
+
+    def _print_preview(self, stats: str) -> None:
         self._clear_waiting()
         self._clear_tool()
         self._close_thinking()

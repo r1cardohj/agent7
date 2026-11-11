@@ -1,5 +1,6 @@
 """Tests for ReplyPrinter.on_preview (write +/− stats line) and thinking output."""
 
+import asyncio
 import io
 import unittest
 from types import SimpleNamespace
@@ -145,14 +146,36 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         with patch("agent7.repl.time.monotonic", side_effect=[10.0, 12.4]):
             self.rp.on_tool_start(1, "bash", {"command": "pwd"})
             running = self.stream.getvalue()
-            self.assertTrue(running.endswith("  • bash  pwd"))
+            self.assertTrue(running.endswith("  • bash  pwd  0s"))
             self.assertNotIn("✓", running)
             self.assertTrue(self.rp._tool_running)
 
             self.rp.on_tool(1, "bash", {"command": "pwd"}, "done")
         text = self.stream.getvalue()
-        self.assertIn("  • bash  pwd\r\033[K  ✓ bash  pwd  2s\n", text)
+        self.assertIn("  • bash  pwd  0s\r\033[K  ✓ bash  pwd  2s\n", text)
         self.assertTrue(text.endswith("  ✓ bash  pwd  2s\n"))
+        self.assertFalse(self.rp._tool_running)
+
+    def test_tool_elapsed_seconds_tick_while_it_is_running(self) -> None:
+        async def check() -> None:
+            now = [10.0]
+            with patch("agent7.repl.time", SimpleNamespace(monotonic=lambda: now[0])), \
+                 patch("agent7.repl._TOOL_TICK_INTERVAL", 0.005):
+                self.rp.on_tool_start(1, "bash", {"command": "pwd"})
+                self.assertTrue(self.stream.getvalue().endswith("• bash  pwd  0s"))
+
+                now[0] = 11.0
+                await asyncio.sleep(0.03)
+                self.assertIn("• bash  pwd  1s", self.stream.getvalue())
+
+                now[0] = 12.0
+                await asyncio.sleep(0.03)
+                self.assertIn("• bash  pwd  2s", self.stream.getvalue())
+                self.assertNotIn("✓", self.stream.getvalue())
+                self.rp.on_tool(1, "bash", {"command": "pwd"}, "done")
+
+        asyncio.run(check())
+        self.assertTrue(self.stream.getvalue().endswith("✓ bash  pwd  2s\n"))
         self.assertFalse(self.rp._tool_running)
 
     def test_tool_elapsed_time_does_not_replace_bash_exit_status(self) -> None:
@@ -168,7 +191,7 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         self.rp.on_preview("write  x.txt  +1 -0")
         self.rp.on_tool(1, "write", {"path": "x.txt", "content": "new"}, "wrote x.txt")
         text = self.stream.getvalue()
-        self.assertIn("• write x.txt  (3 chars)\r\033[K# write", text)
+        self.assertIn("• write x.txt  (3 chars)  0s\r\033[K# write", text)
         self.assertIn("✓ write x.txt", text.rsplit("# write", 1)[-1])
 
     def test_interruption_clears_the_running_dot(self) -> None:
