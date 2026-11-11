@@ -17,7 +17,7 @@ from .providers import (
     login_hints,
     resolve_all,
 )
-from .routing import AUTO_REF, auto_configured, build_auto_route
+from .routing import AUTO_REF, build_auto_route
 from .session import Session, fmt_limit, format_usage, resolve_context_limit
 
 @dataclass
@@ -98,13 +98,15 @@ def resolve_model_ref(session: Session, name: str) -> tuple[str, str, str] | str
 async def switch_model(session: Session, name: str) -> CommandResult:
     if name.strip().lower() == AUTO_REF:
         try:
-            route = build_auto_route(session.credentials, context_limit=resolve_context_limit)
+            route = build_auto_route(
+                session.credentials, models=session.models_cache,
+                context_limit=resolve_context_limit,
+            )
         except ValueError as e:
             return CommandResult(message=str(e))
         old = session.model_ref or session.model
         await session.apply_route(route)
-        skipped = f"\nskipped (no credentials): {', '.join(route.skipped)}" if route.skipped else ""
-        return CommandResult(message=f"model: {old} → {session.display_model}{skipped}")
+        return CommandResult(message=f"model: {old} → {session.display_model}")
     resolved = resolve_model_ref(session, name)
     if isinstance(resolved, str):
         return CommandResult(message=resolved)
@@ -186,7 +188,7 @@ async def cmd_model(session: Session, args: list[str]) -> CommandResult:
     refresh = bool(args and args[0].lower() in ("refresh", "-r"))
     try:
         available = list(await fetch_models(session, refresh=refresh))
-        if auto_configured():
+        if session.credentials:
             available.append(AUTO_REF)
     except Exception as e:  # noqa: BLE001
         return CommandResult(message=f"failed to fetch models: {e}")
@@ -202,12 +204,22 @@ async def cmd_model(session: Session, args: list[str]) -> CommandResult:
 @command("status", help="show session status")
 def cmd_status(session: Session, args: list[str]) -> CommandResult:
     n = max(0, len(session.messages) - 1)
+    route_info = ""
+    if session.route and session.route.selection:
+        selection = session.route.selection
+        scores = ", ".join(
+            f"{ref}={score:.0f}"
+            for ref, score in sorted(selection.scores.items(), key=lambda item: -item[1])
+        )
+        route_info = f"\nscorer={selection.scorer_ref}\nscores={scores or 'unavailable'}"
+        if selection.error:
+            route_info += f"  error={selection.error}"
     return CommandResult(message=(
         f"model={session.display_model}\n"
         f"provider={session.provider_id}  source={session.cred_source}\n"
         f"providers=[{', '.join(session.credentials) or '?'}]\n"
         f"cwd={session.cwd}\nmessages={n}  max_turns={session.max_turns}\n"
-        f"{format_usage(session)}\nbase_url={session.client.base_url}"
+        f"{format_usage(session)}\nbase_url={session.client.base_url}{route_info}"
     ))
 
 @command("login", help="paste API key  (/login deepseek | /login grok | /login kimi)")

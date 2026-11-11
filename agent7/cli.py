@@ -29,7 +29,7 @@ from .providers import (
     resolve_default,
 )
 from .repl import err, pick_model, print_history, repl_loop, run_turn
-from .routing import AUTO_REF, auto_configured
+from .routing import AUTO_REF
 from .session import Session
 from .store import resume, resume_messages, save, timestamp
 
@@ -138,13 +138,13 @@ def can_pick_models() -> bool:
     )
 
 def model_menu(session: Session, ids: list[str]) -> list[str]:
-    """The refs a bare `-m` offers: models, provider defaults, and configured auto."""
+    """The refs a bare `-m` offers: models, provider defaults, and built-in auto."""
     refs = list(ids) if ids else [
         f"{p.id}/{p.default_model}"
         for p in list_providers()
         if p.default_model and p.id in session.credentials
     ]
-    if auto_configured():
+    if session.credentials:
         refs.append(AUTO_REF)
     return refs
 

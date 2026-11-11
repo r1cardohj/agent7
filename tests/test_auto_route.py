@@ -15,10 +15,10 @@ from agent7.commands import switch_model
 from agent7.providers import Credential
 from agent7.responses import RAW_ITEMS_KEY, raw_state
 from agent7.routing import (
+    MODEL_CAPABILITIES,
     FailoverRoute,
     RouteTarget,
     build_auto_route,
-    parse_auto_refs,
 )
 from agent7.session import Session
 from agent7.store import load, save
@@ -36,36 +36,59 @@ def target(provider: str, model: str, script, *, limit: int | None = None) -> Ro
     return RouteTarget(provider, model, credential, FakeClient(script), limit)
 
 
-class AutoRouteConfigTests(unittest.TestCase):
-    def test_refs_are_explicit_and_deduplicated(self) -> None:
-        self.assertEqual(
-            parse_auto_refs("deepseek/chat, kimi/k2,deepseek/chat"),
-            [("deepseek", "chat"), ("kimi", "k2")],
-        )
-        for raw in ("", "auto", "deepseek/", "auto/foo"):
-            with self.subTest(raw=raw), self.assertRaises(ValueError):
-                parse_auto_refs(raw)
+class DefaultAutoRouteTests(unittest.TestCase):
+    def test_capability_table_is_the_confirmed_candidate_set(self) -> None:
+        self.assertEqual({cap.ref for cap in MODEL_CAPABILITIES}, {
+            "deepseek/deepseek-flash",
+            "kimi/kimi-for-coding",
+            "xai/grok-build-0.1",
+            "xai/grok-4.7",
+            "kimi/k3.1-pro",
+        })
+        for ref in ("deepseek/deepseek-flash", "kimi/kimi-for-coding", "xai/grok-build-0.1"):
+            cap = next(cap for cap in MODEL_CAPABILITIES if cap.ref == ref)
+            self.assertEqual(cap.strengths, frozenset({"fast", "coding"}))
+        for ref in ("xai/grok-4.7", "kimi/k3.1-pro"):
+            cap = next(cap for cap in MODEL_CAPABILITIES if cap.ref == ref)
+            self.assertEqual(cap.strengths, frozenset({"strong"}))
 
-    def test_logged_out_targets_are_skipped(self) -> None:
-        credential = Credential("secret", "https://deepseek.test", "test")
-        client = FakeClient([text_turn("ok")])
-        providers = {
-            "deepseek": SimpleNamespace(
-                id="deepseek", resolve=lambda: credential, make_client=lambda cred: client,
-            ),
-            "kimi": SimpleNamespace(id="kimi", resolve=lambda: None),
+    def test_auto_uses_logged_in_reviewed_models_without_configuration(self) -> None:
+        credentials = {
+            pid: Credential("secret", f"https://{pid}.test", "test")
+            for pid in ("deepseek", "kimi")
         }
-        with patch("agent7.routing.get_provider", side_effect=providers.get):
-            route = build_auto_route({}, raw="deepseek/chat,kimi/k2")
+        providers = [
+            SimpleNamespace(
+                id=pid, resolve=lambda pid=pid: credentials.get(pid),
+                make_client=lambda cred: FakeClient([text_turn("ok")]),
+            )
+            for pid in ("deepseek", "xai", "kimi")
+        ]
+        with patch("agent7.routing.list_providers", return_value=providers):
+            route = build_auto_route(credentials)
 
-        self.assertEqual([t.ref for t in route.targets], ["deepseek/chat"])
-        self.assertEqual(route.skipped, ("kimi/k2",))
+        self.assertTrue(route.intent_routing)
+        self.assertEqual([target.ref for target in route.targets], [
+            "deepseek/deepseek-flash", "kimi/kimi-for-coding", "kimi/k3.1-pro",
+        ])
 
-    def test_no_logged_in_target_is_an_error(self) -> None:
-        provider = SimpleNamespace(id="deepseek", resolve=lambda: None)
-        with patch("agent7.routing.get_provider", return_value=provider):
-            with self.assertRaisesRegex(ValueError, "no usable targets"):
-                build_auto_route({}, raw="deepseek/chat")
+    def test_current_model_list_filters_candidates(self) -> None:
+        credential = Credential("secret", "https://deepseek.test", "test")
+        provider = SimpleNamespace(
+            id="deepseek", resolve=lambda: credential,
+            make_client=lambda cred: FakeClient([text_turn("ok")]),
+        )
+        with patch("agent7.routing.list_providers", return_value=[provider]):
+            route = build_auto_route(
+                {"deepseek": credential},
+                models=["deepseek/deepseek-chat", "deepseek/deepseek-flash"],
+            )
+        self.assertEqual([target.ref for target in route.targets], ["deepseek/deepseek-flash"])
+
+    def test_no_supported_logged_in_model_is_an_error(self) -> None:
+        with patch("agent7.routing.list_providers", return_value=[]):
+            with self.assertRaisesRegex(ValueError, "no supported models"):
+                build_auto_route({})
 
 
 class AutoFailoverTests(unittest.TestCase):

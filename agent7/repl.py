@@ -40,7 +40,7 @@ from .interrupt import run_with_interrupt_keys
 from .mascot import print_mascot
 from .pager import PromptToolkitPager
 from .providers import list_providers, login_hints
-from .routing import AUTO_REF, auto_configured
+from .routing import AUTO_REF
 from .session import (
     Session,
     context_pressure,
@@ -182,6 +182,15 @@ class ReplyPrinter:
         self._clear_waiting()
         reason = f"{type(error).__name__}: {error}".splitlines()[0]
         err.print(f"[yellow]# route: {old} → {new} ({reason[:180]})[/yellow]")
+
+    def on_auto_selected(self, target: str, selection) -> None:
+        self._clear_waiting()
+        detail = selection.intent
+        if (score := selection.scores.get(target)) is not None:
+            detail += f" · {score:.0f}"
+        if selection.error:
+            detail += " · scoring unavailable"
+        err.print(f"[dim]# auto: {target} · {detail}[/dim]")
 
     def _show_counter(self) -> None:
         self._clear_waiting()
@@ -561,7 +570,7 @@ class ReplCompleter(Completer):
             return
         if cmd == "model":
             refs = list(self.session.models_cache or [])
-            if auto_configured():
+            if getattr(self.session, "credentials", None):
                 refs.append(AUTO_REF)
             for ref, match in fuzzy_filter(prefix, refs):
                 yield Completion(ref, start_position=-len(prefix), display=highlight(ref, match.positions))
@@ -654,11 +663,19 @@ async def run_turn(session: Session, task: str, *, on_saved: Callable[[], None] 
 async def _run_agent_once(session: Session, task: str) -> str:
     finish: list[str] = []
     with ReplyPrinter() as rp:
+        route_shown = False
+
         def on_route(target, previous, error) -> None:
+            nonlocal route_shown
             session.use_route_target(target)
             if previous is not None:
                 rp.on_failover(previous.ref, target.ref, error)
+            elif not route_shown and session.route and session.route.selection:
+                rp.on_auto_selected(target.ref, session.route.selection)
+                route_shown = True
 
+        if getattr(session, "route", None):
+            rp.on_model_start(0)  # also cover the non-streaming scoring request
         answer = await run_agent(
             task, cwd=session.cwd, client=session.client, model=session.model,
             max_turns=session.max_turns, messages=session.messages,

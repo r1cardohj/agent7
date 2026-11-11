@@ -137,7 +137,13 @@ class Session:
     def display_model(self) -> str:
         logical = self.model_ref or self.model
         if self.route is not None and self.active_model_ref:
-            return f"{logical} → {self.active_model_ref}"
+            shown = f"{logical} → {self.active_model_ref}"
+            selection = self.route.selection
+            if selection is not None:
+                shown += f" · {selection.intent}"
+                if (score := selection.scores.get(self.active_model_ref)) is not None:
+                    shown += f" · {score:.0f}"
+            return shown
         return logical
 
     def update_usage(self, usage: dict[str, int]) -> None:

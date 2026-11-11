@@ -683,7 +683,6 @@ async def _stream_failover(
     on_delta, on_thinking, on_answer_to_thinking, on_finish, on_route,
 ) -> tuple[ResponseTurn, RouteTarget]:
     """Replay a silent failed request on the next target, never a partial stream."""
-    await _emit(on_route, route.current, None, None)
     while True:
         target = route.current
         try:
@@ -726,6 +725,9 @@ async def run_agent(
     last_prompt = prompt_tokens
     turns = retries = 0
     try:
+        if route is not None:
+            await route.start(task, messages, estimate_tokens(messages))
+            await _emit(on_route, route.current, None, None)
         while turns < max_turns:
             # Providers that never report usage would otherwise never compact.
             prompt = last_prompt if last_prompt is not None else estimate_tokens(messages)
