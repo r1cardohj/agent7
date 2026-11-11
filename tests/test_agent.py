@@ -1,4 +1,5 @@
 import os
+import select
 import shlex
 import signal
 import sys
@@ -273,18 +274,41 @@ class ReadToolTests(unittest.TestCase):
 class BashTimeoutTests(unittest.TestCase):
     @staticmethod
     def _process_running(pid: int) -> bool:
+        if sys.platform.startswith("linux"):
+            # One procfs read avoids the kill(0) → exists() → read() race: if
+            # the process disappears anywhere during the read, it is not running.
+            try:
+                stat = Path(f"/proc/{pid}/stat").read_text()
+            except (FileNotFoundError, ProcessLookupError):
+                return False
+            # Killed orphans can remain zombies until their new parent reaps
+            # them. Zombie/dead entries are no longer running the command.
+            state = stat.rpartition(") ")[2].split(maxsplit=1)[0]
+            return state not in {"Z", "X", "x"}
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
             return False
-        stat = Path(f"/proc/{pid}/stat")
-        if stat.exists():
+        return True
+
+    def _wait_for_exit(self, pid: int, timeout: float) -> bool:
+        if sys.platform.startswith("linux") and hasattr(os, "pidfd_open"):
+            # A pidfd becomes readable on exit, including while the orphan is
+            # still a zombie. Unlike a final procfs poll, there is no exit race.
             try:
-                # A killed orphan can briefly remain as a zombie before init
-                # reaps it; a zombie is no longer running the command.
-                return stat.read_text().rpartition(") ")[2].split(maxsplit=1)[0] != "Z"
-            except FileNotFoundError:
+                fd = os.pidfd_open(pid)
+            except ProcessLookupError:
+                return True
+            try:
+                ready, _, _ = select.select([fd], [], [], timeout)
+                return bool(ready)
+            finally:
+                os.close(fd)
+        deadline = time.monotonic() + timeout
+        while self._process_running(pid):
+            if time.monotonic() >= deadline:
                 return False
+            time.sleep(0.02)
         return True
 
     @unittest.skipUnless(os.name == "posix", "POSIX process-group integration test")
@@ -305,13 +329,13 @@ class BashTimeoutTests(unittest.TestCase):
                 self.assertLess(time.monotonic() - started, 5)
                 self.assertIn("timeout after 1s", result)
                 pid = int(pidfile.read_text().strip())
-                deadline = time.monotonic() + 2
-                while self._process_running(pid) and time.monotonic() < deadline:
-                    time.sleep(0.02)
-                self.assertFalse(self._process_running(pid), "timed-out child is still running")
+                self.assertTrue(self._wait_for_exit(pid, 2), "timed-out child is still running")
             finally:
                 if pid is not None and self._process_running(pid):
-                    os.kill(pid, signal.SIGKILL)
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
 
 class OutputBudgetTests(unittest.TestCase):
