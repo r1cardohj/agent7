@@ -19,6 +19,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from .routing import FailoverRoute, RouteTarget
 from .responses import (
     RAW_ITEMS_KEY,
     ResponseTurn,
@@ -630,11 +631,9 @@ async def _stream_once(
         finish_reason=finish,
     )
 
-async def _stream_completion(
-    client: AsyncOpenAI, *, model: str, messages: list[dict[str, Any]],
-    on_delta, on_thinking, on_answer_to_thinking, on_finish=None,
-    provider_id: str | None = None,
-) -> ResponseTurn:
+def _completion_kwargs(
+    model: str, messages: list[dict[str, Any]], provider_id: str | None,
+) -> dict[str, Any]:
     inputs, instructions = request_input(messages, provider_id)
     kwargs: dict[str, Any] = {
         "model": model, "input": inputs, "tools": response_tools(TOOLS), "stream": True,
@@ -646,6 +645,13 @@ async def _stream_completion(
         # history has no reasoning items. Key off the provider, not the model
         # name. Degrade only until fresh raw output is available again.
         kwargs["reasoning"] = {"effort": "none"}
+    return kwargs
+
+async def _stream_with_retries(
+    client: AsyncOpenAI, kwargs: dict[str, Any], *, on_delta, on_thinking,
+    on_answer_to_thinking, on_finish,
+) -> ResponseTurn:
+    """Retry one target, preserving _Retryable's no-output replay guarantee."""
     for attempt in range(len(RETRY_SLEEPS) + 1):
         try:
             return await _stream_once(
@@ -654,9 +660,48 @@ async def _stream_completion(
             )
         except _Retryable as e:
             if attempt == len(RETRY_SLEEPS) or not _retryable(e.cause):
-                raise e.cause from None
+                raise
             await asyncio.sleep(RETRY_SLEEPS[attempt])
     raise AssertionError("unreachable")  # pragma: no cover
+
+async def _stream_completion(
+    client: AsyncOpenAI, *, model: str, messages: list[dict[str, Any]],
+    on_delta, on_thinking, on_answer_to_thinking, on_finish=None,
+    provider_id: str | None = None,
+) -> ResponseTurn:
+    try:
+        return await _stream_with_retries(
+            client, _completion_kwargs(model, messages, provider_id),
+            on_delta=on_delta, on_thinking=on_thinking,
+            on_answer_to_thinking=on_answer_to_thinking, on_finish=on_finish,
+        )
+    except _Retryable as e:
+        raise e.cause from None
+
+async def _stream_failover(
+    route: FailoverRoute, *, messages: list[dict[str, Any]],
+    on_delta, on_thinking, on_answer_to_thinking, on_finish, on_route,
+) -> tuple[ResponseTurn, RouteTarget]:
+    """Replay a silent failed request on the next target, never a partial stream."""
+    await _emit(on_route, route.current, None, None)
+    while True:
+        target = route.current
+        try:
+            turn = await _stream_with_retries(
+                target.client, _completion_kwargs(target.model, messages, target.provider_id),
+                on_delta=on_delta, on_thinking=on_thinking,
+                on_answer_to_thinking=on_answer_to_thinking, on_finish=on_finish,
+            )
+        except _Retryable as e:
+            # _stream_once only wraps failures before any text/reasoning was
+            # emitted. Failover therefore cannot duplicate user-visible output
+            # or a tool call, and run_agent has not executed any tools yet.
+            next_target = route.advance() if _retryable(e.cause) else None
+            if next_target is None:
+                raise e.cause from None
+            await _emit(on_route, next_target, target, e.cause)
+        else:
+            return turn, target
 
 def _answer_pending(
     messages: list[dict[str, Any]], calls: list[dict[str, Any]],
@@ -674,7 +719,7 @@ async def run_agent(
     messages: list[dict[str, Any]], on_delta=None, on_thinking=None, on_answer_to_thinking=None,
     on_tool=None, on_tool_start=None, on_preview=None, on_usage=None, context_limit: int | None = None,
     prompt_tokens: int | None = None, on_compact=None, on_finish=None, on_model_start=None,
-    provider_id: str | None = None,
+    provider_id: str | None = None, route: FailoverRoute | None = None, on_route=None,
 ) -> str:
     cwd = cwd.resolve()
     messages.append({"role": "user", "content": task})
@@ -684,7 +729,8 @@ async def run_agent(
         while turns < max_turns:
             # Providers that never report usage would otherwise never compact.
             prompt = last_prompt if last_prompt is not None else estimate_tokens(messages)
-            if should_compact(prompt, context_limit):
+            active_limit = route.current.context_limit if route else context_limit
+            if should_compact(prompt, active_limit):
                 new_msgs, n = compact_messages(messages)
                 if n:
                     discard_raw_output(new_msgs)
@@ -694,11 +740,20 @@ async def run_agent(
             # The gap after a tool result is a new model wait, not a running tool.
             await _emit(on_model_start, turns + 1)
             try:
-                turn = await _stream_completion(
-                    client, model=model, messages=messages, on_delta=on_delta,
-                    on_thinking=on_thinking, on_answer_to_thinking=on_answer_to_thinking,
-                    on_finish=on_finish, provider_id=provider_id,
-                )
+                target: RouteTarget | None = None
+                if route is not None:
+                    turn, target = await _stream_failover(
+                        route, messages=messages, on_delta=on_delta,
+                        on_thinking=on_thinking, on_answer_to_thinking=on_answer_to_thinking,
+                        on_finish=on_finish, on_route=on_route,
+                    )
+                else:
+                    turn = await _stream_completion(
+                        client, model=model, messages=messages, on_delta=on_delta,
+                        on_thinking=on_thinking, on_answer_to_thinking=on_answer_to_thinking,
+                        on_finish=on_finish, provider_id=provider_id,
+                    )
+                answered_by = target.provider_id if target else provider_id
                 content = turn.text
                 tool_calls = [public_call(call) for call in turn.calls]
                 usage = turn.usage
@@ -730,7 +785,7 @@ async def run_agent(
                 last_prompt = usage.get("prompt_tokens", last_prompt)
             assistant: dict[str, Any] = {
                 "role": "assistant", "content": content,
-                RAW_ITEMS_KEY: raw_state(provider_id, turn.output),
+                RAW_ITEMS_KEY: raw_state(answered_by, turn.output),
             }
             if tool_calls:
                 assistant["tool_calls"] = tool_calls

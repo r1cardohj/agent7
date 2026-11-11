@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from contextlib import suppress
@@ -14,6 +15,15 @@ from openai import AsyncOpenAI
 from .agent import DEFAULT_MAX_TURNS
 from .hooks import LifecycleHooks
 from .providers import Credential, Provider, get_provider
+from .routing import AUTO_REF, FailoverRoute, RouteTarget
+
+async def _close_client(client: Any) -> None:
+    if client is None:
+        return
+    with suppress(Exception):
+        result = client.close()
+        if asyncio.iscoroutine(result):
+            await result
 
 def resolve_context_limit(model: str) -> int | None:
     raw = os.environ.get("AGENT7_CONTEXT_LIMIT", "").strip()
@@ -113,12 +123,22 @@ class Session:
     cred_source: str | None = None
     credential: Credential | None = None
     credentials: dict[str, Credential] = field(default_factory=dict)
+    route: FailoverRoute | None = None
+    active_model_ref: str | None = None
     hooks: LifecycleHooks = field(default_factory=LifecycleHooks, repr=False)
 
     def set_model(self, model: str, *, ref: str | None = None) -> None:
         self.model = model
         self.model_ref = ref or (f"{self.provider_id}/{model}" if self.provider_id else model)
+        self.active_model_ref = None
         self.context_limit = resolve_context_limit(model)
+
+    @property
+    def display_model(self) -> str:
+        logical = self.model_ref or self.model
+        if self.route is not None and self.active_model_ref:
+            return f"{logical} → {self.active_model_ref}"
+        return logical
 
     def update_usage(self, usage: dict[str, int]) -> None:
         self.prompt_tokens = usage.get("prompt_tokens")
@@ -134,8 +154,38 @@ class Session:
             if p is None:
                 raise ValueError(f"unknown provider {provider!r}")
             provider = p
-        old, self.client = self.client, provider.make_client(cred)
+        old, old_route = self.client, self.route
+        self.route = None
+        self.client = provider.make_client(cred)
         self.provider_id, self.cred_source, self.credential = provider.id, cred.source, cred
         self.credentials[provider.id] = cred
-        with suppress(Exception):
-            await old.close()
+        if old_route is not None:
+            await old_route.close()
+        else:
+            await _close_client(old)
+
+    def use_route_target(self, target: RouteTarget) -> None:
+        """Point status and compaction at the target that actually answered."""
+        self.client = target.client
+        self.provider_id = target.provider_id
+        self.cred_source = target.credential.source
+        self.credential = target.credential
+        self.credentials[target.provider_id] = target.credential
+        self.active_model_ref = target.ref
+        self.context_limit = target.context_limit
+
+    async def apply_route(self, route: FailoverRoute) -> None:
+        old, old_route = self.client, self.route
+        self.route = route
+        self.model = self.model_ref = AUTO_REF
+        self.use_route_target(route.current)
+        if old_route is not None:
+            await old_route.close()
+        else:
+            await _close_client(old)
+
+    async def close(self) -> None:
+        if self.route is not None:
+            await self.route.close()
+        else:
+            await _close_client(self.client)

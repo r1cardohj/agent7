@@ -35,6 +35,7 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 - **Markdown rendering** — final replies rendered as Rich Markdown in the terminal, thanks rich.
 - **Paged final replies** — interactive answers that exceed one screen open in your system pager (usually `less`), or a built-in pager on Windows; shorter answers print directly. The built-in pager shows which lines are on screen and accepts the arrow keys, PageUp/PageDown, Space, Home/End, the mouse wheel, and `q` (or Esc) to continue. The rendered reply stays in the terminal after you quit. Redirected output is never paged.
 - **Provider login** — paste an API key for DeepSeek, Grok, or Kimi (`/login` or env); switch models in-session
+- **Auto failover** — an ordered `auto` route retries then moves silent failures to the next configured provider/model
 
 
 ## Install
@@ -54,6 +55,7 @@ export DEEPSEEK_API_KEY=sk-...   # or /login deepseek
 export XAI_API_KEY=xai-...       # Grok, from console.x.ai  (or /login grok)
 export KIMI_API_KEY=sk-...       # Kimi Code, from the Kimi Code Console (or /login kimi)
 # export AGENT7_MODEL=grok-4
+# export AGENT7_AUTO_MODELS=deepseek/deepseek-chat,kimi/kimi-for-coding,xai/grok-4
 ```
 
 You can also log in from inside the REPL:
@@ -110,6 +112,22 @@ model. A `-m` that names nothing usable stops the run instead of quietly picking
 a run that never starts (cancelled menu, bad `-m`) leaves the workspace snapshot untouched. Because
 `-m` takes the following word as its value, a bare `-m` before a task needs a separator:
 `agent7 -m -- "fix it"` (or put the task first: `agent7 "fix it" -m`).
+
+Set `AGENT7_AUTO_MODELS` to a comma-separated list of fully qualified refs to enable ordered
+failover, then choose it with `agent7 -m auto` or `/model auto`:
+
+```bash
+export AGENT7_AUTO_MODELS=deepseek/deepseek-chat,kimi/kimi-for-coding,xai/grok-4
+agent7 -m auto "fix the failing tests"
+```
+
+Targets without credentials are skipped. Each target keeps the normal transient-error retry
+budget; only a failure before any text or reasoning was emitted can move to the next target.
+The selected target stays sticky through tool calls and later tasks until another failover.
+The snapshot keeps the logical choice `auto`, while the status bar shows the concrete target
+as `auto → provider/model`. Invalid or unavailable auto configuration stops an explicit run
+instead of silently sending `auto` as an upstream model name. This first routing layer does
+not yet perform intent classification or quota-aware selection.
 
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
 Status lives in a bar docked to the bottom row of the terminal while you type:
