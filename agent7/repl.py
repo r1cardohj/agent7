@@ -45,6 +45,22 @@ from .session import (
 )
 
 console, err = Console(stderr=False), Console(stderr=True)
+
+
+def _discard_paged_capture() -> None:
+    """Close a capture level a failed pager left open.
+
+    `PagerContext.__exit__` returns before `_exit_buffer()` when the pager
+    raises, so the console would stay in "capture" mode and silently swallow
+    every later reply. Rich offers no public way back out.
+    """
+    while getattr(console, "_buffer_index", 0) > 0:
+        console._exit_buffer()
+    buffer = getattr(console, "_buffer", None)
+    if buffer is not None:
+        buffer.clear()
+
+
 _THINK_HEADER = "  thinking"
 _THINK_PREFIX = "  │ "
 _THINK_LINES = 6
@@ -82,8 +98,13 @@ class ReplyPrinter:
                     # pydoc falls back to more.com on Windows, which does not
                     # provide working arrow/page navigation in PowerShell.
                     pager = PromptToolkitPager() if sys.platform == "win32" else None
-                    with console.pager(pager=pager, styles=True):
-                        console.print(answer)
+                    try:
+                        with console.pager(pager=pager, styles=True):
+                            console.print(answer)
+                    except Exception:
+                        # Never let a broken pager cost the user the answer;
+                        # the print below is the fallback.
+                        _discard_paged_capture()
             console.print(answer)
             console.print()
 

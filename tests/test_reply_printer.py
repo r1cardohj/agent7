@@ -10,7 +10,7 @@ from prompt_toolkit.keys import Keys
 from rich.console import Console
 
 import agent7.repl as repl
-from agent7.pager import PromptToolkitPager
+from agent7.pager import PromptToolkitPager, _status
 
 
 class ReplyPrinterPreviewTests(unittest.TestCase):
@@ -249,6 +249,34 @@ class PromptToolkitPagerTests(unittest.TestCase):
         self.press(Keys.Up, event)
         self.assertEqual(self.window.vertical_scroll, 4)
 
+    def test_vi_and_emacs_scroll_keys_match_less(self) -> None:
+        self.window.render_info = SimpleNamespace(content_height=40, window_height=9)
+        event = self.event()
+        self.press("j", event)
+        self.assertEqual(self.window.vertical_scroll, 1)
+        self.press("k", event)
+        self.assertEqual(self.window.vertical_scroll, 0)
+        self.press("f", event)
+        self.assertEqual(self.window.vertical_scroll, 8)
+        self.press("b", event)
+        self.assertEqual(self.window.vertical_scroll, 0)
+        self.press("c-d", event)
+        self.assertEqual(self.window.vertical_scroll, 4)
+        self.press("c-u", event)
+        self.assertEqual(self.window.vertical_scroll, 0)
+
+    def test_home_end_and_g_g_jump_to_the_ends(self) -> None:
+        self.window.render_info = SimpleNamespace(content_height=40, window_height=9)
+        event = self.event()
+        self.press(Keys.End, event)
+        self.assertEqual(self.window.vertical_scroll, 31)
+        self.press(Keys.Home, event)
+        self.assertEqual(self.window.vertical_scroll, 0)
+        self.press("G", event)
+        self.assertEqual(self.window.vertical_scroll, 31)
+        self.press("g", event)
+        self.assertEqual(self.window.vertical_scroll, 0)
+
     def test_scrolling_stops_at_the_actual_bottom(self) -> None:
         self.window.render_info = SimpleNamespace(content_height=20, window_height=5)
         self.window.vertical_scroll = 14
@@ -261,6 +289,26 @@ class PromptToolkitPagerTests(unittest.TestCase):
         event = MagicMock()
         self.press("q", event)
         event.app.exit.assert_called_once_with()
+
+    def test_escape_also_exits(self) -> None:
+        event = MagicMock()
+        self.press("escape", event)
+        event.app.exit.assert_called_once_with()
+
+    def test_status_bar_reports_the_visible_range(self) -> None:
+        self.window.render_info = SimpleNamespace(content_height=40, window_height=9)
+        self.assertIn("1-9/40", "".join(part[1] for part in _status(self.window)))
+        self.window.vertical_scroll = 31
+        text = "".join(part[1] for part in _status(self.window))
+        self.assertIn("32-40/40", text)
+        self.assertIn("q quit", text)
+
+    def test_a_pager_that_cannot_start_does_not_raise(self) -> None:
+        # PowerShell hosts without a real console buffer (mintty, ISE) make
+        # prompt_toolkit raise; the reply must still get printed by the caller.
+        with patch("agent7.pager.Application") as application:
+            application.return_value.run.side_effect = RuntimeError("no console")
+            self.assertIsNone(PromptToolkitPager().show("text"))
 
 
 class ReplyPrinterPagerTests(unittest.TestCase):
@@ -284,6 +332,7 @@ class ReplyPrinterPagerTests(unittest.TestCase):
     def test_long_interactive_answer_is_paged_then_left_in_terminal(self) -> None:
         answer = "\n\n".join(f"paragraph {i}" for i in range(4))
         with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
+             patch("agent7.repl.sys.platform", "linux"), \
              patch("agent7.repl.console.pager", wraps=repl.console.pager) as get_pager, \
              patch("rich.pager.SystemPager.show") as show:
             with repl.ReplyPrinter() as rp:
@@ -316,10 +365,24 @@ class ReplyPrinterPagerTests(unittest.TestCase):
 
     def test_wrapping_counts_toward_the_screen_height(self) -> None:
         with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
-             patch("agent7.repl.console.pager") as get_pager:
+             patch("agent7.repl.sys.platform", "linux"), \
+             patch("agent7.repl.console.pager", wraps=repl.console.pager) as get_pager, \
+             patch("rich.pager.SystemPager.show"):
             with repl.ReplyPrinter() as rp:
                 rp.on_delta(" ".join(["word"] * 160))
         get_pager.assert_called_once_with(pager=None, styles=True)
+
+    def test_a_broken_pager_still_prints_the_answer_once(self) -> None:
+        answer = "\n\n".join(f"paragraph {i}" for i in range(4))
+        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
+             patch("agent7.repl.sys.platform", "win32"), \
+             patch("agent7.repl.PromptToolkitPager.show", side_effect=RuntimeError("boom")):
+            with repl.ReplyPrinter() as rp:
+                rp.on_delta(answer)
+        self.assertEqual(self.stream.getvalue().count("paragraph 3"), 1)
+        # The console must not stay in capture mode after the failure.
+        repl.console.print("after the pager")
+        self.assertIn("after the pager", self.stream.getvalue())
 
     def test_non_interactive_output_does_not_open_a_pager(self) -> None:
         repl.console = Console(file=self.stream, width=80, force_terminal=False)
