@@ -177,6 +177,45 @@ Tools run **serially**, one after another — so the log always reads in order a
 you never get three outputs interleaved. Edits are applied without a confirmation
 prompt; you just get a one-line diff stat.
 
+## Herdr
+
+Inside a [herdr-core](https://github.com/herdrdev/herdr-core) terminal, agent7 reports its
+lifecycle through OSC 7501: `idle` at startup, `working` during a task, `done` on success,
+`blocked` at the turn limit, `idle` after an interruption, and `error` after a failed turn.
+This is an observer only: it adds no model tools, is inactive outside herdr, and never writes
+protocol bytes to a non-terminal stream. Set `AGENT7_NO_HERDR=1` to disable it.
+
+Detaching leaves the original process running. When herdr restores a terminal as a fresh shell
+rather than rerunning agent7, run `agent7 -r` in the restored directory to resume the workspace
+conversation.
+
+### Interrupts
+
+During a turn, both Esc and Ctrl-C interrupt agent7, so direct launches work with `hc interrupt`.
+Input typed while a task runs is preserved for the next prompt. To force Ctrl-C instead, install
+[the supplied template](assets/herdr-agent7.md) as `agent7.md` in
+`~/.config/herdr-core/templates` (`%APPDATA%\herdr-core\templates` on Windows), then start the
+agent with `hc run agent7`; it contains `stop: ctrl+c`.
+
+### Windows and WSL
+
+When PowerShell runs inside herdr but you enter WSL manually, pass the terminal identity across
+the WSL boundary. In that PowerShell, before running `wsl`:
+
+```powershell
+if ($env:WSLENV) {
+    $env:WSLENV += ":HC_TERMINAL_ID/u"
+} else {
+    $env:WSLENV = "HC_TERMINAL_ID/u"
+}
+wsl
+```
+
+In WSL, `printf '%s\n' "$HC_TERMINAL_ID"` should print the terminal ID. OSC 7501 output then
+travels back through `wsl.exe`; WSL does not need a separate status-reporting bridge. For a
+core-managed WSL machine instead, herdr also supports
+`hc machine add --via 'wsl.exe -d Ubuntu -e sh -c' --name wsl` from PowerShell.
+
 ## Context
 
 At 75% context usage, old tool/assistant text is compacted automatically: the last

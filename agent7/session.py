@@ -12,6 +12,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from .agent import DEFAULT_MAX_TURNS
+from .hooks import LifecycleHooks
 from .providers import Credential, Provider, get_provider
 
 def resolve_context_limit(model: str) -> int | None:
@@ -112,6 +113,7 @@ class Session:
     cred_source: str | None = None
     credential: Credential | None = None
     credentials: dict[str, Credential] = field(default_factory=dict)
+    hooks: LifecycleHooks = field(default_factory=LifecycleHooks, repr=False)
 
     def set_model(self, model: str, *, ref: str | None = None) -> None:
         self.model = model
