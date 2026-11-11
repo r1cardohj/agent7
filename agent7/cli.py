@@ -18,6 +18,7 @@ from openai import AsyncOpenAI
 from . import __version__
 from .agent import DEFAULT_MAX_TURNS, SHELL, SYSTEM, Interrupted
 from .commands import fetch_models, switch_model
+from .hooks import emit_lifecycle
 from .providers import (
     default_model_for,
     get_provider,
@@ -208,6 +209,7 @@ async def async_main(options: Options) -> None:
     # A one-shot becomes a real session only once it runs: a run that never
     # starts (bad -m, menu cancelled) must not replace the workspace snapshot.
     committed = False
+    started = False
 
     def persist(commit: bool = False) -> None:
         # Merely opening a new REPL must not replace the snapshot used by -r.
@@ -242,6 +244,8 @@ async def async_main(options: Options) -> None:
                 await switch_model(state, ids[0])
             else:
                 state.set_model(default_model_for(state.provider_id))
+        started = True
+        emit_lifecycle(state, "session_started")
         err.print(f"[dim]# agent7 v{__version__}  model={state.model_ref or state.model}  "
                   f"providers=[{','.join(state.credentials) or 'none'}]  "
                   f"shell={SHELL.name}  cwd={state.cwd}[/dim]")
@@ -260,6 +264,8 @@ async def async_main(options: Options) -> None:
             return
         await repl_loop(state, persist)
     finally:
+        if started:
+            emit_lifecycle(state, "session_ended")
         try:
             persist()
         finally:
