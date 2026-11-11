@@ -18,6 +18,7 @@ from openai import AsyncOpenAI
 from . import __version__
 from .agent import DEFAULT_MAX_TURNS, SHELL, SYSTEM, Interrupted
 from .commands import fetch_models, switch_model
+from .herdr import HerdrReporter
 from .hooks import emit_lifecycle
 from .providers import (
     default_model_for,
@@ -210,6 +211,7 @@ async def async_main(options: Options) -> None:
     # starts (bad -m, menu cancelled) must not replace the workspace snapshot.
     committed = False
     started = False
+    state.hooks.subscribe(HerdrReporter())
 
     def persist(commit: bool = False) -> None:
         # Merely opening a new REPL must not replace the snapshot used by -r.

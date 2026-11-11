@@ -108,6 +108,7 @@ class CliLifecycleTests(unittest.TestCase):
                 return "done"
 
             with patch.dict(os.environ, {"XDG_STATE_HOME": str(Path(root) / "state")}), \
+                 patch.object(cli, "HerdrReporter", return_value=lambda event: None) as herdr, \
                  patch.object(cli, "Session", new=session_with_events), \
                  patch.object(cli, "resolve_all", return_value={"deepseek": credential}), \
                  patch.object(cli, "resolve_default", return_value=(provider, credential)), \
@@ -118,6 +119,7 @@ class CliLifecycleTests(unittest.TestCase):
                  patch.object(cli, "run_turn", new=fake_run):
                 asyncio.run(cli.async_main(Options.parse(["--cwd", str(cwd), "go"])))
 
+            herdr.assert_called_once_with()
             self.assertEqual(
                 [event.kind for event in events],
                 ["session_started", "turn_started", "turn_succeeded", "session_ended"],
