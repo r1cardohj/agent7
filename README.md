@@ -189,6 +189,14 @@ Detaching leaves the original process running. When herdr restores a terminal as
 rather than rerunning agent7, run `agent7 -r` in the restored directory to resume the workspace
 conversation.
 
+### Interrupts
+
+Herdr sends Esc to a reporting agent unless its terminal template declares another stop key.
+To make `hc interrupt` send agent7's Ctrl-C, install [the supplied template](assets/herdr-agent7.md)
+as `agent7.md` in `~/.config/herdr-core/templates` (`%APPDATA%\herdr-core\templates` on Windows),
+then start the agent with `hc run agent7`. The template contains `stop: ctrl+c`.
+For an agent7 started directly without that template, use `hc keys <terminal> ctrl+c` instead.
+
 ### Windows and WSL
 
 When PowerShell runs inside herdr but you enter WSL manually, pass the terminal identity across
