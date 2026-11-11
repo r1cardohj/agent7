@@ -58,6 +58,15 @@ class ResolveShellTests(unittest.TestCase):
         self.assertIn("via bash", text)
         self.assertIn(SHELL.name, SYSTEM)  # import-time SYSTEM matches live shell
 
+    def test_system_prompt_adds_agent7_commit_coauthor(self) -> None:
+        text = make_system(resolve_shell(platform="linux"))
+        self.assertIn(
+            "Co-authored-by: agent7-bot "
+            "<160873036+agent7-bot@users.noreply.github.com>",
+            text,
+        )
+        self.assertIn("add a blank line followed by", text)
+
 
 class BashToolShellTests(unittest.TestCase):
     def test_runs_through_resolved_shell(self) -> None:

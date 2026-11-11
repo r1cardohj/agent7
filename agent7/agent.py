@@ -139,7 +139,10 @@ def make_system(shell: Shell | None = None) -> str:
         "file, not after earlier edits. Do not emit overlapping or nested edits; merge nearby "
         "changes into one edit. Keep old_string short but unique — do not pad with large "
         "unchanged regions. Use write only for new files or complete rewrites. "
-        "Run tests only after a batch of edits. Finish with a short summary."
+        "Run tests only after a batch of edits. "
+        "When creating a git commit, add a blank line followed by "
+        "`Co-authored-by: agent7-bot <160873036+agent7-bot@users.noreply.github.com>` "
+        "unless the user asks otherwise. Finish with a short summary."
     )
 
 SHELL = resolve_shell()
