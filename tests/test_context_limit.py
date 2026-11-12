@@ -29,6 +29,7 @@ class FmtLimitTests(unittest.TestCase):
             2_097_152: "2M",
             262_144: "256k",      # kimi-for-coding
             256_000: "256k",      # grok-4
+            500_000: "500k",      # grok-4.7
             131_072: "128k",      # grok-3, sold as 128k
             128_000: "128k",
         }
@@ -73,6 +74,7 @@ class ResolveContextLimitTests(unittest.TestCase):
         self.assertEqual(resolve_context_limit("deepseek-flash"), 1_048_576)
         self.assertEqual(resolve_context_limit("kimi-for-coding"), 262_144)
         self.assertEqual(resolve_context_limit("grok-4"), 256_000)
+        self.assertEqual(resolve_context_limit("grok-4.7"), 500_000)
 
     def test_k3_models(self) -> None:
         for model in ("k3", "k3.1-pro", "k3.1-pro-highspeed"):

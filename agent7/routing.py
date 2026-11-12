@@ -50,7 +50,7 @@ MODEL_CAPABILITIES = (
         strengths=frozenset({"fast", "coding"}), scorer_priority=3,
     ),
     ModelCapability(
-        provider_id="xai", model="grok-4.7", context_limit=256_000,
+        provider_id="xai", model="grok-4.7", context_limit=500_000,
         strengths=frozenset({"strong"}),
     ),
     ModelCapability(

@@ -40,6 +40,8 @@ def resolve_context_limit(model: str) -> int | None:
     if "deepseek" in key:
         return 1_048_576 if "flash" in key else 128_000
     if "grok" in key:
+        if "grok-4.7" in key:
+            return 500_000
         return 256_000 if ("grok-4" in key or "build" in key) else 131_072
     if "kimi-for-coding" in key:
         return 262_144

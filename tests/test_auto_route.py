@@ -51,6 +51,8 @@ class DefaultAutoRouteTests(unittest.TestCase):
         for ref in ("xai/grok-4.7", "kimi/k3.1-pro"):
             cap = next(cap for cap in MODEL_CAPABILITIES if cap.ref == ref)
             self.assertEqual(cap.strengths, frozenset({"strong"}))
+        grok = next(cap for cap in MODEL_CAPABILITIES if cap.ref == "xai/grok-4.7")
+        self.assertEqual(grok.context_limit, 500_000)
 
     def test_auto_uses_logged_in_reviewed_models_without_configuration(self) -> None:
         credentials = {
