@@ -14,9 +14,9 @@ from rich.console import Console
 from agent7.agent import SYSTEM
 from agent7.cli import Options, async_main
 from agent7.commands import dispatch
-from agent7.repl import pick_session, session_choices
+from agent7.repl import confirm_session_delete, pick_session, session_choices
 from agent7.session import Session
-from agent7.store import load, new_session_id, save
+from agent7.store import list_sessions, load, new_session_id, save, trash_session_dir
 
 
 def snapshot_state(cwd: Path, text: str) -> SimpleNamespace:
@@ -51,6 +51,39 @@ class SessionPickerTests(unittest.TestCase):
             picker.return_value.pick_async = AsyncMock(return_value=None)
             picked = asyncio.run(pick_session([{"id": "sess-a", "name": "a"}]))
         self.assertIsNone(picked)
+
+    def test_delete_confirmation_tells_the_user_to_type_yes_or_no(self) -> None:
+        stream = io.StringIO()
+        prompts: list[str] = []
+        output = Console(file=stream, width=120, color_system=None)
+
+        def reader(prompt: str) -> str:
+            prompts.append(prompt)
+            return ""
+
+        with patch("agent7.repl.err", new=output):
+            confirmed = confirm_session_delete(
+                {"id": "sess-a", "name": "readable name"}, input_fn=reader
+            )
+
+        self.assertFalse(confirmed)
+        self.assertEqual(prompts, ["delete? [y/n] "])
+        text = stream.getvalue()
+        self.assertIn("delete readable name (sess-a)?", text)
+        self.assertIn("type y to confirm, or n to cancel", text)
+
+    def test_delete_cancelled_by_the_prompt_is_explicit(self) -> None:
+        target = {"id": "sess-b", "name": "second", "cwd": "/tmp/work"}
+        state = Session(
+            model="test", cwd=Path("/tmp/work"), client=None,
+            id="sess-a", name="first", persisted=True,
+        )
+        with patch("agent7.commands.list_sessions", return_value=[target]), \
+             patch("agent7.commands.load", return_value=target), \
+             patch("agent7.repl.pick_session", new=AsyncMock(return_value="sess-b")), \
+             patch("agent7.repl.confirm_session_delete", return_value=False):
+            result = asyncio.run(dispatch(state, "/session rm"))
+        self.assertEqual(result.message, "delete: cancelled — kept second (sess-b)")
 
 
 class SessionSwitchTests(unittest.TestCase):
@@ -93,6 +126,42 @@ class SessionSwitchTests(unittest.TestCase):
         save(state, created_at=state.created_at)
         self.assertEqual(load(self.cwd, first.id)["messages"], first.messages)
         self.assertEqual(load(self.cwd, second.id)["messages"][-1]["content"], "follow up")
+
+    def test_session_delete_moves_a_picked_session_and_keeps_the_active_one(self) -> None:
+        active = snapshot_state(self.cwd, "active task")
+        target = snapshot_state(self.cwd, "delete me")
+        save(active, created_at="2025-01-01T00:00:00+00:00")
+        save(target, created_at="2025-01-02T00:00:00+00:00")
+        state = Session(
+            model="test", model_ref="deepseek/test", cwd=self.cwd, client=None,
+            messages=list(active.messages), id=active.id, persisted=True,
+        )
+
+        with patch("agent7.repl.pick_session", new=AsyncMock(return_value=target.id)) as picker, \
+             patch("agent7.repl.confirm_session_delete", return_value=True) as confirm:
+            result = asyncio.run(dispatch(state, "/session delete"))
+
+        self.assertEqual([data["id"] for data in picker.await_args.args[0]], [target.id])
+        confirm.assert_called_once()
+        self.assertIn("deleted delete me", result.message)
+        self.assertEqual(state.id, active.id)
+        self.assertEqual([data["id"] for data in list_sessions(self.cwd)], [active.id])
+        self.assertTrue((trash_session_dir() / f"{target.id}.json").is_file())
+
+    def test_session_delete_refuses_the_active_session_before_confirmation(self) -> None:
+        active = snapshot_state(self.cwd, "active task")
+        save(active, created_at="2025-01-01T00:00:00+00:00")
+        state = Session(
+            model="test", model_ref="deepseek/test", cwd=self.cwd, client=None,
+            messages=list(active.messages), id=active.id, persisted=True,
+        )
+        with patch("agent7.repl.pick_session", new=AsyncMock()) as picker, \
+             patch("agent7.repl.confirm_session_delete") as confirm:
+            result = asyncio.run(dispatch(state, f"/session delete {active.id}"))
+        picker.assert_not_awaited()
+        confirm.assert_not_called()
+        self.assertIn("cannot delete the active session", result.message)
+        self.assertEqual([data["id"] for data in list_sessions(self.cwd)], [active.id])
 
     def test_session_command_accepts_an_id_without_opening_the_picker(self) -> None:
         first, second = snapshot_state(self.cwd, "first"), snapshot_state(self.cwd, "second")
@@ -171,6 +240,11 @@ class ResumeCliTests(unittest.TestCase):
         picker.assert_not_awaited()
         self.assertEqual(run.await_args.args[1], "continue")
 
+    def test_delete_option_supports_picker_and_direct_id(self) -> None:
+        session_id = new_session_id()
+        self.assertEqual(Options.parse(["--delete", session_id]).delete, session_id)
+        self.assertEqual(Options.parse(["--delete"]).delete, "")
+
     def test_resume_option_distinguishes_ids_from_legacy_task_text(self) -> None:
         session_id = new_session_id()
         direct = Options.parse(["-r", session_id, "continue"])
@@ -203,6 +277,56 @@ class ResumeCliTests(unittest.TestCase):
                 item.stop()
         self.assertIn(f"resume this session: agent7 -r {self.saved.id}", stream.getvalue())
         self.assertEqual(load(self.cwd, self.saved.id)["id"], self.saved.id)
+
+
+class DeleteCliTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.cwd = self.root / "work"
+        self.cwd.mkdir()
+        self.env = patch.dict(os.environ, {"XDG_STATE_HOME": str(self.root / "state")})
+        self.env.start()
+        self.saved = snapshot_state(self.cwd, "delete from cli")
+        save(self.saved, created_at="2025-01-01T00:00:00+00:00")
+
+    def tearDown(self) -> None:
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def test_bare_delete_uses_picker_confirmation_and_trash(self) -> None:
+        stream = io.StringIO()
+        picker = AsyncMock(return_value=self.saved.id)
+        with patch("agent7.cli.can_pick_models", return_value=True), \
+             patch("agent7.cli.pick_session", new=picker), \
+             patch("agent7.cli.confirm_session_delete", return_value=True), \
+             patch("agent7.cli.err", new=Console(file=stream, width=120, color_system=None)):
+            asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd), "--delete"])))
+
+        picker.assert_awaited_once()
+        self.assertEqual(picker.await_args.args[0][0]["id"], self.saved.id)
+        trash_path = trash_session_dir() / f"{self.saved.id}.json"
+        self.assertTrue(trash_path.is_file())
+        self.assertEqual(list_sessions(self.cwd), [])
+        self.assertIn(f"deleted delete from cli ({self.saved.id})", stream.getvalue())
+
+    def test_direct_delete_can_be_cancelled_without_moving_the_file(self) -> None:
+        path = save(self.saved, created_at=self.saved.created_at)
+        with patch("agent7.cli.confirm_session_delete", return_value=False):
+            asyncio.run(async_main(Options.parse([
+                "--cwd", str(self.cwd), "--delete", self.saved.id,
+            ])))
+        self.assertTrue(path.is_file())
+        self.assertFalse(trash_session_dir().exists())
+
+    def test_delete_rejects_a_task_and_other_run_modes(self) -> None:
+        for argv in (
+            ["--delete", self.saved.id, "accidental task"],
+            ["--delete", self.saved.id, "-r"],
+            ["--delete", self.saved.id, "-m", "deepseek-flash"],
+        ):
+            with self.subTest(argv=argv), self.assertRaisesRegex(SystemExit, "cannot be combined"):
+                asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd), *argv])))
 
 
 if __name__ == "__main__":

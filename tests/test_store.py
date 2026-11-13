@@ -10,12 +10,14 @@ from unittest.mock import patch
 from agent7.agent import SYSTEM
 from agent7.store import (
     VERSION,
+    delete_session,
     list_sessions,
     load,
     resume,
     resume_messages,
     save,
     session_path,
+    trash_session_dir,
     workspace_key,
 )
 
@@ -90,6 +92,34 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(load(self.cwd, other.id)["name"], "修复 多会话 存储问题")
         self.assertEqual(len(list_sessions(self.cwd)), 2)
         self.assertEqual(len(list(session_path(self.cwd).parent.glob("*.json"))), 2)
+
+    def test_delete_moves_only_the_selected_session_to_trash(self) -> None:
+        other = SimpleNamespace(**vars(self.state))
+        other.id = ""
+        other.messages = [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": "delete me"},
+        ]
+        keep_path = self.save()
+        delete_path = self.save(other)
+
+        trash_path = delete_session(self.cwd, other.id)
+
+        self.assertEqual(trash_path, trash_session_dir() / f"{other.id}.json")
+        self.assertFalse(delete_path.exists())
+        self.assertEqual(json.loads(trash_path.read_text())["name"], "delete me")
+        self.assertEqual(keep_path, session_path(self.cwd, self.state.id))
+        self.assertEqual([data["id"] for data in list_sessions(self.cwd)], [self.state.id])
+        with self.assertRaisesRegex(ValueError, "no session"):
+            load(self.cwd, other.id)
+
+    def test_delete_refuses_to_overwrite_an_existing_trashed_session(self) -> None:
+        path = self.save()
+        trash_session_dir().mkdir(parents=True)
+        (trash_session_dir() / f"{self.state.id}.json").write_text("old trash")
+        with self.assertRaisesRegex(ValueError, "already has this id"):
+            delete_session(self.cwd, self.state.id)
+        self.assertTrue(path.exists())
 
     def test_name_is_compact_and_limited_to_a_readable_length(self) -> None:
         self.state.messages[1]["content"] = "  first   line\n" + "x" * 100

@@ -19,7 +19,7 @@ from .providers import (
 )
 from .routing import AUTO_REF, build_auto_route
 from .session import Session, fmt_limit, format_usage, resolve_context_limit
-from .store import list_sessions, load, resume_messages
+from .store import delete_session, list_sessions, load, resume_messages
 
 @dataclass
 class CommandResult:
@@ -268,13 +268,54 @@ def cmd_status(session: Session, args: list[str]) -> CommandResult:
         f"{format_usage(session)}\nbase_url={session.client.base_url}{route_info}"
     ))
 
-@command("session", help="switch sessions  (/session | /session <id>)")
+async def _delete_session(session: Session, args: list[str]) -> CommandResult:
+    from .repl import confirm_session_delete, pick_session
+
+    current = getattr(session, "id", "")
+    if len(args) > 1:
+        return CommandResult(message="usage: /session delete [SESSION_ID]")
+    if args:
+        session_id = args[0]
+    else:
+        snapshots = [
+            snapshot for snapshot in list_sessions(session.cwd)
+            if snapshot.get("id") != current
+        ]
+        if not snapshots:
+            return CommandResult(message="no other saved sessions in this workspace")
+        picked = await pick_session(snapshots)
+        if picked is None:
+            return CommandResult(
+                message="delete: cancelled (Esc/Ctrl-C in the picker selects nothing)"
+            )
+        session_id = picked
+    if session_id == current:
+        return CommandResult(
+            message="cannot delete the active session — switch to another session first"
+        )
+    try:
+        snapshot = load(session.cwd, session_id)
+        if not confirm_session_delete(snapshot):
+            return CommandResult(
+                message=f"delete: cancelled — kept {snapshot['name']} ({session_id})"
+            )
+        trash_path = delete_session(session.cwd, session_id)
+    except ValueError as e:
+        return CommandResult(message=str(e))
+    return CommandResult(
+        message=f"deleted {snapshot['name']} ({session_id}) → {trash_path}"
+    )
+
+
+@command("session", help="switch/delete sessions  (/session | /session delete <id>)")
 async def cmd_session(session: Session, args: list[str]) -> CommandResult:
     # Picker/UI lives in repl; the local import avoids the commands <-> repl
     # import cycle while keeping this a normal discoverable slash command.
     from .repl import pick_session, print_history
 
     current = getattr(session, "id", "")
+    if args and args[0].lower() in {"delete", "rm"}:
+        return await _delete_session(session, args[1:])
     if args:
         session_id = args[0]
     else:

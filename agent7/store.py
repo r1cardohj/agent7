@@ -49,6 +49,10 @@ def legacy_session_path(cwd: Path) -> Path:
     return session_dir() / f"{workspace_key(cwd)}.json"
 
 
+def trash_session_dir() -> Path:
+    return session_dir().parent / "trash"
+
+
 def _id_path(session_id: str) -> Path:
     if not SESSION_ID_PATTERN.fullmatch(session_id):
         raise ValueError(f"invalid session id: {session_id!r}")
@@ -171,6 +175,24 @@ def _scan_sessions(cwd: Path, *, strict: bool) -> list[dict[str, Any]]:
 def list_sessions(cwd: Path) -> list[dict[str, Any]]:
     """All readable sessions in this workspace, most recently updated first."""
     return _scan_sessions(cwd, strict=False)
+
+
+def delete_session(cwd: Path, session_id: str) -> Path:
+    """Move one workspace session to trash without overwriting an old copy."""
+    snapshot = load(cwd, session_id)
+    source = Path(snapshot["path"])
+    root = trash_session_dir()
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with suppress(OSError):
+        root.chmod(0o700)
+    target = root / f"{session_id}.json"
+    if target.exists():
+        raise ValueError(f"a trashed session already has this id: {session_id}")
+    try:
+        source.replace(target)
+    except OSError as e:
+        raise ValueError(f"cannot delete session {source}: {e}") from None
+    return target
 
 
 def load(cwd: Path, session_id: str | None = None) -> dict[str, Any]:

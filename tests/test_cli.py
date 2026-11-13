@@ -25,7 +25,7 @@ class CommandLineTests(unittest.TestCase):
         result = self.runner.invoke(main, ["--help"])
 
         self.assertEqual(result.exit_code, 0)
-        for flag in ("--cwd", "--max-turns", "-r, --resume", "--version"):
+        for flag in ("--cwd", "--max-turns", "-r, --resume", "--delete", "--version"):
             self.assertIn(flag, result.output)
 
     def test_zero_or_negative_turns_are_rejected(self) -> None:

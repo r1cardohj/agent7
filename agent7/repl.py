@@ -651,6 +651,25 @@ async def pick_session(snapshots: list[dict], *, current: str = "") -> str | Non
     return ids.get(picked) if picked is not None else None
 
 
+def confirm_session_delete(
+    snapshot: dict,
+    *,
+    input_fn: Callable[[str], str] | None = None,
+) -> bool:
+    """Ask for an explicit yes; EOF and Ctrl-C are both a safe no."""
+    name = snapshot.get("name") or "New session"
+    session_id = snapshot.get("id", "?")
+    err.print(f"[yellow]# delete {name} ({session_id})?[/yellow]")
+    err.print("[yellow]# type y to confirm, or n to cancel[/yellow]")
+    reader = input_fn or input
+    try:
+        answer = reader("delete? [y/n] ")
+    except (EOFError, KeyboardInterrupt):
+        err.print()
+        return False
+    return answer.strip().casefold() in {"y", "yes"}
+
+
 NO_TEXT_NOTICE = "no text in the reply — the model stopped without content (retry, or /model)"
 TRUNCATED_NOTICE = "no text in the reply — the model hit the output token limit (retry with a smaller step)"
 STOPPED_PREFIX = "(stopped after "

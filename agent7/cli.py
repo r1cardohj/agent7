@@ -29,10 +29,26 @@ from .providers import (
     resolve_all,
     resolve_default,
 )
-from .repl import err, pick_model, pick_session, print_history, repl_loop, run_turn
+from .repl import (
+    confirm_session_delete,
+    err,
+    pick_model,
+    pick_session,
+    print_history,
+    repl_loop,
+    run_turn,
+)
 from .routing import AUTO_REF
 from .session import Session
-from .store import list_sessions, new_session_id, resume, resume_messages, save, timestamp
+from .store import (
+    delete_session,
+    list_sessions,
+    new_session_id,
+    resume,
+    resume_messages,
+    save,
+    timestamp,
+)
 
 PROG = "agent7"
 # What a bare `-m` parses to: pick the model for this run from a menu instead
@@ -41,6 +57,8 @@ PICK_MODEL = ""
 # A bare -r opens session discovery. Generated IDs are distinguishable from a
 # legacy `-r "continue"` task, which remains a resume of the latest session.
 PICK_SESSION = ""
+# A bare --delete opens the same picker in removal mode.
+PICK_DELETE = ""
 RESUME_ID = re.compile(r"(?:sess-[0-9a-f]{32}|legacy-[0-9a-f]{16})")
 
 def _resume_args(task: str, value: str | None) -> tuple[str, bool | str]:
@@ -61,6 +79,7 @@ class Options:
     max_turns: int | None = None
     resume: bool | str = False  # True: latest/picker; a string: exact session ID
     model: str | None = None  # None: default; PICK_MODEL: ask; else the ref
+    delete: str | None = None  # None: off; PICK_DELETE: picker; else exact ID
 
     @classmethod
     def parse(cls, argv: list[str] | None = None) -> Options:
@@ -120,13 +139,16 @@ def _force_utf8_stdio() -> None:
 @click.option("-r", "--resume", is_flag=False, flag_value=PICK_SESSION, default=None,
               metavar="SESSION_ID",
               help="resume a session by ID; bare -r picks one from a menu")
+@click.option("--delete", is_flag=False, flag_value=PICK_DELETE, default=None,
+              metavar="SESSION_ID",
+              help="move a session to trash; bare --delete picks one from a menu")
 def main(task: tuple[str, ...], cwd: Path | None, max_turns: int | None, resume: str | None,
-         model: str | None) -> None:
+         delete: str | None, model: str | None) -> None:
     _force_utf8_stdio()
     _load_dotenv()
     task_text, resume_value = _resume_args(" ".join(task).strip(), resume)
     options = Options(task=task_text, cwd=cwd, max_turns=max_turns, resume=resume_value,
-                      model=model)
+                      delete=delete, model=model)
     try:
         asyncio.run(async_main(options))
     except KeyboardInterrupt:
@@ -180,10 +202,40 @@ async def choose_model(session: Session, ids: list[str], *, current: str = "") -
         raise SystemExit(1)
     return picked
 
+async def delete_requested_session(options: Options, cwd: Path) -> None:
+    """Pick/confirm one snapshot and soft-delete it before agent startup."""
+    session_id = options.delete
+    try:
+        if session_id == PICK_DELETE:
+            if not can_pick_models():
+                raise SystemExit("a bare --delete shows a session menu, which needs a terminal; "
+                                 "use agent7 --delete SESSION_ID instead")
+            snapshots = list_sessions(cwd)
+            if not snapshots:
+                raise SystemExit(f"no sessions for workspace: {cwd}")
+            picked = await pick_session(snapshots)
+            if picked is None:
+                err.print("[dim]# delete cancelled[/dim]")
+                return
+            session_id = picked
+        snapshot = resume(cwd, session_id)
+        if not confirm_session_delete(snapshot):
+            err.print(f"[dim]# delete cancelled — kept {snapshot['name']} ({session_id})[/dim]")
+            return
+        trash_path = delete_session(cwd, session_id)
+    except ValueError as e:
+        raise SystemExit(str(e)) from None
+    err.print(f"[dim]# deleted {snapshot['name']} ({session_id}) → {trash_path}[/dim]")
+
 async def async_main(options: Options) -> None:
     """Run one task, or open the REPL, for an already-parsed command line."""
     task = options.task or None
     cwd = (options.cwd or Path.cwd()).resolve()
+    if options.delete is not None:
+        if task or options.resume or options.model is not None or options.max_turns is not None:
+            raise SystemExit("--delete cannot be combined with TASK, -r, -m, or --max-turns")
+        await delete_requested_session(options, cwd)
+        return
     saved = None
     resume_id = options.resume if isinstance(options.resume, str) else None
     choose_resume = options.resume is True and not task
