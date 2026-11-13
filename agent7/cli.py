@@ -17,7 +17,7 @@ from openai import AsyncOpenAI
 
 from . import __version__
 from .agent import DEFAULT_MAX_TURNS, SHELL, SYSTEM, Interrupted
-from .commands import fetch_models, switch_model
+from .commands import fetch_models, prefetch_models, switch_model
 from .herdr import HerdrReporter
 from .hooks import emit_lifecycle
 from .providers import (
@@ -181,6 +181,12 @@ async def async_main(options: Options) -> None:
         saved.get("model_ref", "") if saved else ""
     )
     model = workspace_model if options.model is None else options.model
+    saved_provider, sep, _ = model.partition("/")
+    reuse_saved_model = (
+        saved is not None and options.model is None
+        and (model == AUTO_REF or bool(sep) and get_provider(saved_provider) is not None)
+        and not os.environ.get("AGENT7_MODEL", "").strip()
+    )
     if pick and not can_pick_models():
         err.print("[red]# a bare -m shows a menu, which needs a terminal — "
                   "name the model instead: agent7 -m deepseek-flash[/red]")
@@ -225,7 +231,11 @@ async def async_main(options: Options) -> None:
 
     try:
         ids: list[str] = []
-        if all_creds:
+        # A saved provider/model ref is already actionable. Do not make every
+        # REPL wait on every provider's /models endpoint just to reuse it.
+        # Explicit choices and first-time setup still fetch; auto can use its
+        # reviewed fallback targets and normal failover when no list is loaded.
+        if all_creds and not reuse_saved_model:
             try:
                 ids = await fetch_models(state)
             except Exception as e:  # noqa: BLE001
@@ -251,7 +261,7 @@ async def async_main(options: Options) -> None:
         started = True
         emit_lifecycle(state, "session_started")
         err.print(f"[dim]# agent7 v{__version__}  model={state.display_model}  "
-                  f"providers=[{','.join(state.credentials) or 'none'}]  "
+                  f"providers=\\[{','.join(state.credentials) or 'none'}]  "
                   f"shell={SHELL.name}  cwd={state.cwd}[/dim]")
         action = "resumed" if snapshot else "new"
         err.print(f"[dim]# {action} session[/dim]")
@@ -266,6 +276,8 @@ async def async_main(options: Options) -> None:
             except Exception as e:  # noqa: BLE001
                 err.print(f"[red]# error: {type(e).__name__}: {e}[/red]")
             return
+        if state.models_cache is None:
+            prefetch_models(state)
         await repl_loop(state, persist)
     finally:
         if started:

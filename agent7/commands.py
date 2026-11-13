@@ -39,9 +39,7 @@ def list_commands() -> list[tuple[str, str]]:
 def known_names() -> list[str]:
     return sorted(_COMMANDS)
 
-async def fetch_models(session: Session, *, refresh: bool = False) -> list[str]:
-    if session.models_cache is not None and not refresh:
-        return session.models_cache
+async def _fetch_models(session: Session) -> list[str]:
     if session.credential and session.provider_id:
         session.remember(session.provider_id, session.credential)
     for pid, cred in resolve_all().items():
@@ -71,6 +69,50 @@ async def fetch_models(session: Session, *, refresh: bool = False) -> list[str]:
     if errors and not refs:
         raise RuntimeError("; ".join(errors))
     return refs
+
+
+def _consume_models_fetch(task: asyncio.Task[list[str]]) -> None:
+    # A background prefetch must not emit "exception was never retrieved" when
+    # nobody runs /model. Awaiting the same task later still raises normally.
+    if not task.cancelled():
+        task.exception()
+
+
+def _start_models_fetch(session: Session) -> asyncio.Task[list[str]]:
+    task = asyncio.create_task(_fetch_models(session))
+    session._models_fetch = task
+    task.add_done_callback(_consume_models_fetch)
+    return task
+
+
+def prefetch_models(session: Session) -> asyncio.Task[list[str]] | None:
+    """Populate the model cache without blocking the REPL prompt."""
+    if session.models_cache is not None:
+        return None
+    task = getattr(session, "_models_fetch", None)
+    if task is None or task.done():
+        task = _start_models_fetch(session)
+    return task
+
+
+async def fetch_models(session: Session, *, refresh: bool = False) -> list[str]:
+    task = getattr(session, "_models_fetch", None)
+    if refresh:
+        if task is not None and not task.done():
+            try:
+                await asyncio.shield(task)
+            except Exception:
+                pass  # A forced refresh still gets its own request.
+        task = _start_models_fetch(session)
+    elif task is not None:
+        # Join an in-flight prefetch; never issue a duplicate provider sweep.
+        pass
+    elif session.models_cache is not None:
+        return session.models_cache
+    else:
+        task = _start_models_fetch(session)
+    # A cancelled /model must not cancel the shared background prefetch.
+    return await asyncio.shield(task)
 
 def resolve_model_ref(session: Session, name: str) -> tuple[str, str, str] | str:
     available, raw = session.models_cache or [], name.strip()
@@ -195,7 +237,7 @@ async def cmd_model(session: Session, args: list[str]) -> CommandResult:
     cur = session.model_ref or session.model
     if not args or (refresh and len(args) == 1):
         providers = ", ".join(session.credentials) or (session.provider_id or "?")
-        lines = [f"model={session.display_model}  providers=[{providers}]", "available:"]
+        lines = [f"model={session.display_model}  providers=\\[{providers}]", "available:"]
         lines += [f"  {'*' if m == cur else ' '} {m}" for m in available]
         lines.append("usage: /model <id|provider/id>  |  /model refresh")
         return CommandResult(message="\n".join(lines))
@@ -217,7 +259,7 @@ def cmd_status(session: Session, args: list[str]) -> CommandResult:
     return CommandResult(message=(
         f"model={session.display_model}\n"
         f"provider={session.provider_id}  source={session.cred_source}\n"
-        f"providers=[{', '.join(session.credentials) or '?'}]\n"
+        f"providers=\\[{', '.join(session.credentials) or '?'}]\n"
         f"cwd={session.cwd}\nmessages={n}  max_turns={session.max_turns}\n"
         f"{format_usage(session)}\nbase_url={session.client.base_url}{route_info}"
     ))

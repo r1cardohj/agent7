@@ -113,6 +113,7 @@ class Session:
     max_turns: int = DEFAULT_MAX_TURNS
     messages: list[dict[str, Any]] = field(default_factory=list)
     models_cache: list[str] | None = None
+    _models_fetch: asyncio.Task[list[str]] | None = field(default=None, repr=False)
     model_ref: str | None = None
     context_limit: int | None = None
     prompt_tokens: int | None = None
@@ -190,6 +191,10 @@ class Session:
             await _close_client(old)
 
     async def close(self) -> None:
+        if self._models_fetch is not None and not self._models_fetch.done():
+            self._models_fetch.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await self._models_fetch
         if self.route is not None:
             await self.route.close()
         else:
