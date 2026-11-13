@@ -41,7 +41,7 @@ The default fixed refs can be changed with `--fast-model provider/model` and
 | Name | Behavior |
 | --- | --- |
 | `fixed-fast` | Always execute with `--fast-model` (default `deepseek/deepseek-flash`). |
-| `fixed-strong` | Always execute with `--strong-model` (default `xai/grok-4.7`). |
+| `fixed-strong` | Always execute with `--strong-model` (default `kimi/k3.1-pro`). |
 | `auto-tier` | Use the normal scorer and intent, then choose the table's first eligible fast model for quick/coding or strong model for debugging/reasoning. |
 | `auto-full` | Use the production score ordering, first-task argmax, and subsequent-task hysteresis. |
 

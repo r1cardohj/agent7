@@ -74,27 +74,27 @@ class IntentSelectionTests(unittest.TestCase):
         deepseek = ScoringClient(scores("debugging", {
             "deepseek/deepseek-flash": 40,
             "kimi/kimi-for-coding": 95,
-            "xai/grok-build-0.1": 80,
+            "kimi/k3.1-pro": 80,
         }))
         kimi = ScoringClient()
-        grok = ScoringClient()
+        strong_kimi = ScoringClient()
         route = FailoverRoute((
             capability_target("deepseek/deepseek-flash", deepseek),
             capability_target("kimi/kimi-for-coding", kimi),
-            capability_target("xai/grok-build-0.1", grok),
+            capability_target("kimi/k3.1-pro", strong_kimi),
         ), intent_routing=True)
 
         self.start(route, "find the race condition")
 
         self.assertEqual(route.current.ref, "kimi/kimi-for-coding")
         self.assertEqual([target.ref for target in route.active_targets], [
-            "kimi/kimi-for-coding", "xai/grok-build-0.1", "deepseek/deepseek-flash",
+            "kimi/kimi-for-coding", "kimi/k3.1-pro", "deepseek/deepseek-flash",
         ])
         self.assertEqual(route.selection.intent, "debugging")
         self.assertEqual(route.selection.scorer_ref, "deepseek/deepseek-flash")
         self.assertEqual(len(deepseek.score_requests), 1)
         self.assertEqual(kimi.score_requests, [])
-        self.assertEqual(grok.score_requests, [])
+        self.assertEqual(strong_kimi.score_requests, [])
         request = deepseek.score_requests[0]
         self.assertFalse(request["stream"])
         self.assertEqual(request["temperature"], 0)
@@ -168,17 +168,17 @@ class IntentSelectionTests(unittest.TestCase):
         self.assertIsNone(route.selection)
 
     def test_context_filter_runs_before_scoring(self) -> None:
-        # 300k fits deepseek-flash (1M) but not grok-build-0.1 (256k).
+        # 300k fits deepseek-flash (1M) but not a 256k fallback target.
         deepseek = ScoringClient("not json")
-        grok = ScoringClient()
+        small = ScoringClient()
         route = FailoverRoute((
             capability_target("deepseek/deepseek-flash", deepseek),
-            capability_target("xai/grok-build-0.1", grok),
+            RouteTarget("test", "small", Credential("s", "https://test", "test"), small, 256_000),
         ), intent_routing=True)
 
         self.start(route, tokens=300_000)
 
-        self.assertEqual(grok.score_requests, [])
+        self.assertEqual(small.score_requests, [])
 
         self.assertEqual(route.current.ref, "deepseek/deepseek-flash")
         self.assertEqual(route.active_targets, (route.current,))
@@ -263,14 +263,14 @@ class IntentExecutionTests(unittest.TestCase):
         deepseek = ScoringClient(scores("debugging", {
             "deepseek/deepseek-flash": 10,
             "kimi/kimi-for-coding": 90,
-            "xai/grok-build-0.1": 80,
+            "kimi/k3.1-pro": 80,
         }))
         kimi = ScoringClient(script=[_Status("unavailable")])
-        grok = ScoringClient(script=[text_turn("ok")])
+        strong_kimi = ScoringClient(script=[text_turn("ok")])
         route = FailoverRoute((
             capability_target("deepseek/deepseek-flash", deepseek),
             capability_target("kimi/kimi-for-coding", kimi),
-            capability_target("xai/grok-build-0.1", grok),
+            capability_target("kimi/k3.1-pro", strong_kimi),
         ), intent_routing=True)
 
         answer = asyncio.run(run_agent(
@@ -280,7 +280,7 @@ class IntentExecutionTests(unittest.TestCase):
 
         self.assertEqual(answer, "ok")
         self.assertEqual(kimi.calls, 4)
-        self.assertEqual(grok.calls, 1)
+        self.assertEqual(strong_kimi.calls, 1)
         self.assertEqual(deepseek.calls, 0)
         self.assertEqual(len(deepseek.score_requests), 1)
 

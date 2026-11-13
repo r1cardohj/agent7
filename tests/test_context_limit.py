@@ -28,9 +28,9 @@ class FmtLimitTests(unittest.TestCase):
             1_000_000: "1M",      # AGENT7_CONTEXT_LIMIT=1000000
             2_097_152: "2M",
             262_144: "256k",      # kimi-for-coding-highspeed
-            256_000: "256k",      # grok-4
-            500_000: "500k",      # grok-4.7
-            131_072: "128k",      # grok-3, sold as 128k
+            256_000: "256k",
+            500_000: "500k",
+            131_072: "128k",
             128_000: "128k",
         }
         for n, want in cases.items():
@@ -73,8 +73,6 @@ class ResolveContextLimitTests(unittest.TestCase):
     def test_known_models(self) -> None:
         self.assertEqual(resolve_context_limit("deepseek-flash"), 1_048_576)
         self.assertEqual(resolve_context_limit("kimi-for-coding"), 1_048_576)
-        self.assertEqual(resolve_context_limit("grok-4"), 256_000)
-        self.assertEqual(resolve_context_limit("grok-4.7"), 500_000)
 
     def test_kimi_highspeed_keeps_its_smaller_window(self) -> None:
         # /models reports 1M for kimi-for-coding but 256k for the highspeed variant.

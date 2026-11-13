@@ -34,7 +34,7 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 - **Slash commands** — `/help` `/model` `/status` `/login` `/logout` `/compact`
 - **Markdown rendering** — final replies rendered as Rich Markdown in the terminal, thanks rich.
 - **Paged final replies** — interactive answers that exceed one screen open in your system pager (usually `less`), or a built-in pager on Windows; shorter answers print directly. The built-in pager shows which lines are on screen and accepts the arrow keys, PageUp/PageDown, Space, Home/End, the mouse wheel, and `q` (or Esc) to continue. The rendered reply stays in the terminal after you quit. Redirected output is never paged.
-- **Provider login** — paste an API key for DeepSeek, Grok, or Kimi (`/login` or env); switch models in-session
+- **Provider login** — paste an API key for DeepSeek or Kimi (`/login` or env); switch models in-session
 - **Auto intent routing** — `/model auto` scores the current task against reviewed available models, then fails over in score order
 
 
@@ -52,20 +52,17 @@ Paste an API key; there is no OAuth. Keys are stored in `~/.config/agent7/auth.j
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...   # or /login deepseek
-export XAI_API_KEY=xai-...       # Grok, from console.x.ai  (or /login grok)
 export KIMI_API_KEY=sk-...       # Kimi Code, from the Kimi Code Console (or /login kimi)
-# export AGENT7_MODEL=grok-4
+# export AGENT7_MODEL=kimi-for-coding
 ```
 
 You can also log in from inside the REPL:
 
 ```text
 /login deepseek
-/login grok              # xAI — Grok models
 /login kimi              # Kimi Code — kimi-for-coding and other available models
 /model                   # list models for every logged-in provider
 /model deepseek-flash
-/model grok-4
 /model kimi-for-coding
 ```
 
@@ -118,8 +115,8 @@ the models currently listed by those providers:
 
 | Models | Tags |
 | --- | --- |
-| `deepseek-flash`, `kimi-for-coding`, `grok-build-0.1` | fast, coding |
-| `grok-4.7`, `k3.1-pro` | strong |
+| `deepseek-flash`, `kimi-for-coding` | fast, coding |
+| `k3.1-pro` | strong |
 
 The first available fast model scores all candidates for each new user task in one short,
 non-streaming, zero-temperature request. The highest-scoring model handles the whole task,
@@ -146,7 +143,7 @@ After `:wq`, the text returns to the prompt for review; Enter submits it. Set `E
 Exit with Ctrl-D (or Ctrl-Z on Windows). Ctrl-C discards the current input or interrupts
 the running turn, then returns to the prompt instead of exiting the REPL.
 
-Reasoning models (DeepSeek, Grok, Kimi) stream their Responses reasoning events live: they
+Reasoning models (DeepSeek and Kimi) stream their Responses reasoning events live: they
 show up dimmed under a `thinking` header, before the answer and above each tool line. In a
 terminal, the latest six visual lines scroll inside a fixed-height viewport that is cleared
 afterward; redirected output retains the full text without control codes. Reasoning text is

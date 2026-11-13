@@ -41,24 +41,18 @@ class DefaultAutoRouteTests(unittest.TestCase):
         self.assertEqual({cap.ref for cap in MODEL_CAPABILITIES}, {
             "deepseek/deepseek-flash",
             "kimi/kimi-for-coding",
-            "xai/grok-build-0.1",
-            "xai/grok-4.7",
             "kimi/k3.1-pro",
         })
-        for ref in ("deepseek/deepseek-flash", "kimi/kimi-for-coding", "xai/grok-build-0.1"):
+        for ref in ("deepseek/deepseek-flash", "kimi/kimi-for-coding"):
             cap = next(cap for cap in MODEL_CAPABILITIES if cap.ref == ref)
             self.assertEqual(cap.strengths, frozenset({"fast", "coding"}))
-        for ref in ("xai/grok-4.7", "kimi/k3.1-pro"):
-            cap = next(cap for cap in MODEL_CAPABILITIES if cap.ref == ref)
-            self.assertEqual(cap.strengths, frozenset({"strong"}))
-        grok = next(cap for cap in MODEL_CAPABILITIES if cap.ref == "xai/grok-4.7")
         kimi = next(cap for cap in MODEL_CAPABILITIES if cap.ref == "kimi/k3.1-pro")
         coding_kimi = next(
             cap for cap in MODEL_CAPABILITIES if cap.ref == "kimi/kimi-for-coding"
         )
-        self.assertEqual(grok.context_limit, 500_000)
+        self.assertEqual(kimi.context_limit, 1_048_576)
         self.assertEqual(coding_kimi.context_limit, 1_048_576)
-        self.assertIn("debugging", grok.routing_hint)
+        self.assertEqual(kimi.strengths, frozenset({"strong"}))
         self.assertIn("architecture", kimi.routing_hint)
 
     def test_auto_uses_logged_in_reviewed_models_without_configuration(self) -> None:
@@ -71,7 +65,7 @@ class DefaultAutoRouteTests(unittest.TestCase):
                 id=pid, resolve=lambda pid=pid: credentials.get(pid),
                 make_client=lambda cred: FakeClient([text_turn("ok")]),
             )
-            for pid in ("deepseek", "xai", "kimi")
+            for pid in ("deepseek", "kimi")
         ]
         with patch("agent7.routing.list_providers", return_value=providers):
             route = build_auto_route(credentials)
