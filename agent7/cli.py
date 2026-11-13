@@ -98,7 +98,8 @@ def _force_utf8_stdio() -> None:
               help=f"model rounds per task (default {DEFAULT_MAX_TURNS}, or $AGENT7_MAX_TURNS)")
 @click.option("-m", "--model", "model", is_flag=False, flag_value=PICK_MODEL, default=None,
               metavar="REF",
-              help="model for this run, e.g. deepseek-flash; a bare -m picks one from a menu")
+              help="model for this run, e.g. deepseek-flash; a bare -m picks one from a menu "
+                   "(one-shot tasks otherwise default to auto)")
 @click.option("-r", "--resume", is_flag=True,
               help="resume the last session in this workspace")
 def main(task: tuple[str, ...], cwd: Path | None, max_turns: int | None, resume: bool,
@@ -177,15 +178,21 @@ async def async_main(options: Options) -> None:
     # empty model from $AGENT7_MODEL or the snapshot keeps its old meaning.
     pick = options.model == PICK_MODEL
     # `-m` > $AGENT7_MODEL > the workspace's last model.
-    workspace_model = os.environ.get("AGENT7_MODEL", "").strip() or (
-        saved.get("model_ref", "") if saved else ""
-    )
-    model = workspace_model if options.model is None else options.model
-    saved_provider, sep, _ = model.partition("/")
+    env_model = os.environ.get("AGENT7_MODEL", "").strip()
+    workspace_model = env_model or (saved.get("model_ref", "") if saved else "")
+    saved_provider, sep, _ = workspace_model.partition("/")
     reuse_saved_model = (
         saved is not None and options.model is None
-        and (model == AUTO_REF or bool(sep) and get_provider(saved_provider) is not None)
-        and not os.environ.get("AGENT7_MODEL", "").strip()
+        and (workspace_model == AUTO_REF
+             or bool(sep) and get_provider(saved_provider) is not None)
+        and not env_model
+    )
+    # A one-shot with no explicit choice starts on auto: the task itself is the
+    # only hint about which model fits. `-m` and $AGENT7_MODEL still win, and
+    # the saved model remains a fallback when auto has no usable candidates.
+    implicit_auto = bool(task) and options.model is None and not env_model
+    model = AUTO_REF if implicit_auto else (
+        workspace_model if options.model is None else options.model
     )
     if pick and not can_pick_models():
         err.print("[red]# a bare -m shows a menu, which needs a terminal — "
@@ -231,10 +238,10 @@ async def async_main(options: Options) -> None:
 
     try:
         ids: list[str] = []
-        # A saved provider/model ref is already actionable. Do not make every
-        # REPL wait on every provider's /models endpoint just to reuse it.
-        # Explicit choices and first-time setup still fetch; auto can use its
-        # reviewed fallback targets and normal failover when no list is loaded.
+        # A saved provider/model ref is already actionable, and auto reaches its
+        # reviewed targets without a list: do not make startup wait on every
+        # provider's /models endpoint just to reuse one. Explicit choices and
+        # first-time setup still fetch.
         if all_creds and not reuse_saved_model:
             try:
                 ids = await fetch_models(state)
@@ -246,13 +253,24 @@ async def async_main(options: Options) -> None:
             result = await switch_model(state, model)
             if result.message.startswith(("unknown", "ambiguous", "auto:")):
                 err.print(f"[dim]# {result.message}[/dim]")
-                if options.model is not None or result.message.startswith("auto:"):
-                    # A ref the user typed must not quietly become another model.
+                # A ref the user typed must not quietly become another model.
+                # Neither may an explicit auto from $AGENT7_MODEL or a snapshot.
+                if options.model is not None or (model == AUTO_REF and not implicit_auto):
                     raise SystemExit(1)
-                if ids:
-                    await switch_model(state, ids[0])
+                # An implicit one-shot auto is only a default: try the saved
+                # model, then the first fetched model, before falling back to
+                # the active provider's default model.
+                fallbacks = ([workspace_model, *ids[:1]] if implicit_auto else ids[:1])
+                for fallback in fallbacks:
+                    if fallback and fallback != AUTO_REF:
+                        result = await switch_model(state, fallback)
+                        if not result.message.startswith(("unknown", "ambiguous", "auto:")):
+                            break
                 else:
-                    state.set_model(model)
+                    if implicit_auto:
+                        state.set_model(default_model_for(state.provider_id))
+                    else:
+                        state.set_model(model)
         elif state.model in ("", "pending"):
             if ids:
                 await switch_model(state, ids[0])

@@ -111,6 +111,7 @@ class ModelOptionRunTests(unittest.TestCase):
         pick: str | None = None,
         can_pick: bool = True,
         switch_message: str = "ok",
+        switch_messages: dict[str, str] | None = None,
         env_model: str | None = None,
     ) -> None:
         """Run async_main; the mocks it used are left on `self.last`."""
@@ -120,7 +121,11 @@ class ModelOptionRunTests(unittest.TestCase):
         provider = SimpleNamespace(
             id="deepseek", make_client=lambda cred: SimpleNamespace(close=AsyncMock())
         )
-        switch = AsyncMock(return_value=SimpleNamespace(message=switch_message))
+        if switch_messages is None:
+            switch = AsyncMock(return_value=SimpleNamespace(message=switch_message))
+        else:
+            switch = AsyncMock(side_effect=lambda _session, ref: SimpleNamespace(
+                message=switch_messages.get(ref, "ok")))
         run_turn = AsyncMock(return_value="done")
         picker = AsyncMock(return_value=pick)
         fetch = AsyncMock(return_value=list(models))
@@ -203,14 +208,68 @@ class ModelOptionRunTests(unittest.TestCase):
         )
         self.last.run.assert_awaited_once()
 
-    def test_reusing_the_workspace_model_skips_the_startup_model_fetch(self) -> None:
+    def test_a_saved_model_skips_the_startup_fetch_for_auto(self) -> None:
         self.save_snapshot()
 
         self.run_cli(["go"])
 
         self.last.fetch.assert_not_awaited()
-        self.assertEqual(self.last.switch.await_args.args[1], "kimi/kimi-for-coding")
+        # The saved model is the fallback; the one-shot still starts on auto.
+        self.assertEqual(self.last.switch.await_args.args[1], "auto")
         self.last.run.assert_awaited_once()
+
+    def test_repl_still_reuses_the_workspace_model(self) -> None:
+        self.save_snapshot()
+
+        with patch.object(cli, "repl_loop", new=AsyncMock()):
+            self.run_cli([])
+
+        self.last.fetch.assert_not_awaited()
+        self.assertEqual(self.last.switch.await_args.args[1], "kimi/kimi-for-coding")
+
+    def test_a_one_shot_defaults_to_auto(self) -> None:
+        self.run_cli(["fix", "it"])
+
+        self.assertEqual(self.last.switch.await_args.args[1], "auto")
+        self.assertEqual(self.last.run.await_args.args[1], "fix it")
+
+    def test_auto_defaults_can_be_overridden_by_env_or_dash_m(self) -> None:
+        self.run_cli(["go"], env_model="kimi/kimi-for-coding")
+        self.assertEqual(self.last.switch.await_args.args[1], "kimi/kimi-for-coding")
+
+        self.run_cli(["-m", "deepseek-flash", "go"])
+        self.assertEqual(self.last.switch.await_args.args[1], "deepseek-flash")
+
+    def test_an_unavailable_auto_falls_back_to_a_listed_model(self) -> None:
+        self.run_cli(["go"],
+                     switch_messages={"auto": "auto: no supported models with credentials"})
+
+        self.assertEqual(
+            [call.args[1] for call in self.last.switch.await_args_list],
+            ["auto", "deepseek/deepseek-chat"],
+        )
+        self.last.run.assert_awaited_once()
+
+    def test_an_unavailable_auto_falls_back_to_the_workspace_model(self) -> None:
+        self.save_snapshot()
+
+        self.run_cli(["go"],
+                     switch_messages={"auto": "auto: no supported models with credentials"})
+
+        self.assertEqual(
+            [call.args[1] for call in self.last.switch.await_args_list],
+            ["auto", "kimi/kimi-for-coding"],
+        )
+        self.last.run.assert_awaited_once()
+
+    def test_an_unavailable_auto_with_nothing_to_fall_back_to_uses_the_provider_default(
+        self,
+    ) -> None:
+        self.run_cli(["go"], models=(),
+                     switch_messages={"auto": "auto: no supported models with credentials"})
+
+        self.last.run.assert_awaited_once()
+        self.assertEqual(self.last.run.await_args.args[0].model, "deepseek-chat")
 
     def test_repl_reuse_prefetches_models_behind_the_prompt(self) -> None:
         self.save_snapshot()
@@ -221,7 +280,7 @@ class ModelOptionRunTests(unittest.TestCase):
         self.last.fetch.assert_not_awaited()
         self.last.prefetch.assert_called_once()
 
-    def test_reusing_auto_also_skips_the_startup_model_fetch(self) -> None:
+    def test_a_saved_auto_skips_the_startup_fetch(self) -> None:
         self.save_snapshot(model_ref="auto")
 
         self.run_cli(["go"])
@@ -244,8 +303,9 @@ class ModelOptionRunTests(unittest.TestCase):
     def test_a_removed_saved_model_is_refreshed_and_falls_back(self) -> None:
         self.save_snapshot(model_ref="xai/grok-4.7")
 
-        self.run_cli(["go"], models=("deepseek/deepseek-chat",),
-                     providers=("deepseek",), switch_message="unknown provider 'xai'")
+        with patch.object(cli, "repl_loop", new=AsyncMock()):
+            self.run_cli([], models=("deepseek/deepseek-chat",),
+                         providers=("deepseek",), switch_message="unknown provider 'xai'")
 
         self.last.fetch.assert_awaited_once()
         self.assertEqual(

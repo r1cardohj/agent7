@@ -35,7 +35,7 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 - **Markdown rendering** — final replies rendered as Rich Markdown in the terminal, thanks rich.
 - **Paged final replies** — interactive answers that exceed one screen open in your system pager (usually `less`), or a built-in pager on Windows; shorter answers print directly. The built-in pager shows which lines are on screen and accepts the arrow keys, PageUp/PageDown, Space, Home/End, the mouse wheel, and `q` (or Esc) to continue. The rendered reply stays in the terminal after you quit. Redirected output is never paged.
 - **Provider login** — paste an API key for DeepSeek or Kimi (`/login` or env); switch models in-session
-- **Auto intent routing** — `/model auto` scores the current task against reviewed available models, then fails over in score order
+- **Auto intent routing** — one-shot tasks use it by default; `/model auto` scores the current task against reviewed available models, then fails over in score order
 
 
 ## Install
@@ -69,7 +69,7 @@ You can also log in from inside the REPL:
 ## Usage
 
 ```bash
-uv run agent7 "create hello.py that prints hi"   # one-shot
+uv run agent7 "create hello.py that prints hi"   # one-shot, auto-routed
 uv run agent7 -m deepseek-flash "say hi"         # one-shot on a chosen model
 uv run agent7 -m                                 # pick the model from a menu
 uv run agent7                                    # new REPL session
@@ -83,9 +83,11 @@ The command line is a [click](https://click.palletsprojects.com) command in `age
 live in `agent7/repl.py`.
 
 Each workspace keeps a single snapshot — starting without `-r` begins a fresh conversation but
-reuses the last selected model. Opening or leaving an empty REPL does not touch the saved snapshot;
-a new conversation replaces it only after the first agent task. Set `$AGENT7_MODEL` to override the
-model choice. Active sessions are saved automatically after tasks, commands, interruptions, and exit.
+reuses the last selected model in the REPL. A one-shot task with no explicit model starts on `auto`
+instead; the saved model remains its fallback, and the REPL still reuses it. Opening or leaving an
+empty REPL does not touch the saved snapshot; a new conversation replaces it only after the first
+agent task. Set `$AGENT7_MODEL` to override the model choice. Active sessions are saved
+automatically after tasks, commands, interruptions, and exit.
 With `-r`, the saved user/assistant conversation is printed before the REPL prompt or one-shot task;
 system and tool messages are omitted.
 Model calls use the OpenAI Responses API with local function tools. Sessions replay raw output
@@ -103,16 +105,20 @@ can lose the in-progress turn.
 `/model` does; a bare `-m` opens an [fzp](https://github.com/r1cardohj/fzp) picker over every model
 the logged-in providers offer — type to filter, Enter to choose, Esc or Ctrl-C to cancel. The menu
 starts from the model the workspace would otherwise use, and falls back to each provider's default
-when the model list cannot be fetched. Precedence is `-m` > `$AGENT7_MODEL` > the workspace's last
-model. A `-m` that names nothing usable stops the run instead of quietly picking another model, and
-a run that never starts (cancelled menu, bad `-m`) leaves the workspace snapshot untouched. Because
-`-m` takes the following word as its value, a bare `-m` before a task needs a separator:
+when the model list cannot be fetched. Precedence is `-m` > `$AGENT7_MODEL` > the default, where the
+default is the workspace's last model in the REPL and `auto` for a one-shot task. If `auto` cannot
+build a route, a one-shot falls back to the saved model, then the fetched model list, then the
+active provider's default. A `-m` that names nothing usable stops the run instead of quietly
+picking another model, and a run that never starts (cancelled menu, bad `-m`) leaves the workspace
+snapshot untouched. Because `-m` takes the following word as its value, a bare `-m` before a task
+needs a separator:
 `agent7 -m -- "fix it"` (or put the task first: `agent7 "fix it" -m`).
 Reusing a saved model does not block startup on provider discovery. Interactive sessions
 refresh the model list in the background; `/model` joins an in-flight refresh instead of
 issuing duplicate requests, or reads the populated cache immediately.
 
-Choose `auto` with `agent7 -m auto` or `/model auto`; there is no route configuration. agent7
+Choose `auto` with `agent7 -m auto` or `/model auto`; one-shot tasks use it by default, and there
+is no route configuration. agent7
 builds the candidate pool from its reviewed capability table, your logged-in providers, and
 the models currently listed by those providers:
 
