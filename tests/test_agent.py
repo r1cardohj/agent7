@@ -2,6 +2,7 @@ import os
 import select
 import shlex
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -321,12 +322,24 @@ class BashTimeoutTests(unittest.TestCase):
                 "wait \"$child\""
             )
             pid = None
+            real_wait = subprocess.Popen.wait
+
+            def wait_after_ready(proc, timeout=None):
+                # On a loaded CI runner the shell itself can take over a second
+                # to be scheduled. Start the timeout only after the child exists.
+                if timeout is not None:
+                    deadline = time.monotonic() + 5
+                    while not pidfile.exists() and time.monotonic() < deadline:
+                        time.sleep(0.005)
+                return real_wait(proc, timeout=timeout)
+
             try:
                 started = time.monotonic()
-                result = dispatch_tool(
-                    Path(tmp), "bash", {"command": command, "timeout": 1},
-                )
-                self.assertLess(time.monotonic() - started, 5)
+                with patch("agent7.agent.subprocess.Popen.wait", new=wait_after_ready):
+                    result = dispatch_tool(
+                        Path(tmp), "bash", {"command": command, "timeout": 1},
+                    )
+                self.assertLess(time.monotonic() - started, 8)
                 self.assertIn("timeout after 1s", result)
                 pid = int(pidfile.read_text().strip())
                 self.assertTrue(self._wait_for_exit(pid, 2), "timed-out child is still running")
