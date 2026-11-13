@@ -30,8 +30,8 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 ## Features
 
 - **Deliberately minimal harness** — four tools, one loop, no orchestration
-- **Complete CLI agent UX** — streaming thinking + answer, tool lines with ✓/✗, edit/write preview, vi-mode REPL with a bottom status bar, fuzzy `@path` completion, session resume
-- **Slash commands** — `/help` `/model` `/status` `/login` `/logout` `/compact`
+- **Complete CLI agent UX** — streaming thinking + answer, tool lines with ✓/✗, edit/write preview, vi-mode REPL with a bottom status bar, fuzzy `@path` completion, isolated session resume and safe deletion
+- **Slash commands** — `/help` `/session` `/model` `/status` `/login` `/logout` `/compact`
 - **Markdown rendering** — final replies rendered as Rich Markdown in the terminal, thanks rich.
 - **Paged final replies** — interactive answers that exceed one screen open in your system pager (usually `less`), or a built-in pager on Windows; shorter answers print directly. The built-in pager shows which lines are on screen and accepts the arrow keys, PageUp/PageDown, Space, Home/End, the mouse wheel, and `q` (or Esc) to continue. The rendered reply stays in the terminal after you quit. Redirected output is never paged.
 - **Provider login** — paste an API key for DeepSeek or Kimi (`/login` or env); switch models in-session
@@ -74,23 +74,37 @@ uv run agent7 "create hello.py that prints hi"   # one-shot, auto-routed
 uv run agent7 -m deepseek-flash "say hi"         # one-shot on a chosen model
 uv run agent7 -m                                 # pick the model from a menu
 uv run agent7                                    # new REPL session
-uv run agent7 -r                                 # resume this cwd's session
-uv run agent7 -r "continue"                      # resume + one-shot
-uv run agent7 --help                             # --cwd, --max-turns, -m, -r, --version
+uv run agent7 -r                                 # pick a session to resume
+uv run agent7 -r SESSION_ID                      # resume a specific session
+uv run agent7 -r "continue"                      # latest session + one-shot
+uv run agent7 --delete                           # pick a session to delete
+uv run agent7 --delete SESSION_ID                # delete a specific session
+uv run agent7 --help                             # --cwd, --max-turns, -m, -r, --delete, --version
 ```
 
 The command line is a [click](https://click.palletsprojects.com) command in `agent7/cli.py`
 (options, session bootstrap, one-shot runs); the prompt, completion menu and reply rendering
 live in `agent7/repl.py`.
 
-Each workspace keeps a single snapshot — starting without `-r` begins a fresh conversation but
-reuses the last selected model in the REPL. A one-shot task with no explicit model starts on `auto`
-instead; the saved model remains its fallback, and the REPL still reuses it. Opening or leaving an
-empty REPL does not touch the saved snapshot; a new conversation replaces it only after the first
-agent task. Set `$AGENT7_MODEL` to override the model choice. Active sessions are saved
-automatically after tasks, commands, interruptions, and exit.
-With `-r`, the saved user/assistant conversation is printed before the REPL prompt or one-shot task;
-system and tool messages are omitted.
+Every conversation is a separate session with a unique `sess-…` ID and its own snapshot, including
+multiple sessions in the same workspace. Its readable name is generated automatically from the first
+user message, so no naming step is needed. Starting without `-r` begins a fresh conversation but
+reuses the most recently selected model in the REPL. A one-shot task with no explicit model starts on
+`auto` instead; the saved model remains its fallback. Set `$AGENT7_MODEL` to override the model choice.
+
+A bare `-r` opens an fzp picker over the current workspace's sessions, showing each name and ID;
+`agent7 -r SESSION_ID` resumes one directly. Inside the REPL, `/session` opens the same picker and
+switches the conversation in place (`/session SESSION_ID` also works). With `-r`, the saved
+user/assistant conversation is printed before the REPL prompt or one-shot task; system and tool
+messages are omitted. For compatibility, `-r "continue"` still resumes the latest session and runs
+that one-shot without opening the picker. Opening or leaving an untouched new REPL creates no file;
+active sessions are saved automatically after tasks, commands, interruptions, and exit.
+
+`--delete` uses the same picker when no ID is given and always asks for confirmation before moving
+the snapshot to `${XDG_STATE_HOME:-~/.local/state}/agent7/trash/`. It never overwrites an older
+trashed session. Inside the REPL, use `/session delete` or `/session delete SESSION_ID`; the delete
+picker omits the active session, while naming the active ID directly is refused so a later save
+cannot silently recreate it. There is no automatic trash cleanup yet.
 Model calls use the OpenAI Responses API with local function tools. Sessions replay raw output
 items to their originating provider where required, without using server-side conversation state;
 older snapshots and provider switches use portable function calls and results instead.
@@ -143,15 +157,16 @@ blocking the task. The snapshot keeps the logical choice `auto`, while the statu
 the concrete target, intent, and score as `auto → provider/model · coding · 91`. `/status`
 includes the scorer and candidate scores. No quota-aware selection is performed.
 
-REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
+REPL commands: `/help` `/session` `/model` `/status` `/login` `/logout` `/compact`.
 Status lives in a bar docked to the bottom row of the terminal while you type:
 `model · context · cwd`, with the context gauge turning yellow then red as the window fills,
 and the vi mode (`INSERT` / `NORMAL` / `REPLACE`) on the right. The prompt itself stays a bare
 `>`. Set `AGENT7_NO_STATUSBAR=1` to go back to a plain prompt.
 Press Ctrl-E to edit multiline input in `$VISUAL` / `$EDITOR` (falling back to the system editor).
 After `:wq`, the text returns to the prompt for review; Enter submits it. Set `EDITOR=vim` to use Vim.
-Exit with Ctrl-D (or Ctrl-Z on Windows). Ctrl-C discards the current input or interrupts
-the running turn, then returns to the prompt instead of exiting the REPL.
+Exit with Ctrl-D (or Ctrl-Z on Windows). Leaving a saved session prints
+`agent7 -r SESSION_ID` so you can copy the command to resume it quickly. Ctrl-C discards the current
+input or interrupts the running turn, then returns to the prompt instead of exiting the REPL.
 
 Reasoning models (DeepSeek and Kimi) stream their Responses reasoning events live: they
 show up dimmed under a `thinking` header, before the answer and above each tool line. In a
@@ -168,7 +183,8 @@ blocks the prompt. Tab accepts, directories keep going (`@agent7/` → `@agent7/
 and spaces are escaped (`@my\ file.txt`), so the path the model sees is the path it can read.
 
 The menu is fuzzy, powered by [fzp](https://github.com/r1cardohj/fzp): `@mn` finds `main.py`,
-`/mdl` finds `/model`, `/model sonnet` finds `anthropic/claude-sonnet-4`. Candidates are
+`/mdl` finds `/model`, `/model sonnet` finds `anthropic/claude-sonnet-4`, and `-r`, `/session`, or
+`--delete` filters sessions by name or ID. Candidates are
 subsequence-matched and ranked by score (consecutive hits and word starts win). Matched
 characters are marked in bright green and bold, foreground only; the background is reserved
 for the selected row, so a match never punches a colored hole in the highlight. Commands,
