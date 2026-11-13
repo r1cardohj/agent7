@@ -35,6 +35,7 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 - **Markdown rendering** — final replies rendered as Rich Markdown in the terminal, thanks rich.
 - **Paged final replies** — interactive answers that exceed one screen open in your system pager (usually `less`), or a built-in pager on Windows; shorter answers print directly. The built-in pager shows which lines are on screen and accepts the arrow keys, PageUp/PageDown, Space, Home/End, the mouse wheel, and `q` (or Esc) to continue. The rendered reply stays in the terminal after you quit. Redirected output is never paged.
 - **Provider login** — paste an API key for DeepSeek, Grok, or Kimi (`/login` or env); switch models in-session
+- **Auto intent routing** — `/model auto` scores the current task against reviewed available models, then fails over in score order
 
 
 ## Install
@@ -110,6 +111,30 @@ model. A `-m` that names nothing usable stops the run instead of quietly picking
 a run that never starts (cancelled menu, bad `-m`) leaves the workspace snapshot untouched. Because
 `-m` takes the following word as its value, a bare `-m` before a task needs a separator:
 `agent7 -m -- "fix it"` (or put the task first: `agent7 "fix it" -m`).
+
+Choose `auto` with `agent7 -m auto` or `/model auto`; there is no route configuration. agent7
+builds the candidate pool from its reviewed capability table, your logged-in providers, and
+the models currently listed by those providers:
+
+| Models | Tags |
+| --- | --- |
+| `deepseek-flash`, `kimi-for-coding`, `grok-build-0.1` | fast, coding |
+| `grok-4.7`, `k3.1-pro` | strong |
+
+The first available fast model scores all candidates for each new user task in one short,
+non-streaming, zero-temperature request. The highest-scoring model handles the whole task,
+including its tool rounds. The first task has no incumbent and always uses the highest score;
+on later tasks, a close score keeps the current model to avoid needless switching. Only reviewed
+models join auto — other listed models remain available for explicit `/model` selection. If
+the model list cannot be fetched, reviewed models from logged-in providers are still tried.
+
+Each execution target keeps the normal transient-error retry budget. Authentication, permission,
+and missing-model errors (401/403/404) skip same-target retries but can still fail over. Only a
+failure before any text or reasoning was emitted can move to the next target, in score order.
+Scoring timeout, failure, or invalid JSON falls back to the current/default target instead of
+blocking the task. The snapshot keeps the logical choice `auto`, while the status bar shows
+the concrete target, intent, and score as `auto → provider/model · coding · 91`. `/status`
+includes the scorer and candidate scores. No quota-aware selection is performed.
 
 REPL commands: `/help` `/model` `/status` `/login` `/logout` `/compact`.
 Status lives in a bar docked to the bottom row of the terminal while you type:
@@ -240,6 +265,14 @@ retries that turn once.
 - **Large outputs are bounded**: `read` streams the file and keeps only the window it
   returns; `bash` captures to temp files and reads back ~12k chars. A 100 MB log costs
   a few hundred KB of memory, not 300 MB.
+
+## Evaluating auto routing
+
+`evals/` contains an opt-in, live-API benchmark that compares fixed models, a simple
+two-tier ablation, and full auto routing on isolated coding tasks. It records independent
+verification, routing decisions, scoring/execution tokens, latency, and failovers, then renders
+a paired-bootstrap Markdown report. See [evals/README.md](evals/README.md); start with
+`uv run python -m evals.run --dry-run`. CI never runs these paid evaluations.
 
 ## What it is not
 

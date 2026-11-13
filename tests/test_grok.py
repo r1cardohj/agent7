@@ -67,6 +67,7 @@ class GrokProviderTests(unittest.TestCase):
     def test_grok_context_limit(self) -> None:
         self.assertEqual(resolve_context_limit("grok-4"), 256_000)
         self.assertEqual(resolve_context_limit("grok-4-fast"), 256_000)
+        self.assertEqual(resolve_context_limit("grok-4.7"), 500_000)
         self.assertEqual(resolve_context_limit("grok-3"), 131_072)
         self.assertEqual(resolve_context_limit("grok-build-0.1"), 256_000)
         self.assertEqual(resolve_context_limit("grok build 0.1"), 256_000)

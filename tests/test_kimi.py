@@ -61,7 +61,7 @@ class KimiProviderTests(unittest.TestCase):
         )
 
     def test_kimi_context_limit(self) -> None:
-        self.assertEqual(resolve_context_limit("kimi-for-coding"), 262_144)
+        self.assertEqual(resolve_context_limit("kimi-for-coding"), 1_048_576)
         self.assertEqual(resolve_context_limit("kimi-for-coding-highspeed"), 262_144)
 
 

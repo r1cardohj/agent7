@@ -29,6 +29,7 @@ from .providers import (
     resolve_default,
 )
 from .repl import err, pick_model, print_history, repl_loop, run_turn
+from .routing import AUTO_REF
 from .session import Session
 from .store import resume, resume_messages, save, timestamp
 
@@ -137,14 +138,15 @@ def can_pick_models() -> bool:
     )
 
 def model_menu(session: Session, ids: list[str]) -> list[str]:
-    """The refs a bare `-m` offers: the fetched list, else each provider's default."""
-    if ids:
-        return list(ids)
-    return [
+    """The refs a bare `-m` offers: models, provider defaults, and built-in auto."""
+    refs = list(ids) if ids else [
         f"{p.id}/{p.default_model}"
         for p in list_providers()
         if p.default_model and p.id in session.credentials
     ]
+    if session.credentials:
+        refs.append(AUTO_REF)
+    return refs
 
 async def choose_model(session: Session, ids: list[str], *, current: str = "") -> str:
     """Pick this run's model from a fuzzy menu; exits instead of guessing."""
@@ -232,9 +234,9 @@ async def async_main(options: Options) -> None:
             model = await choose_model(state, ids, current=workspace_model)
         if model:
             result = await switch_model(state, model)
-            if result.message.startswith(("unknown", "ambiguous")):
+            if result.message.startswith(("unknown", "ambiguous", "auto:")):
                 err.print(f"[dim]# {result.message}[/dim]")
-                if options.model is not None:
+                if options.model is not None or result.message.startswith("auto:"):
                     # A ref the user typed must not quietly become another model.
                     raise SystemExit(1)
                 if ids:
@@ -248,7 +250,7 @@ async def async_main(options: Options) -> None:
                 state.set_model(default_model_for(state.provider_id))
         started = True
         emit_lifecycle(state, "session_started")
-        err.print(f"[dim]# agent7 v{__version__}  model={state.model_ref or state.model}  "
+        err.print(f"[dim]# agent7 v{__version__}  model={state.display_model}  "
                   f"providers=[{','.join(state.credentials) or 'none'}]  "
                   f"shell={SHELL.name}  cwd={state.cwd}[/dim]")
         action = "resumed" if snapshot else "new"
@@ -271,4 +273,4 @@ async def async_main(options: Options) -> None:
         try:
             persist()
         finally:
-            await state.client.close()
+            await state.close()

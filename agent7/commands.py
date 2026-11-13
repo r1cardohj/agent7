@@ -17,7 +17,8 @@ from .providers import (
     login_hints,
     resolve_all,
 )
-from .session import Session, fmt_limit, format_usage
+from .routing import AUTO_REF, build_auto_route
+from .session import Session, fmt_limit, format_usage, resolve_context_limit
 
 @dataclass
 class CommandResult:
@@ -95,6 +96,17 @@ def resolve_model_ref(session: Session, name: str) -> tuple[str, str, str] | str
     return f"unknown model {raw!r} — try /model"
 
 async def switch_model(session: Session, name: str) -> CommandResult:
+    if name.strip().lower() == AUTO_REF:
+        try:
+            route = build_auto_route(
+                session.credentials, models=session.models_cache,
+                context_limit=resolve_context_limit,
+            )
+        except ValueError as e:
+            return CommandResult(message=str(e))
+        old = session.model_ref or session.model
+        await session.apply_route(route)
+        return CommandResult(message=f"model: {old} → {session.display_model}")
     resolved = resolve_model_ref(session, name)
     if isinstance(resolved, str):
         return CommandResult(message=resolved)
@@ -106,7 +118,7 @@ async def switch_model(session: Session, name: str) -> CommandResult:
     if cred is None:
         return CommandResult(message=f"no credentials for {provider_id} — /login {p.preferred_login}")
     session.remember(provider_id, cred)
-    if session.provider_id != provider_id or session.credential is not cred:
+    if session.route is not None or session.provider_id != provider_id or session.credential is not cred:
         await session.apply(p, cred)
     old = session.model_ref or session.model
     session.set_model(model_id, ref=ref)
@@ -128,6 +140,7 @@ async def dispatch(session: Session, line: str) -> CommandResult | None:
     return await result if asyncio.iscoroutine(result) else result
 
 async def _activate(session: Session, prefer: str | None = None) -> CommandResult:
+    keep_auto = session.model_ref == AUTO_REF
     session.credentials.update(resolve_all())
     target = get_provider(prefer) if prefer else None
     cred = (session.credentials.get(target.id) or target.resolve()) if target else None
@@ -141,27 +154,32 @@ async def _activate(session: Session, prefer: str | None = None) -> CommandResul
             target, cred = get_provider(pid), session.credentials[pid]
     if not target or not cred:
         return CommandResult(message=f"no credentials — try {login_hints()}")
-    await session.apply(target, cred)
+    if not keep_auto:
+        await session.apply(target, cred)
     try:
         ids, note = await fetch_models(session, refresh=True), ""
     except Exception as e:  # noqa: BLE001
         ids, note = [], f"\nmodels fetch failed: {e}"
     cur = session.model_ref or session.model
-    if ids and (not session.model or session.model == "pending" or cur not in ids):
+    if keep_auto:
+        result = await switch_model(session, AUTO_REF)
+        if result.message.startswith("auto:"):
+            note += f"\n{result.message}"
+    elif ids and (not session.model or session.model == "pending" or cur not in ids):
         pick = next((r for r in ids if r.startswith(f"{target.id}/")), ids[0])
         await switch_model(session, pick)
     return CommandResult(
         message=(
             f"active: {target.id}  source={cred.source}\n"
             f"providers: [{', '.join(session.credentials)}]\n"
-            f"base_url={cred.base_url}\nmodel={session.model_ref or session.model}{note}"
+            f"base_url={cred.base_url}\nmodel={session.display_model}{note}"
         )
     )
 
 @command("help", help="list slash commands")
 def cmd_help(session: Session, args: list[str]) -> CommandResult:
     lines = ["commands:"] + [f"  /{n:<12} {h}" for n, h in list_commands()]
-    lines.append(f"current: model={session.model_ref or session.model}  cwd={session.cwd}")
+    lines.append(f"current: model={session.display_model}  cwd={session.cwd}")
     lines.append("tip: @, /cmd and /model args are fuzzy-matched (try @mn, /mdl)")
     return CommandResult(message="\n".join(lines))
 
@@ -169,13 +187,15 @@ def cmd_help(session: Session, args: list[str]) -> CommandResult:
 async def cmd_model(session: Session, args: list[str]) -> CommandResult:
     refresh = bool(args and args[0].lower() in ("refresh", "-r"))
     try:
-        available = await fetch_models(session, refresh=refresh)
+        available = list(await fetch_models(session, refresh=refresh))
+        if session.credentials:
+            available.append(AUTO_REF)
     except Exception as e:  # noqa: BLE001
         return CommandResult(message=f"failed to fetch models: {e}")
     cur = session.model_ref or session.model
     if not args or (refresh and len(args) == 1):
         providers = ", ".join(session.credentials) or (session.provider_id or "?")
-        lines = [f"model={cur}  providers=[{providers}]", "available:"]
+        lines = [f"model={session.display_model}  providers=[{providers}]", "available:"]
         lines += [f"  {'*' if m == cur else ' '} {m}" for m in available]
         lines.append("usage: /model <id|provider/id>  |  /model refresh")
         return CommandResult(message="\n".join(lines))
@@ -184,12 +204,22 @@ async def cmd_model(session: Session, args: list[str]) -> CommandResult:
 @command("status", help="show session status")
 def cmd_status(session: Session, args: list[str]) -> CommandResult:
     n = max(0, len(session.messages) - 1)
+    route_info = ""
+    if session.route and session.route.selection:
+        selection = session.route.selection
+        scores = ", ".join(
+            f"{ref}={score:.0f}"
+            for ref, score in sorted(selection.scores.items(), key=lambda item: -item[1])
+        )
+        route_info = f"\nscorer={selection.scorer_ref}\nscores={scores or 'unavailable'}"
+        if selection.error:
+            route_info += f"  error={selection.error}"
     return CommandResult(message=(
-        f"model={session.model_ref or session.model}\n"
+        f"model={session.display_model}\n"
         f"provider={session.provider_id}  source={session.cred_source}\n"
         f"providers=[{', '.join(session.credentials) or '?'}]\n"
         f"cwd={session.cwd}\nmessages={n}  max_turns={session.max_turns}\n"
-        f"{format_usage(session)}\nbase_url={session.client.base_url}"
+        f"{format_usage(session)}\nbase_url={session.client.base_url}{route_info}"
     ))
 
 @command("login", help="paste API key  (/login deepseek | /login grok | /login kimi)")

@@ -40,6 +40,7 @@ from .interrupt import run_with_interrupt_keys
 from .mascot import print_mascot
 from .pager import PromptToolkitPager
 from .providers import list_providers, login_hints
+from .routing import AUTO_REF
 from .session import (
     Session,
     context_pressure,
@@ -176,6 +177,20 @@ class ReplyPrinter:
     def on_compact(self, count: int) -> None:
         self._clear_waiting()
         err.print(f"[dim]# compacted {count} message(s)[/dim]")
+
+    def on_failover(self, old: str, new: str, error: BaseException) -> None:
+        self._clear_waiting()
+        reason = f"{type(error).__name__}: {error}".splitlines()[0]
+        err.print(f"[yellow]# route: {old} → {new} ({reason[:180]})[/yellow]")
+
+    def on_auto_selected(self, target: str, selection) -> None:
+        self._clear_waiting()
+        detail = selection.intent
+        if (score := selection.scores.get(target)) is not None:
+            detail += f" · {score:.0f}"
+        if selection.error:
+            detail += " · scoring unavailable"
+        err.print(f"[dim]# auto: {target} · {detail}[/dim]")
 
     def _show_counter(self) -> None:
         self._clear_waiting()
@@ -512,7 +527,7 @@ def status_bar(
     label, color = mode or vi_mode_label()
     pct = context_pressure(state)
     tone = context_tone(pct)
-    segments = [("", " "), ("bold", state.model_ref or state.model or "?")]
+    segments = [("", " "), ("bold", state.display_model or "?")]
     segments += [_STATUS_SEP, (f"fg:{tone}", format_context_prompt(state))]
     if pct is not None:
         segments.append((f"fg:{tone}", f" {pct}%"))
@@ -554,7 +569,10 @@ class ReplCompleter(Completer):
                 )
             return
         if cmd == "model":
-            for ref, match in fuzzy_filter(prefix, self.session.models_cache or []):
+            refs = list(self.session.models_cache or [])
+            if getattr(self.session, "credentials", None):
+                refs.append(AUTO_REF)
+            for ref, match in fuzzy_filter(prefix, refs):
                 yield Completion(ref, start_position=-len(prefix), display=highlight(ref, match.positions))
         elif cmd in ("login", "logout"):
             names = sorted({n for p in list_providers() for n in (p.id, *p.aliases)})
@@ -645,6 +663,19 @@ async def run_turn(session: Session, task: str, *, on_saved: Callable[[], None] 
 async def _run_agent_once(session: Session, task: str) -> str:
     finish: list[str] = []
     with ReplyPrinter() as rp:
+        route_shown = False
+
+        def on_route(target, previous, error) -> None:
+            nonlocal route_shown
+            session.use_route_target(target)
+            if previous is not None:
+                rp.on_failover(previous.ref, target.ref, error)
+            elif not route_shown and session.route and session.route.selection:
+                rp.on_auto_selected(target.ref, session.route.selection)
+                route_shown = True
+
+        if getattr(session, "route", None):
+            rp.on_model_start(0)  # also cover the non-streaming scoring request
         answer = await run_agent(
             task, cwd=session.cwd, client=session.client, model=session.model,
             max_turns=session.max_turns, messages=session.messages,
@@ -657,6 +688,7 @@ async def _run_agent_once(session: Session, task: str) -> str:
             on_compact=rp.on_compact,
             on_finish=finish.append,
             provider_id=getattr(session, "provider_id", None),
+            route=getattr(session, "route", None), on_route=on_route,
         )
     # A turn-limit pause is a warning, not an invisible or successful final answer.
     if notice := reply_notice(answer, finish[-1] if finish else None):

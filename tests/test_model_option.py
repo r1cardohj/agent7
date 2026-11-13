@@ -189,7 +189,7 @@ class ModelOptionRunTests(unittest.TestCase):
         self.run_cli(["-m", "--", "go"], pick="deepseek/deepseek-flash")
 
         self.assertEqual(self.last.picker.await_args.args[0],
-                         ["deepseek/deepseek-chat", "deepseek/deepseek-flash"])
+                         ["deepseek/deepseek-chat", "deepseek/deepseek-flash", "auto"])
         self.assertEqual(self.last.switch.await_args.args[1], "deepseek/deepseek-flash")
         self.assertEqual(self.last.run.await_args.args[1], "go")
 
@@ -204,7 +204,7 @@ class ModelOptionRunTests(unittest.TestCase):
     def test_the_menu_falls_back_to_provider_defaults(self) -> None:
         self.run_cli(["-m", "--", "go"], models=(), providers=("xai",), pick="xai/grok-4")
 
-        self.assertEqual(self.last.picker.await_args.args[0], ["xai/grok-4"])
+        self.assertEqual(self.last.picker.await_args.args[0], ["xai/grok-4", "auto"])
 
     def test_cancelling_the_menu_runs_nothing(self) -> None:
         with self.assertRaises(SystemExit) as raised:
