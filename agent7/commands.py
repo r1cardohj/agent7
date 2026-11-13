@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from getpass import getpass
 
-from .agent import compact_messages
+from .agent import SYSTEM, compact_messages
 from .providers import (
     agent7_auth_path,
     describe_found,
@@ -19,6 +19,7 @@ from .providers import (
 )
 from .routing import AUTO_REF, build_auto_route
 from .session import Session, fmt_limit, format_usage, resolve_context_limit
+from .store import list_sessions, load, resume_messages
 
 @dataclass
 class CommandResult:
@@ -246,6 +247,9 @@ async def cmd_model(session: Session, args: list[str]) -> CommandResult:
 @command("status", help="show session status")
 def cmd_status(session: Session, args: list[str]) -> CommandResult:
     n = max(0, len(session.messages) - 1)
+    identity = ""
+    if session_id := getattr(session, "id", ""):
+        identity = f"session={getattr(session, 'name', '') or 'New session'} ({session_id})\n"
     route_info = ""
     if session.route and session.route.selection:
         selection = session.route.selection
@@ -257,12 +261,65 @@ def cmd_status(session: Session, args: list[str]) -> CommandResult:
         if selection.error:
             route_info += f"  error={selection.error}"
     return CommandResult(message=(
-        f"model={session.display_model}\n"
+        f"model={session.display_model}\n{identity}"
         f"provider={session.provider_id}  source={session.cred_source}\n"
         f"providers=\\[{', '.join(session.credentials) or '?'}]\n"
         f"cwd={session.cwd}\nmessages={n}  max_turns={session.max_turns}\n"
         f"{format_usage(session)}\nbase_url={session.client.base_url}{route_info}"
     ))
+
+@command("session", help="switch sessions  (/session | /session <id>)")
+async def cmd_session(session: Session, args: list[str]) -> CommandResult:
+    # Picker/UI lives in repl; the local import avoids the commands <-> repl
+    # import cycle while keeping this a normal discoverable slash command.
+    from .repl import pick_session, print_history
+
+    current = getattr(session, "id", "")
+    if args:
+        session_id = args[0]
+    else:
+        snapshots = list_sessions(session.cwd)
+        if not snapshots:
+            return CommandResult(message="no saved sessions in this workspace")
+        picked = await pick_session(snapshots, current=current)
+        if picked is None:
+            return CommandResult(message="session: cancelled")
+        session_id = picked
+    if session_id == current:
+        return CommandResult(
+            message=f"session: already on {getattr(session, 'name', '') or 'New session'} ({session_id})"
+        )
+    try:
+        snapshot = load(session.cwd, session_id)
+    except ValueError as e:
+        return CommandResult(message=str(e))
+
+    saved_model = snapshot.get("model_ref")
+    if saved_model and saved_model != (session.model_ref or session.model):
+        result = await switch_model(session, saved_model)
+        if result.message.startswith(("unknown", "ambiguous", "auto:", "bad model", "no credentials")):
+            return CommandResult(message=f"session not switched: {result.message}")
+
+    old = getattr(session, "name", "") or current
+    system = SYSTEM
+    if session.messages and session.messages[0].get("role") == "system":
+        content = session.messages[0].get("content")
+        if isinstance(content, str):
+            system = content
+    messages = resume_messages(snapshot, system)
+    session.id = snapshot["id"]
+    session.name = snapshot["name"]
+    session.created_at = snapshot["created_at"]
+    session.persisted = True
+    session.messages[:] = messages
+    # Usage belongs to the conversation that produced it, not to the REPL
+    # process. The next turn will populate it from the selected session.
+    session.prompt_tokens = None
+    session.completion_tokens = None
+    session.total_tokens = None
+    print_history(snapshot["messages"])
+    return CommandResult(message=f"session: {old} → {session.name} ({session.id})")
+
 
 @command("login", help="paste API key  (/login deepseek | /login kimi)")
 async def cmd_login(session: Session, args: list[str]) -> CommandResult:

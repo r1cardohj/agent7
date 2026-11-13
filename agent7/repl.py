@@ -626,6 +626,31 @@ async def pick_model(models: list[str], *, current: str = "") -> str | None:
     # one-shot coroutine; Ctrl-C / Esc resolve to None rather than raising.
     return await Picker(items).pick_async()
 
+
+def session_choices(snapshots: list[dict], current: str = "") -> tuple[list[str], dict[str, str]]:
+    """Readable fzp rows mapped back to their unambiguous session IDs."""
+    ordered = sorted(snapshots, key=lambda data: data.get("id") != current)
+    items, ids = [], {}
+    for snapshot in ordered:
+        session_id = snapshot.get("id", "")
+        if not session_id:
+            continue
+        name = snapshot.get("name") or "New session"
+        item = f"{name}  [{session_id}]"
+        items.append(item)
+        ids[item] = session_id
+    return items, ids
+
+
+async def pick_session(snapshots: list[dict], *, current: str = "") -> str | None:
+    """Fuzzy-pick a session by its generated name; return its unique ID."""
+    items, ids = session_choices(snapshots, current)
+    if not items:
+        return None
+    picked = await Picker(items).pick_async()
+    return ids.get(picked) if picked is not None else None
+
+
 NO_TEXT_NOTICE = "no text in the reply — the model stopped without content (retry, or /model)"
 TRUNCATED_NOTICE = "no text in the reply — the model hit the output token limit (retry with a smaller step)"
 STOPPED_PREFIX = "(stopped after "
@@ -743,7 +768,7 @@ async def repl_loop(state: Session, persist: Callable[[bool], None]) -> None:
     if err.is_terminal and not os.environ.get("AGENT7_NO_MASCOT"):
         print_mascot(err)
     quit_hint = "Ctrl-Z to quit" if sys.platform == "win32" else "Ctrl-D to quit"
-    err.print(f"[dim]# REPL  /help · /login · /model · @file · Ctrl-E editor · {quit_hint}[/dim]")
+    err.print(f"[dim]# REPL  /help · /session · /login · /model · @file · Ctrl-E editor · {quit_hint}[/dim]")
     if not state.credentials:
         err.print(f"[dim]# no credentials — {login_hints()}[/dim]")
 
@@ -765,6 +790,8 @@ async def repl_loop(state: Session, persist: Callable[[bool], None]) -> None:
             line = (await prompt.prompt_async("> ")).strip()
         except EOFError:
             print(file=sys.stderr)
+            if getattr(state, "persisted", False):
+                err.print(f"[dim]# resume this session: agent7 -r {state.id}[/dim]")
             break
         except KeyboardInterrupt:
             # Ctrl-C abandons this input, not the whole REPL.

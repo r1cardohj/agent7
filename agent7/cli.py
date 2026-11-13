@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,15 +29,28 @@ from .providers import (
     resolve_all,
     resolve_default,
 )
-from .repl import err, pick_model, print_history, repl_loop, run_turn
+from .repl import err, pick_model, pick_session, print_history, repl_loop, run_turn
 from .routing import AUTO_REF
 from .session import Session
-from .store import resume, resume_messages, save, timestamp
+from .store import list_sessions, new_session_id, resume, resume_messages, save, timestamp
 
 PROG = "agent7"
 # What a bare `-m` parses to: pick the model for this run from a menu instead
 # of naming it. No model ref is empty, so the sentinel cannot collide.
 PICK_MODEL = ""
+# A bare -r opens session discovery. Generated IDs are distinguishable from a
+# legacy `-r "continue"` task, which remains a resume of the latest session.
+PICK_SESSION = ""
+RESUME_ID = re.compile(r"(?:sess-[0-9a-f]{32}|legacy-[0-9a-f]{16})")
+
+def _resume_args(task: str, value: str | None) -> tuple[str, bool | str]:
+    if value is None:
+        return task, False
+    if value == PICK_SESSION:
+        return task, True
+    if RESUME_ID.fullmatch(value):
+        return task, value
+    return " ".join(part for part in (value, task) if part), True
 
 @dataclass(frozen=True)
 class Options:
@@ -45,7 +59,7 @@ class Options:
     task: str = ""
     cwd: Path | None = None
     max_turns: int | None = None
-    resume: bool = False
+    resume: bool | str = False  # True: latest/picker; a string: exact session ID
     model: str | None = None  # None: default; PICK_MODEL: ask; else the ref
 
     @classmethod
@@ -60,7 +74,10 @@ class Options:
             raise SystemExit(exc.exit_code) from None
         with ctx:
             params = dict(ctx.params)
-        return cls(task=" ".join(params.pop("task")).strip(), **params)
+        task, resume_value = _resume_args(
+            " ".join(params.pop("task")).strip(), params.pop("resume")
+        )
+        return cls(task=task, resume=resume_value, **params)
 
 def _positive_int(_ctx: click.Context, _param: click.Parameter, value: int | None) -> int | None:
     if value is not None and value < 1:
@@ -100,13 +117,15 @@ def _force_utf8_stdio() -> None:
               metavar="REF",
               help="model for this run, e.g. deepseek-flash; a bare -m picks one from a menu "
                    "(one-shot tasks otherwise default to auto)")
-@click.option("-r", "--resume", is_flag=True,
-              help="resume the last session in this workspace")
-def main(task: tuple[str, ...], cwd: Path | None, max_turns: int | None, resume: bool,
+@click.option("-r", "--resume", is_flag=False, flag_value=PICK_SESSION, default=None,
+              metavar="SESSION_ID",
+              help="resume a session by ID; bare -r picks one from a menu")
+def main(task: tuple[str, ...], cwd: Path | None, max_turns: int | None, resume: str | None,
          model: str | None) -> None:
     _force_utf8_stdio()
     _load_dotenv()
-    options = Options(task=" ".join(task).strip(), cwd=cwd, max_turns=max_turns, resume=resume,
+    task_text, resume_value = _resume_args(" ".join(task).strip(), resume)
+    options = Options(task=task_text, cwd=cwd, max_turns=max_turns, resume=resume_value,
                       model=model)
     try:
         asyncio.run(async_main(options))
@@ -133,7 +152,7 @@ def resolve_max_turns(options: Options) -> int:
     return DEFAULT_MAX_TURNS
 
 def can_pick_models() -> bool:
-    """fzp's Picker needs a terminal on both ends; a pipe cannot choose a model."""
+    """fzp's Picker needs a terminal on both ends; a pipe cannot choose."""
     return bool(
         sys.stdin and sys.stdin.isatty() and sys.stderr and sys.stderr.isatty()
     )
@@ -166,8 +185,24 @@ async def async_main(options: Options) -> None:
     task = options.task or None
     cwd = (options.cwd or Path.cwd()).resolve()
     saved = None
+    resume_id = options.resume if isinstance(options.resume, str) else None
+    choose_resume = options.resume is True and not task
     try:
-        saved = resume(cwd)
+        if choose_resume:
+            if not can_pick_models():
+                raise SystemExit("a bare -r shows a session menu, which needs a terminal; "
+                                 "use agent7 -r SESSION_ID instead")
+            snapshots = list_sessions(cwd)
+            if not snapshots:
+                raise SystemExit(f"no sessions for workspace: {cwd}")
+            picked_session = await pick_session(snapshots)
+            if picked_session is None:
+                raise SystemExit("no session picked — cancelled")
+            saved = resume(cwd, picked_session)
+        else:
+            # A legacy `-r "continue"` still means the latest session. Without
+            # -r this read only supplies the last model for a fresh session.
+            saved = resume(cwd, resume_id)
     except ValueError as e:
         if options.resume:
             raise SystemExit(str(e)) from None
@@ -222,22 +257,25 @@ async def async_main(options: Options) -> None:
     state = Session(
         model=model or "pending", cwd=cwd, client=client, max_turns=max_turns,
         messages=resume_messages(snapshot, system) if snapshot else [{"role": "system", "content": system}],
+        id=snapshot["id"] if snapshot else new_session_id(),
+        name=snapshot.get("name", "") if snapshot else "", created_at=created_at,
+        persisted=snapshot is not None,
         provider_id=prov.id if prov else None, cred_source=cred.source if cred else None,
         credential=cred, credentials=dict(all_creds),
     )
     # A one-shot becomes a real session only once it runs: a run that never
-    # starts (bad -m, menu cancelled) must not replace the workspace snapshot.
-    committed = False
+    # starts (bad -m, menu cancelled) must not create a session snapshot.
+    committed = snapshot is not None
     started = False
     state.hooks.subscribe(HerdrReporter())
 
     def persist(commit: bool = False) -> None:
-        # Merely opening a new REPL must not replace the snapshot used by -r.
-        # The first agent turn makes it a real session and arms future saves.
+        # Merely opening a new REPL must not create a picker entry. The first
+        # agent turn makes it real; resumed/switched sessions are already real.
         nonlocal committed
-        committed = committed or commit
+        committed = committed or commit or state.persisted
         if committed:
-            save(state, created_at=created_at)
+            save(state, created_at=state.created_at)
 
     try:
         ids: list[str] = []
@@ -285,11 +323,11 @@ async def async_main(options: Options) -> None:
                   f"providers=\\[{','.join(state.credentials) or 'none'}]  "
                   f"shell={SHELL.name}  cwd={state.cwd}[/dim]")
         action = "resumed" if snapshot else "new"
-        err.print(f"[dim]# {action} session[/dim]")
+        err.print(f"[dim]# {action} session  name={state.name or 'New session'}  id={state.id}[/dim]")
         if snapshot:
             print_history(snapshot["messages"])
         if task:
-            committed = True  # from here on the run owns the workspace snapshot
+            committed = True  # from here on the run owns its session snapshot
             try:
                 await run_turn(state, task, on_saved=persist)
             except (Interrupted, asyncio.CancelledError, KeyboardInterrupt):

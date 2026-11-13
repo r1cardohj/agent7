@@ -16,6 +16,7 @@ from .agent import DEFAULT_MAX_TURNS
 from .hooks import LifecycleHooks
 from .providers import Credential, Provider, get_provider
 from .routing import AUTO_REF, FailoverRoute, RouteTarget
+from .store import new_session_id, timestamp
 
 async def _close_client(client: Any) -> None:
     if client is None:
@@ -112,6 +113,10 @@ class Session:
     client: AsyncOpenAI
     max_turns: int = DEFAULT_MAX_TURNS
     messages: list[dict[str, Any]] = field(default_factory=list)
+    id: str = field(default_factory=new_session_id)
+    name: str = ""
+    created_at: str = field(default_factory=timestamp)
+    persisted: bool = field(default=False, repr=False)
     models_cache: list[str] | None = None
     _models_fetch: asyncio.Task[list[str]] | None = field(default=None, repr=False)
     model_ref: str | None = None
