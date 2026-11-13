@@ -93,11 +93,13 @@ class CliLifecycleTests(unittest.TestCase):
             cwd = Path(root) / "work"
             cwd.mkdir()
             events: list[LifecycleEvent] = []
+            systems: list[str] = []
             client = SimpleNamespace(close=AsyncMock())
             provider = SimpleNamespace(id="deepseek", make_client=lambda cred: client)
             credential = SimpleNamespace(source="test")
 
             def session_with_events(**kwargs) -> Session:
+                systems.append(kwargs["messages"][0]["content"])
                 session = Session(**kwargs)
                 session.hooks.subscribe(events.append)
                 return session
@@ -108,6 +110,8 @@ class CliLifecycleTests(unittest.TestCase):
                 return "done"
 
             with patch.dict(os.environ, {"XDG_STATE_HOME": str(Path(root) / "state")}), \
+                 patch.object(cli, "background_tasks_instructions",
+                              return_value="\nHERDR-BACKGROUND") as instructions, \
                  patch.object(cli, "HerdrReporter", return_value=lambda event: None) as herdr, \
                  patch.object(cli, "Session", new=session_with_events), \
                  patch.object(cli, "resolve_all", return_value={"deepseek": credential}), \
@@ -119,7 +123,10 @@ class CliLifecycleTests(unittest.TestCase):
                  patch.object(cli, "run_turn", new=fake_run):
                 asyncio.run(cli.async_main(Options.parse(["--cwd", str(cwd), "go"])))
 
+            instructions.assert_called_once_with()
             herdr.assert_called_once_with()
+            self.assertEqual(len(systems), 1)
+            self.assertTrue(systems[0].endswith("HERDR-BACKGROUND"))
             self.assertEqual(
                 [event.kind for event in events],
                 ["session_started", "turn_started", "turn_succeeded", "session_ended"],

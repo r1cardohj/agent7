@@ -36,6 +36,7 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 - **Paged final replies** — interactive answers that exceed one screen open in your system pager (usually `less`), or a built-in pager on Windows; shorter answers print directly. The built-in pager shows which lines are on screen and accepts the arrow keys, PageUp/PageDown, Space, Home/End, the mouse wheel, and `q` (or Esc) to continue. The rendered reply stays in the terminal after you quit. Redirected output is never paged.
 - **Provider login** — paste an API key for DeepSeek or Kimi (`/login` or env); switch models in-session
 - **Auto intent routing** — one-shot tasks use it by default; `/model auto` scores the current task against reviewed available models, then fails over in score order
+- **Optional Herdr background runs** — inside a Herdr terminal with `hc` on `PATH`, a bundled on-demand skill manages long tests/builds and services while agent7 keeps working; outside Herdr agent7 uses ordinary synchronous bash
 
 
 ## Install
@@ -215,6 +216,18 @@ lifecycle through OSC 7501: `idle` at startup, `working` during a task, `done` o
 `blocked` at the turn limit, `idle` after an interruption, and `error` after a failed turn.
 This is an observer only: it adds no model tools, is inactive outside herdr, and never writes
 protocol bytes to a non-terminal stream. Set `AGENT7_NO_HERDR=1` to disable it.
+
+When both `HC_TERMINAL_ID` and the `hc` command are available, agent7 adds only a
+short pointer to its packaged [Herdr skill](agent7/skills/herdr/SKILL.md). The model
+reads that skill with the ordinary `read` tool before its first `hc` command in a
+task, keeping the full protocol out of the resident system prompt. Tests and builds
+start once with `hc run --bg --no-notify`, allow independent work, then collect the
+result with `hc wait` — `hc read` only when failure logs matter. Services use a
+stable name, never `--rm`, confirm readiness with `hc wait --output` or `hc read`,
+stay running while needed, and are stopped only on request with `hc kill`. Fast
+commands still use plain bash. This is an optional enhancement, not a runtime
+dependency: without herdr, without `hc`, with an unreadable skill, or with
+`AGENT7_NO_HERDR=1`, agent7 keeps using ordinary synchronous `bash`.
 
 Detaching leaves the original process running. When herdr restores a terminal as a fresh shell
 rather than rerunning agent7, run `agent7 -r` in the restored directory to resume the workspace

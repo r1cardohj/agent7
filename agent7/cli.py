@@ -18,7 +18,7 @@ from openai import AsyncOpenAI
 from . import __version__
 from .agent import DEFAULT_MAX_TURNS, SHELL, SYSTEM, Interrupted
 from .commands import fetch_models, prefetch_models, switch_model
-from .herdr import HerdrReporter
+from .herdr import HerdrReporter, background_tasks_instructions
 from .hooks import emit_lifecycle
 from .providers import (
     default_model_for,
@@ -216,9 +216,12 @@ async def async_main(options: Options) -> None:
                   "or run `uv run agent7` and `/login`.", file=sys.stderr)
             sys.exit(1)
         prov, cred = None, None
+    # Herdr-managed background runs are an optional optimization; ordinary bash
+    # remains the fallback in every other environment.
+    system = SYSTEM + background_tasks_instructions()
     state = Session(
         model=model or "pending", cwd=cwd, client=client, max_turns=max_turns,
-        messages=resume_messages(snapshot, SYSTEM) if snapshot else [{"role": "system", "content": SYSTEM}],
+        messages=resume_messages(snapshot, system) if snapshot else [{"role": "system", "content": system}],
         provider_id=prov.id if prov else None, cred_source=cred.source if cred else None,
         credential=cred, credentials=dict(all_creds),
     )
