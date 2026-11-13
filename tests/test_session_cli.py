@@ -25,6 +25,9 @@ class SessionCliTests(unittest.TestCase):
         self.cwd.mkdir()
         self.env = patch.dict(os.environ, {"XDG_STATE_HOME": str(self.root / "state")})
         self.env.start()
+        self.prefetch_patch = patch("agent7.cli.prefetch_models")
+        self.prefetch = self.prefetch_patch.start()
+        self.addCleanup(self.prefetch_patch.stop)
 
     def tearDown(self) -> None:
         self.env.stop()

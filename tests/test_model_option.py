@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from click.testing import CliRunner
 from rich.console import Console
@@ -15,6 +15,7 @@ from rich.console import Console
 from agent7 import cli, repl
 from agent7.agent import SYSTEM
 from agent7.cli import PICK_MODEL, Options, main
+from agent7.commands import cmd_model
 from agent7.store import load, save
 
 
@@ -122,14 +123,17 @@ class ModelOptionRunTests(unittest.TestCase):
         switch = AsyncMock(return_value=SimpleNamespace(message=switch_message))
         run_turn = AsyncMock(return_value="done")
         picker = AsyncMock(return_value=pick)
+        fetch = AsyncMock(return_value=list(models))
+        prefetch = Mock()
         stream = io.StringIO()
         self.last = SimpleNamespace(switch=switch, run=run_turn, picker=picker,
-                                    output=stream)
+                                    fetch=fetch, prefetch=prefetch, output=stream)
         with patch.object(cli, "resolve_all",
                           return_value={pid: credential for pid in providers}), \
              patch.object(cli, "resolve_default",
                           return_value=(provider, credential) if providers else None), \
-             patch.object(cli, "fetch_models", new=AsyncMock(return_value=list(models))), \
+             patch.object(cli, "fetch_models", new=fetch), \
+             patch.object(cli, "prefetch_models", new=prefetch), \
              patch.object(cli, "switch_model", new=switch), \
              patch.object(cli, "run_turn", new=run_turn), \
              patch.object(cli, "pick_model", new=picker), \
@@ -139,6 +143,22 @@ class ModelOptionRunTests(unittest.TestCase):
                 asyncio.run(cli.async_main(Options.parse(["--cwd", str(self.cwd), *argv])))
             finally:
                 self.last.output = stream.getvalue()
+
+    def test_provider_names_render_literally_instead_of_as_markup(self) -> None:
+        self.run_cli(["go"])
+        self.assertIn("providers=[deepseek]", self.last.output)
+
+        session = SimpleNamespace(
+            display_model="auto", model_ref="auto",
+            credentials={"deepseek": object(), "kimi": object()},
+        )
+        with patch("agent7.commands.fetch_models", new=AsyncMock(return_value=[])):
+            result = asyncio.run(cmd_model(session, []))
+        output = io.StringIO()
+        out = Console(file=output, width=120, color_system=None)
+        for row in result.message.splitlines():
+            out.print(f"[dim]{row}[/dim]")
+        self.assertIn("providers=[deepseek, kimi]", output.getvalue())
 
     # ---------------------------------------------------------- named model
 
@@ -182,6 +202,56 @@ class ModelOptionRunTests(unittest.TestCase):
             ["nope", "deepseek/deepseek-chat"],
         )
         self.last.run.assert_awaited_once()
+
+    def test_reusing_the_workspace_model_skips_the_startup_model_fetch(self) -> None:
+        self.save_snapshot()
+
+        self.run_cli(["go"])
+
+        self.last.fetch.assert_not_awaited()
+        self.assertEqual(self.last.switch.await_args.args[1], "kimi/kimi-for-coding")
+        self.last.run.assert_awaited_once()
+
+    def test_repl_reuse_prefetches_models_behind_the_prompt(self) -> None:
+        self.save_snapshot()
+
+        with patch.object(cli, "repl_loop", new=AsyncMock()):
+            self.run_cli([])
+
+        self.last.fetch.assert_not_awaited()
+        self.last.prefetch.assert_called_once()
+
+    def test_reusing_auto_also_skips_the_startup_model_fetch(self) -> None:
+        self.save_snapshot(model_ref="auto")
+
+        self.run_cli(["go"])
+
+        self.last.fetch.assert_not_awaited()
+        self.assertEqual(self.last.switch.await_args.args[1], "auto")
+
+    def test_first_time_setup_still_fetches_models(self) -> None:
+        self.run_cli(["go"])
+
+        self.last.fetch.assert_awaited_once()
+
+    def test_an_explicit_choice_still_fetches_models(self) -> None:
+        self.save_snapshot()
+
+        self.run_cli(["-m", "deepseek-flash", "go"])
+
+        self.last.fetch.assert_awaited_once()
+
+    def test_a_removed_saved_model_is_refreshed_and_falls_back(self) -> None:
+        self.save_snapshot(model_ref="xai/grok-4.7")
+
+        self.run_cli(["go"], models=("deepseek/deepseek-chat",),
+                     providers=("deepseek",), switch_message="unknown provider 'xai'")
+
+        self.last.fetch.assert_awaited_once()
+        self.assertEqual(
+            [call.args[1] for call in self.last.switch.await_args_list],
+            ["xai/grok-4.7", "deepseek/deepseek-chat"],
+        )
 
     # ------------------------------------------------------------ model menu
 

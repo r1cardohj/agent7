@@ -108,6 +108,9 @@ model. A `-m` that names nothing usable stops the run instead of quietly picking
 a run that never starts (cancelled menu, bad `-m`) leaves the workspace snapshot untouched. Because
 `-m` takes the following word as its value, a bare `-m` before a task needs a separator:
 `agent7 -m -- "fix it"` (or put the task first: `agent7 "fix it" -m`).
+Reusing a saved model does not block startup on provider discovery. Interactive sessions
+refresh the model list in the background; `/model` joins an in-flight refresh instead of
+issuing duplicate requests, or reads the populated cache immediately.
 
 Choose `auto` with `agent7 -m auto` or `/model auto`; there is no route configuration. agent7
 builds the candidate pool from its reviewed capability table, your logged-in providers, and
