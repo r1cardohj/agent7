@@ -43,8 +43,9 @@ def resolve_context_limit(model: str) -> int | None:
         if "grok-4.7" in key:
             return 500_000
         return 256_000 if ("grok-4" in key or "build" in key) else 131_072
+    # /models reports 1M for kimi-for-coding but 256k for its highspeed variant.
     if "kimi-for-coding" in key:
-        return 262_144
+        return 262_144 if "highspeed" in key else 1_048_576
     if key == "k3" or key.startswith("k3.1"):
         return 1_048_576
     return None
