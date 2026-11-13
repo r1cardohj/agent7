@@ -178,6 +178,24 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         self.assertTrue(self.stream.getvalue().endswith("✓ bash  pwd  2s\n"))
         self.assertFalse(self.rp._tool_running)
 
+    def test_tool_tick_clears_rows_reflowed_by_a_terminal_resize(self) -> None:
+        repl.err = Console(
+            file=self.stream, width=120, color_system=None, force_terminal=True
+        )
+        args = {"command": "x" * 80}
+        self.rp.on_tool_start(1, "bash", args)
+        self.assertNotIn("\033[4F", self.stream.getvalue())
+
+        # Rich normally reads the new size from the terminal. A fixed-width
+        # console needs its test value changed explicitly to simulate a resize.
+        repl.err._width = 20
+        self.rp._draw_running_tool("bash", args, 1, self.rp._tool_serial)
+
+        # The 94-cell status was reflowed from one row to five. Repainting
+        # starts at its first row and erases the whole status, not just row five.
+        self.assertIn("\033[4F\r\033[J", self.stream.getvalue())
+        self.assertTrue(self.stream.getvalue().endswith("1s"))
+
     def test_tool_elapsed_time_does_not_replace_bash_exit_status(self) -> None:
         with patch("agent7.repl.time.monotonic", side_effect=[20.0, 23.0]):
             self.rp.on_tool_start(1, "bash", {"command": "pwd"})
@@ -191,7 +209,7 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         self.rp.on_preview("write  x.txt  +1 -0")
         self.rp.on_tool(1, "write", {"path": "x.txt", "content": "new"}, "wrote x.txt")
         text = self.stream.getvalue()
-        self.assertIn("• write x.txt  (3 chars)  0s\r\033[K# write", text)
+        self.assertIn("• write x.txt  (3 chars)  0s\033[1F\r\033[J# write", text)
         self.assertIn("✓ write x.txt", text.rsplit("# write", 1)[-1])
 
     def test_interruption_clears_the_running_dot(self) -> None:
@@ -199,7 +217,7 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
             self.rp.on_tool_start(1, "bash", {"command": "sleep 10"})
         self.assertFalse(self.rp._tool_running)
         self.assertIsNone(self.rp._tool_started_at)
-        self.assertTrue(self.stream.getvalue().endswith("\r\033[K"))
+        self.assertTrue(self.stream.getvalue().endswith("\033[1F\r\033[J"))
 
     def test_closing_erases_the_viewport_before_tool_output(self) -> None:
         self.rp.on_thinking("one\ntwo")
