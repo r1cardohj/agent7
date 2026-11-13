@@ -603,7 +603,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--strategies", default=",".join(STRATEGIES))
     parser.add_argument("--repeat", type=int, default=2)
     parser.add_argument("--fast-model", default="deepseek/deepseek-flash")
-    parser.add_argument("--strong-model", default="xai/grok-4.7")
+    parser.add_argument("--strong-model", default="kimi/k3.1-pro")
     parser.add_argument("--max-turns", type=int)
     parser.add_argument("--timeout", type=int)
     parser.add_argument("--output", type=Path)

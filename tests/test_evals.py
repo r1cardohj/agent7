@@ -100,14 +100,14 @@ class TaskManifestTests(unittest.TestCase):
 
 class RouteAblationTests(unittest.TestCase):
     def start(self, tier_only: bool) -> ObservedRoute:
-        refs = ("deepseek/deepseek-flash", "xai/grok-4.7", "kimi/k3.1-pro")
+        refs = ("deepseek/deepseek-flash", "kimi/kimi-for-coding", "kimi/k3.1-pro")
         base = FailoverRoute(tuple(capability_target(ref) for ref in refs), intent_routing=True)
         route = ObservedRoute(base, tier_only=tier_only)
 
         async def fake_score(*args):
             return "debugging", {
                 "deepseek/deepseek-flash": 10,
-                "xai/grok-4.7": 90,
+                "kimi/kimi-for-coding": 90,
                 "kimi/k3.1-pro": 100,
             }
 
@@ -117,7 +117,7 @@ class RouteAblationTests(unittest.TestCase):
 
     def test_tier_ablation_uses_the_first_strong_model(self) -> None:
         route = self.start(tier_only=True)
-        self.assertEqual(route.current.ref, "xai/grok-4.7")
+        self.assertEqual(route.current.ref, "kimi/k3.1-pro")
         asyncio.run(route.close())
 
     def test_full_policy_still_uses_the_score_argmax(self) -> None:

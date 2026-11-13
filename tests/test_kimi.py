@@ -36,9 +36,19 @@ class KimiProviderTests(unittest.TestCase):
         self.assertEqual(cred.source, "env")
 
     def test_other_provider_keys_do_not_authenticate_kimi(self) -> None:
-        env = {"DEEPSEEK_API_KEY": "sk-123", "XAI_API_KEY": "xai-123"}
+        env = {"DEEPSEEK_API_KEY": "sk-123"}
         with patch.dict(os.environ, env):
             self.assertIsNone(get_provider("kimi").resolve())
+
+    def test_xai_support_is_removed(self) -> None:
+        from agent7.providers import list_providers, resolve_all
+
+        self.assertIsNone(get_provider("xai"))
+        self.assertIsNone(get_provider("grok"))
+        self.assertNotIn("grok", login_hints())
+        self.assertNotIn("xai", [provider.id for provider in list_providers()])
+        with patch.dict(os.environ, {"XAI_API_KEY": "xai-123", "GROK_API_KEY": "grok-123"}):
+            self.assertEqual(resolve_all(), {})
 
     def test_base_url_can_be_overridden(self) -> None:
         env = {"KIMI_API_KEY": "k", "AGENT7_BASE_URL": "http://local:1/v1"}

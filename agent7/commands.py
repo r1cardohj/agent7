@@ -222,7 +222,7 @@ def cmd_status(session: Session, args: list[str]) -> CommandResult:
         f"{format_usage(session)}\nbase_url={session.client.base_url}{route_info}"
     ))
 
-@command("login", help="paste API key  (/login deepseek | /login grok | /login kimi)")
+@command("login", help="paste API key  (/login deepseek | /login kimi)")
 async def cmd_login(session: Session, args: list[str]) -> CommandResult:
     if not args:
         rows = describe_found()
@@ -251,7 +251,7 @@ def cmd_compact(session: Session, args: list[str]) -> CommandResult:
         return CommandResult(message="compact: nothing to shrink (history short or already small)")
     return CommandResult(message=f"compact: shrunk {n} message(s); recent turns kept intact")
 
-@command("logout", help="clear saved key  (/logout deepseek | /logout grok | /logout kimi)")
+@command("logout", help="clear saved key  (/logout deepseek | /logout kimi)")
 def cmd_logout(session: Session, args: list[str]) -> CommandResult:
     if not args:
         keys = [p.id for p in list_providers() if p.id in load_auth()]

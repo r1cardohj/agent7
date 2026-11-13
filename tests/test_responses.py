@@ -80,7 +80,7 @@ class ResponsesRequestTests(unittest.TestCase):
             [call_turn(("bash", {"command": "printf ok"}), reasoning="private"), text_turn("done")],
             provider_id="kimi",
         )
-        inputs, _ = request_input(messages, "xai")
+        inputs, _ = request_input(messages, "deepseek")
 
         self.assertNotIn("private", json.dumps(inputs))
         self.assertNotIn("encrypted_content", json.dumps(inputs))
@@ -122,7 +122,7 @@ class ResponsesRequestTests(unittest.TestCase):
         client = FakeClient([text_turn("new")])
         asyncio.run(run_agent(
             "continue", cwd=self.cwd, client=client, model="deepseek-flash",
-            messages=list(old), provider_id="xai", on_tool=lambda *a: None,
+            messages=list(old), provider_id="kimi", on_tool=lambda *a: None,
         ))
         self.assertNotIn("reasoning", client.requests[0])
 

@@ -49,16 +49,6 @@ MODEL_CAPABILITIES = (
         routing_hint="Fast implementation, refactoring, and test-focused coding.",
     ),
     ModelCapability(
-        provider_id="xai", model="grok-build-0.1", context_limit=256_000,
-        strengths=frozenset({"fast", "coding"}), scorer_priority=3,
-        routing_hint="Fast coding for builds, shell work, and tool-heavy tasks.",
-    ),
-    ModelCapability(
-        provider_id="xai", model="grok-4.7", context_limit=500_000,
-        strengths=frozenset({"strong"}),
-        routing_hint="Strong general reasoning and root-cause debugging.",
-    ),
-    ModelCapability(
         provider_id="kimi", model="k3.1-pro", context_limit=1_048_576,
         strengths=frozenset({"strong"}),
         routing_hint="Strong architecture and repository-wide coding; largest context.",
