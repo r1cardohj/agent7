@@ -84,6 +84,7 @@ class ReplyPrinter:
         self._tool_running = False
         self._tool_started_at: float | None = None
         self._tool_serial = 0
+        self._tool_status: Text | None = None
         self._tool_lock = threading.RLock()
 
     def __enter__(self) -> ReplyPrinter:
@@ -155,14 +156,29 @@ class ReplyPrinter:
         self._clear_status_line()
         self._waiting = False
 
+    def _clear_tool_status(self) -> None:
+        """Erase every terminal row occupied by the running tool status."""
+        status = self._tool_status
+        width = max(1, err.width)
+        # Recalculate at erase time: a terminal resize may have reflowed the
+        # status since it was drawn, so the original row count can be stale.
+        rows = 1 if status is None else max(1, (status.cell_len + width - 1) // width)
+        chunks = []
+        if rows > 1:
+            chunks.append(f"\033[{rows - 1}F")
+        chunks.append("\r\033[J" if rows > 1 else "\r\033[K")
+        self._write("".join(chunks))
+        self._tool_status = None
+
     def _clear_tool(self) -> None:
         if not self._tool_running:
             return
         if err.is_terminal:
-            self._clear_status_line()
+            self._clear_tool_status()
         else:
             self._write("\n")
         self._tool_running = False
+        self._tool_status = None
 
     def on_model_start(self, turn: int) -> None:
         """Mark the otherwise silent gap before a model's first streamed delta."""
@@ -271,16 +287,18 @@ class ReplyPrinter:
     def _draw_running_tool(
         self, name: str, args: dict, elapsed: int, serial: int,
     ) -> None:
+        status = err.render_str(
+            f"  [dim]•[/dim] [bold]{name:<5}[/bold] "
+            f"[dim]{tool_summary(name, args)}  {elapsed}s[/dim]"
+        )
         with self._tool_lock:
             if not self._tool_running or serial != self._tool_serial:
                 return
             if err.is_terminal:
-                self._clear_status_line()
-            err.print(
-                f"  [dim]•[/dim] [bold]{name:<5}[/bold] "
-                f"[dim]{tool_summary(name, args)}  {elapsed}s[/dim]",
-                end="", soft_wrap=True,
-            )
+                self._clear_tool_status()
+            err.print(status, end="", soft_wrap=True)
+            if err.is_terminal:
+                self._tool_status = status
 
     async def _tick_tool(self, name: str, args: dict, serial: int) -> None:
         shown = 0
