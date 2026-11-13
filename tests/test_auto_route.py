@@ -52,7 +52,14 @@ class DefaultAutoRouteTests(unittest.TestCase):
             cap = next(cap for cap in MODEL_CAPABILITIES if cap.ref == ref)
             self.assertEqual(cap.strengths, frozenset({"strong"}))
         grok = next(cap for cap in MODEL_CAPABILITIES if cap.ref == "xai/grok-4.7")
+        kimi = next(cap for cap in MODEL_CAPABILITIES if cap.ref == "kimi/k3.1-pro")
+        coding_kimi = next(
+            cap for cap in MODEL_CAPABILITIES if cap.ref == "kimi/kimi-for-coding"
+        )
         self.assertEqual(grok.context_limit, 500_000)
+        self.assertEqual(coding_kimi.context_limit, 1_048_576)
+        self.assertIn("debugging", grok.routing_hint)
+        self.assertIn("architecture", kimi.routing_hint)
 
     def test_auto_uses_logged_in_reviewed_models_without_configuration(self) -> None:
         credentials = {
@@ -126,6 +133,20 @@ class AutoFailoverTests(unittest.TestCase):
         self.assertEqual(messages[-1][RAW_ITEMS_KEY]["provider"], "kimi")
         self.assertEqual(len([m for m in messages if m.get("role") == "user"]), 1)
         self.assertTrue(any(change[1] is first and change[0] is second for change in changes))
+
+    def test_auth_and_missing_model_errors_fail_over_without_retrying(self) -> None:
+        for status in (401, 403, 404):
+            with self.subTest(status=status):
+                first = target("deepseek", "chat", [_Status(status)])
+                second = target("kimi", "k2", [text_turn("ok")])
+                route = FailoverRoute((first, second))
+
+                answer, _, _ = self.run_route(route)
+
+                self.assertEqual(answer, "ok")
+                self.assertEqual(first.client.calls, 1)
+                self.assertEqual(second.client.calls, 1)
+                self.assertEqual(route.current, second)
 
     def test_non_retryable_error_does_not_fail_over(self) -> None:
         first = target("deepseek", "chat", [_Status(400, "bad tools")])

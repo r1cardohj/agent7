@@ -97,10 +97,27 @@ class IntentSelectionTests(unittest.TestCase):
         self.assertEqual(grok.score_requests, [])
         request = deepseek.score_requests[0]
         self.assertFalse(request["stream"])
+        self.assertEqual(request["temperature"], 0)
         self.assertEqual(request["reasoning"], {"effort": "none"})
         payload = json.loads(request["input"])
         self.assertEqual(payload["task"], "find the race condition")
         self.assertEqual(len(payload["candidates"]), 3)
+        self.assertTrue(all(c["routing_hint"] for c in payload["candidates"]))
+
+    def test_first_task_uses_the_highest_score_without_an_incumbent_margin(self) -> None:
+        deepseek = ScoringClient(scores("coding", {
+            "deepseek/deepseek-flash": 88,
+            "kimi/kimi-for-coding": 90,
+        }))
+        kimi = ScoringClient()
+        route = FailoverRoute((
+            capability_target("deepseek/deepseek-flash", deepseek),
+            capability_target("kimi/kimi-for-coding", kimi),
+        ), intent_routing=True)
+
+        self.start(route)
+
+        self.assertEqual(route.current.ref, "kimi/kimi-for-coding")
 
     def test_unknown_scorer_output_falls_back_instead_of_injecting_a_target(self) -> None:
         deepseek = ScoringClient(scores("coding", {"not-configured/model": 100}))
@@ -118,15 +135,20 @@ class IntentSelectionTests(unittest.TestCase):
         self.assertEqual(len(deepseek.score_requests), 1)
 
     def test_scorer_error_keeps_the_current_target(self) -> None:
-        deepseek = ScoringClient(error=TimeoutError())
+        deepseek = ScoringClient(scores("coding", {
+            "deepseek/deepseek-flash": 10,
+            "kimi/kimi-for-coding": 90,
+        }))
         kimi = ScoringClient()
         route = FailoverRoute((
             capability_target("deepseek/deepseek-flash", deepseek),
             capability_target("kimi/kimi-for-coding", kimi),
         ), intent_routing=True)
-        route.index = 1
+        self.start(route, "first task")
+        self.assertEqual(route.current.ref, "kimi/kimi-for-coding")
+        deepseek.error = TimeoutError()
 
-        self.start(route)
+        self.start(route, "second task")
 
         self.assertEqual(route.current.ref, "kimi/kimi-for-coding")
         self.assertEqual(route.selection.error, "TimeoutError")
@@ -146,35 +168,58 @@ class IntentSelectionTests(unittest.TestCase):
         self.assertIsNone(route.selection)
 
     def test_context_filter_runs_before_scoring(self) -> None:
+        # 300k fits deepseek-flash (1M) but not grok-build-0.1 (256k).
         deepseek = ScoringClient("not json")
-        kimi = ScoringClient()
+        grok = ScoringClient()
         route = FailoverRoute((
             capability_target("deepseek/deepseek-flash", deepseek),
-            capability_target("kimi/kimi-for-coding", kimi),
+            capability_target("xai/grok-build-0.1", grok),
         ), intent_routing=True)
-        route.index = 1
 
         self.start(route, tokens=300_000)
+
+        self.assertEqual(grok.score_requests, [])
 
         self.assertEqual(route.current.ref, "deepseek/deepseek-flash")
         self.assertEqual(route.active_targets, (route.current,))
         self.assertEqual(deepseek.score_requests, [])
 
-    def test_close_scores_keep_the_current_target(self) -> None:
-        deepseek = ScoringClient(scores("coding", {
-            "deepseek/deepseek-flash": 90,
-            "kimi/kimi-for-coding": 85,
-        }))
-        kimi = ScoringClient()
+    def previous_kimi_route(self, deepseek: ScoringClient, kimi: ScoringClient) -> FailoverRoute:
         route = FailoverRoute((
             capability_target("deepseek/deepseek-flash", deepseek),
             capability_target("kimi/kimi-for-coding", kimi),
         ), intent_routing=True)
-        route.index = 1
+        deepseek.score_text = scores("coding", {
+            "deepseek/deepseek-flash": 10,
+            "kimi/kimi-for-coding": 90,
+        })
+        self.start(route, "first task")
+        self.assertEqual(route.current.ref, "kimi/kimi-for-coding")
+        return route
 
-        self.start(route)
+    def test_close_scores_keep_the_current_target(self) -> None:
+        deepseek, kimi = ScoringClient(), ScoringClient()
+        route = self.previous_kimi_route(deepseek, kimi)
+        deepseek.score_text = scores("coding", {
+            "deepseek/deepseek-flash": 87,
+            "kimi/kimi-for-coding": 85,
+        })
+
+        self.start(route, "second task")
 
         self.assertEqual(route.current.ref, "kimi/kimi-for-coding")
+
+    def test_three_point_score_gain_switches_the_current_target(self) -> None:
+        deepseek, kimi = ScoringClient(), ScoringClient()
+        route = self.previous_kimi_route(deepseek, kimi)
+        deepseek.score_text = scores("coding", {
+            "deepseek/deepseek-flash": 88,
+            "kimi/kimi-for-coding": 85,
+        })
+
+        self.start(route, "second task")
+
+        self.assertEqual(route.current.ref, "deepseek/deepseek-flash")
 
 
 class IntentExecutionTests(unittest.TestCase):

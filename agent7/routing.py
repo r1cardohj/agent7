@@ -17,7 +17,7 @@ from .responses import output_text, plain_item
 AUTO_REF = "auto"
 SCORE_TIMEOUT = 5.0
 SCORE_MAX_TOKENS = 500
-SWITCH_SCORE_MARGIN = 8.0
+SWITCH_SCORE_MARGIN = 3.0
 _INTENTS = frozenset({"quick", "coding", "debugging", "reasoning"})
 
 @dataclass(frozen=True)
@@ -31,6 +31,7 @@ class ModelCapability:
     scorer_priority: int | None = None
     supports_responses: bool = True
     supports_tools: bool = True
+    routing_hint: str = ""
 
     @property
     def ref(self) -> str:
@@ -40,22 +41,27 @@ MODEL_CAPABILITIES = (
     ModelCapability(
         provider_id="deepseek", model="deepseek-flash", context_limit=1_048_576,
         strengths=frozenset({"fast", "coding"}), scorer_priority=1,
+        routing_hint="Fast general coding, explanations, and quick edits.",
     ),
     ModelCapability(
-        provider_id="kimi", model="kimi-for-coding", context_limit=262_144,
+        provider_id="kimi", model="kimi-for-coding", context_limit=1_048_576,
         strengths=frozenset({"fast", "coding"}), scorer_priority=2,
+        routing_hint="Fast implementation, refactoring, and test-focused coding.",
     ),
     ModelCapability(
         provider_id="xai", model="grok-build-0.1", context_limit=256_000,
         strengths=frozenset({"fast", "coding"}), scorer_priority=3,
+        routing_hint="Fast coding for builds, shell work, and tool-heavy tasks.",
     ),
     ModelCapability(
         provider_id="xai", model="grok-4.7", context_limit=500_000,
         strengths=frozenset({"strong"}),
+        routing_hint="Strong general reasoning and root-cause debugging.",
     ),
     ModelCapability(
         provider_id="kimi", model="k3.1-pro", context_limit=1_048_576,
         strengths=frozenset({"strong"}),
+        routing_hint="Strong architecture and repository-wide coding; largest context.",
     ),
 )
 @dataclass(frozen=True)
@@ -89,6 +95,7 @@ class FailoverRoute:
     index: int = 0
     selection: RouteSelection | None = field(init=False, default=None)
     _active: tuple[RouteTarget, ...] = field(init=False, repr=False)
+    _started: bool = field(init=False, default=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.targets:
@@ -114,7 +121,9 @@ class FailoverRoute:
         self, task: str, messages: list[dict[str, Any]], estimated_tokens: int,
     ) -> None:
         """Choose a new task's order; execution failover never invokes the scorer."""
-        previous = self.current
+        # A new route has no incumbent: its first task must use the argmax.
+        previous = self.current if self._started else None
+        self._started = True
         self.index = 0
         self.selection = None
         self._active = self.targets
@@ -193,7 +202,7 @@ def _context_eligible(
     return (max(targets, key=lambda target: target.context_limit or 0),)
 
 def _scorer_for(
-    targets: tuple[RouteTarget, ...], previous: RouteTarget,
+    targets: tuple[RouteTarget, ...], previous: RouteTarget | None,
 ) -> RouteTarget:
     scorers = [target for target in targets if target.capability and target.capability.scorer_priority]
     if scorers:
@@ -201,14 +210,14 @@ def _scorer_for(
     return previous if previous in targets else targets[0]
 
 def _fallback_order(
-    targets: tuple[RouteTarget, ...], previous: RouteTarget,
+    targets: tuple[RouteTarget, ...], previous: RouteTarget | None,
 ) -> tuple[RouteTarget, ...]:
     if previous not in targets:
         return targets
     return (previous, *(target for target in targets if target is not previous))
 
 def _scored_order(
-    targets: tuple[RouteTarget, ...], previous: RouteTarget, scores: dict[str, float],
+    targets: tuple[RouteTarget, ...], previous: RouteTarget | None, scores: dict[str, float],
 ) -> tuple[RouteTarget, ...]:
     ordered = sorted(targets, key=lambda target: -scores.get(target.ref, -1.0))
     if previous in targets and previous.ref in scores:
@@ -233,6 +242,7 @@ async def _score_targets(
     candidates = [{
         "ref": target.ref,
         "strengths": sorted(target.capability.strengths) if target.capability else [],
+        "routing_hint": target.capability.routing_hint if target.capability else "",
         "context_limit": target.context_limit,
     } for target in targets]
     payload = {
@@ -244,7 +254,11 @@ async def _score_targets(
         "You are a model router, not the task solver. Score every supplied candidate "
         "from 0 to 100 for this task. Use fast/coding models for simple or quick coding "
         "tasks and strong models for difficult debugging, architecture, and reasoning. "
-        "Consider tool use and context needs. Return only one JSON object with this shape: "
+        "Classify quick as explanations or trivial edits, coding as implementation or tests, "
+        "debugging as failures or root causes, and reasoning as design, architecture, "
+        "tradeoffs, or proofs. Candidate order is not a ranking; use routing_hint to "
+        "differentiate models within a tier. Consider tool use and context needs. "
+        "Return only one JSON object with this shape: "
         '{"intent":"quick|coding|debugging|reasoning","scores":{"provider/model":0}}. '
         "Use only the exact candidate refs; do not answer the task."
     )
@@ -253,6 +267,7 @@ async def _score_targets(
         "instructions": instructions,
         "input": json.dumps(payload, ensure_ascii=False),
         "stream": False,
+        "temperature": 0,
         "max_output_tokens": SCORE_MAX_TOKENS,
     }
     if scorer.provider_id == "deepseek":

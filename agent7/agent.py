@@ -44,6 +44,7 @@ OVERFLOW_RETRIES = 2
 RETRY_SLEEPS = (0.5, 1.5, 3.0)
 STREAM_CLOSE_TIMEOUT = 2.0
 RETRY_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+FAILOVER_STATUS = frozenset({401, 403, 404})
 OVERFLOW_STATUS = frozenset({400, 413, 422})
 
 class Interrupted(Exception):
@@ -504,6 +505,11 @@ def _retryable(exc: BaseException) -> bool:
     return type(exc).__name__ in _RETRY_ERRORS
 
 
+def _can_failover(exc: BaseException) -> bool:
+    """Whether another target may help; auth/model errors get no local retries."""
+    return _retryable(exc) or getattr(exc, "status_code", None) in FAILOVER_STATUS
+
+
 def _is_context_overflow(exc: BaseException) -> bool:
     if getattr(exc, "status_code", None) not in OVERFLOW_STATUS:
         return False
@@ -695,7 +701,7 @@ async def _stream_failover(
             # _stream_once only wraps failures before any text/reasoning was
             # emitted. Failover therefore cannot duplicate user-visible output
             # or a tool call, and run_agent has not executed any tools yet.
-            next_target = route.advance() if _retryable(e.cause) else None
+            next_target = route.advance() if _can_failover(e.cause) else None
             if next_target is None:
                 raise e.cause from None
             await _emit(on_route, next_target, target, e.cause)

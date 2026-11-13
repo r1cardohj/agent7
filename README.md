@@ -122,13 +122,15 @@ the models currently listed by those providers:
 | `grok-4.7`, `k3.1-pro` | strong |
 
 The first available fast model scores all candidates for each new user task in one short,
-non-streaming request. The highest-scoring model handles the whole task, including its tool
-rounds; a close score keeps the current model to avoid needless switching. Only reviewed
+non-streaming, zero-temperature request. The highest-scoring model handles the whole task,
+including its tool rounds. The first task has no incumbent and always uses the highest score;
+on later tasks, a close score keeps the current model to avoid needless switching. Only reviewed
 models join auto — other listed models remain available for explicit `/model` selection. If
 the model list cannot be fetched, reviewed models from logged-in providers are still tried.
 
-Each execution target keeps the normal transient-error retry budget; only a failure before
-any text or reasoning was emitted can move to the next target, in descending score order.
+Each execution target keeps the normal transient-error retry budget. Authentication, permission,
+and missing-model errors (401/403/404) skip same-target retries but can still fail over. Only a
+failure before any text or reasoning was emitted can move to the next target, in score order.
 Scoring timeout, failure, or invalid JSON falls back to the current/default target instead of
 blocking the task. The snapshot keeps the logical choice `auto`, while the status bar shows
 the concrete target, intent, and score as `auto → provider/model · coding · 91`. `/status`
