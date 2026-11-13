@@ -266,6 +266,14 @@ retries that turn once.
   returns; `bash` captures to temp files and reads back ~12k chars. A 100 MB log costs
   a few hundred KB of memory, not 300 MB.
 
+## Evaluating auto routing
+
+`evals/` contains an opt-in, live-API benchmark that compares fixed models, a simple
+two-tier ablation, and full auto routing on isolated coding tasks. It records independent
+verification, routing decisions, scoring/execution tokens, latency, and failovers, then renders
+a paired-bootstrap Markdown report. See [evals/README.md](evals/README.md); start with
+`uv run python -m evals.run --dry-run`. CI never runs these paid evaluations.
+
 ## What it is not
 
 - Not an orchestrator: no branching, no subagents

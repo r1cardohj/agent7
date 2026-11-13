@@ -1,0 +1,78 @@
+[
+  {
+    "id": "quick-greeting",
+    "category": "quick",
+    "prompt": "In app/text.py, update greet(name): strip surrounding whitespace, use 'world' when the result is empty, and return exactly 'Hello, <name>!'. Keep the change small.",
+    "max_turns": 12
+  },
+  {
+    "id": "quick-readme-command",
+    "category": "quick",
+    "prompt": "In README.md, change the report example so its exact command is `python -m app report --format json`. Do not make unrelated documentation changes.",
+    "max_turns": 12
+  },
+  {
+    "id": "quick-boolean-flag",
+    "category": "quick",
+    "language": "zh",
+    "prompt": "修改 app/cli.py 的 parse_boolean：忽略大小写和首尾空白，仅 1、true、yes、on 返回 True，其他值都返回 False。不要做无关重构。",
+    "max_turns": 12
+  },
+  {
+    "id": "coding-slugify",
+    "category": "coding",
+    "prompt": "Implement slugify(value) in app/text.py for ASCII input: lowercase letters, convert every run of non-alphanumeric characters to one hyphen, and remove leading/trailing hyphens. Add focused checks if useful.",
+    "max_turns": 20
+  },
+  {
+    "id": "coding-json-lines",
+    "category": "coding",
+    "language": "zh",
+    "prompt": "实现 app/jsonlines.py 的 loads_lines(text)：解析 JSON Lines，忽略空行；无效 JSON 要抛出 ValueError，且错误信息包含原文本中的实际行号（从 1 开始）。",
+    "max_turns": 20
+  },
+  {
+    "id": "coding-retry-after",
+    "category": "coding",
+    "prompt": "Implement parse_retry_after in app/http.py. Accept delay seconds as int/float strings, clamp negative delays to zero, support HTTP-date strings relative to the optional aware `now` datetime, and return None for missing or invalid values. Never return a negative delay.",
+    "max_turns": 24
+  },
+  {
+    "id": "debug-pagination",
+    "category": "debugging",
+    "prompt": "Debug paginate(items, page, per_page) in app/pagination.py. Pages are one-based and each non-final page must contain exactly per_page items; the current implementation returns an extra item. Fix the root cause without changing the API.",
+    "max_turns": 20
+  },
+  {
+    "id": "debug-memoize",
+    "category": "debugging",
+    "language": "zh",
+    "prompt": "定位并修复 app/cache.py 中 memoize 的错误缓存命中：缓存键必须区分位置参数、关键字参数和不同的被装饰函数；相同调用仍应命中缓存。保持装饰器 API 不变。",
+    "max_turns": 24
+  },
+  {
+    "id": "debug-async-close",
+    "category": "debugging",
+    "prompt": "Debug app/async_worker.py: after start(), close() can wait forever because setting _closing does not wake a runner blocked on _tick. Make close wake the runner and finish promptly without changing the public start/close API.",
+    "max_turns": 24
+  },
+  {
+    "id": "reasoning-transaction-rollback",
+    "category": "reasoning",
+    "prompt": "Fix run_transaction in app/rollback.py. Each operation is a (do, undo) pair. If do() fails, undo only operations whose do() completed, in reverse completion order; never undo the failed or unstarted operation, and re-raise the original exception. Successful transactions do not undo anything.",
+    "max_turns": 30
+  },
+  {
+    "id": "reasoning-snapshot-migration",
+    "category": "reasoning",
+    "language": "zh",
+    "prompt": "修复 app/snapshot.py 的 migrate_snapshot：v1 输入把 model/history 迁移为 v2 的 model_ref/messages，保留其他字段；缺少 version 字段的输入按 v1 处理；v2 原样返回但不共享可变嵌套数据；高于 v2 的版本抛 ValueError。任何情况都不能修改输入对象。",
+    "max_turns": 30
+  },
+  {
+    "id": "reasoning-config-precedence",
+    "category": "reasoning",
+    "prompt": "Fix resolve_config in app/config.py so precedence is defaults < file_values < APP_* environment variables < explicit overrides. Environment keys are APP_ plus the uppercase setting name. Preserve input mappings and ignore environment variables that do not correspond to a setting.",
+    "max_turns": 30
+  }
+]
