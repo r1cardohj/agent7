@@ -70,6 +70,9 @@ class ReplyPrinter:
         self._thinking_bol = True
         self._thinking_text = ""
         self._thinking_screen_rows = 0
+        self._thinking_visible: list[str] = []
+        self._thinking_height = 0
+        self._thinking_painted = False
         self._counting = False
         self._waiting = False
         self._tool_running = False
@@ -161,20 +164,39 @@ class ReplyPrinter:
         if err.is_terminal:
             self._write("\r\033[K")
 
+    def _thinking_rows_on_screen(self) -> int:
+        """Reserved rows plus any reflow caused by a terminal resize."""
+        rows = self._thinking_height
+        width = max(1, err.width)
+        for row in self._thinking_visible:
+            rows += max(1, (Text(row).cell_len + width - 1) // width) - 1
+        return rows
+
+    def _rewind_thinking(self) -> None:
+        chunks = []
+        if self._thinking_painted:
+            # Every paint occupies the whole reserved region, including blank
+            # padding. Its bottom is therefore a fixed number of rows away,
+            # even when the terminal scrolled while that region was reserved.
+            rows = self._thinking_rows_on_screen()
+            if rows > 1:
+                chunks.append(f"\033[{rows - 1}F")
+        chunks.append("\r\033[J")
+        self._write("".join(chunks))
+
     def _close_thinking(self) -> None:
         if not self._thinking_open:
             return
         if err.is_terminal:
-            chunks = []
-            if self._thinking_screen_rows > 1:
-                chunks.append(f"\033[{self._thinking_screen_rows - 1}F")
-            chunks.append("\r\033[J")
-            self._write("".join(chunks))
+            self._rewind_thinking()
         elif not self._thinking_bol:
             self._write("\n")
         self._thinking_open, self._thinking_bol = False, True
         self._thinking_text = ""
         self._thinking_screen_rows = 0
+        self._thinking_visible = []
+        self._thinking_height = 0
+        self._thinking_painted = False
 
     def _clear_counter(self) -> None:
         if self._counting:
@@ -213,8 +235,8 @@ class ReplyPrinter:
 
     def on_model_start(self, turn: int) -> None:
         """Mark the otherwise silent gap before a model's first streamed delta."""
-        self._clear_tool()
         self._close_thinking()
+        self._clear_tool()
         self._clear_counter()
         self._discard_answer()
         if not err.is_terminal:
@@ -223,15 +245,18 @@ class ReplyPrinter:
         self._write(f"\r\033[K  {self._paint('waiting...')}")
 
     def on_compact(self, count: int) -> None:
+        self._close_thinking()
         self._clear_waiting()
         err.print(f"[dim]# compacted {count} message(s)[/dim]")
 
     def on_failover(self, old: str, new: str, error: BaseException) -> None:
+        self._close_thinking()
         self._clear_waiting()
         reason = f"{type(error).__name__}: {error}".splitlines()[0]
         err.print(f"[yellow]# route: {old} → {new} ({reason[:180]})[/yellow]")
 
     def on_auto_selected(self, target: str, selection) -> None:
+        self._close_thinking()
         self._clear_waiting()
         detail = selection.intent
         if (score := selection.scores.get(target)) is not None:
@@ -252,27 +277,44 @@ class ReplyPrinter:
         self._thinking_open, self._thinking_bol = True, True
         self._thinking_text = ""
         self._thinking_screen_rows = 0
-        self._write("\n" + self._paint(_THINK_HEADER) + "\n")
+        self._thinking_visible = []
+        self._thinking_painted = False
+        # Reserve the complete viewport before the first token. Growing from
+        # one to six rows at the bottom of the screen would otherwise scroll
+        # and make a later relative rewind land inside the tool log. Short
+        # terminals reserve fewer rows so this itself cannot push the log away.
+        self._thinking_height = max(1, min(_THINK_LINES, err.height // 3))
+        chunks = ["\n", self._paint(_THINK_HEADER), "\n"]
+        if self._thinking_height > 1:
+            chunks.append(
+                "\n" * (self._thinking_height - 1)
+                + f"\033[{self._thinking_height - 1}F"
+            )
+        self._write("".join(chunks))
 
     def _paint_thinking_viewport(self) -> None:
         rows: list[str] = []
-        width = max(1, err.width - len(_THINK_PREFIX))
+        prefix = _THINK_PREFIX if err.width > len(_THINK_PREFIX) else ""
+        width = max(1, err.width - len(prefix))
         for line in self._thinking_text.split("\n"):
             visual = Text(line)
             rows.extend(
-                _THINK_PREFIX + part.plain if line else ""
+                prefix + part.plain if line else ""
                 for part in visual.wrap(err, width)
             )
-        visible = rows[-_THINK_LINES:]
+        visible = rows[-self._thinking_height:]
+        self._rewind_thinking()
         chunks = []
-        if self._thinking_screen_rows > 1:
-            chunks.append(f"\033[{self._thinking_screen_rows - 1}F")
-        chunks.append("\r\033[J")
-        for i, row in enumerate(visible):
+        # Padding keeps the cursor at the bottom of the reserved region after
+        # every paint, not at a content-dependent row.
+        painted = visible + [""] * (self._thinking_height - len(visible))
+        for i, row in enumerate(painted):
             if i:
                 chunks.append("\033[E")
             chunks.append(self._paint(row))
         self._thinking_screen_rows = len(visible)
+        self._thinking_visible = visible
+        self._thinking_painted = True
         self._write("".join(chunks))
 
     def on_thinking(self, text: str) -> None:
@@ -345,8 +387,8 @@ class ReplyPrinter:
                 self._draw_running_tool(name, args, elapsed, serial)
 
     def on_tool_start(self, turn: int, name: str, args: dict) -> None:
-        self._clear_waiting()
         self._close_thinking()
+        self._clear_waiting()
         self._clear_counter()
         self._clear_tool()
         self._discard_answer()
@@ -364,9 +406,9 @@ class ReplyPrinter:
                 pass  # Synchronous embedding still gets the initial 0s line.
 
     def on_tool(self, turn: int, name: str, args: dict, result: str) -> None:
+        self._close_thinking()
         self._clear_waiting()
         self._clear_tool()
-        self._close_thinking()
         self._clear_counter()
         self._discard_answer()
         ok = not result.startswith("error:")
@@ -389,9 +431,9 @@ class ReplyPrinter:
             self._print_preview(stats)
 
     def _print_preview(self, stats: str) -> None:
+        self._close_thinking()
         self._clear_waiting()
         self._clear_tool()
-        self._close_thinking()
         self._clear_counter()
         line = (stats.splitlines() or [""])[0]
         if not line:

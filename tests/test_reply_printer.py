@@ -206,19 +206,19 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         self.rp.on_thinking("\n".join(f"line {i}" for i in range(3)))
         self.rp.on_thinking("\n" + "\n".join(f"line {i}" for i in range(3, 9)))
         text = self.stream.getvalue()
-        self.assertIn("\033[2F", text)
+        self.assertIn("\033[5F", text)
         for i in range(3, 9):
             self.assertIn(f"│ line {i}", text)
         self.assertEqual(self.rp._thinking_screen_rows, 6)
         # Earlier rows have already scrolled out of the viewport.
-        latest = text.rsplit("\033[2F", 1)[-1]
+        latest = text.rsplit("\033[5F", 1)[-1]
         self.assertNotIn("│ line 0", latest)
         self.assertNotIn("│ line 2", latest)
 
     def test_incremental_deltas_share_one_viewport(self) -> None:
         self.rp.on_thinking("first ")
         self.rp.on_thinking("line\nsecond")
-        latest = self.stream.getvalue().rsplit("\033[1F", 1)[-1]
+        latest = self.stream.getvalue().rsplit("\033[5F", 1)[-1]
         self.assertIn("│ first line", latest)
         self.assertIn("│ second", latest)
         self.assertEqual(self.rp._thinking_screen_rows, 2)
@@ -226,9 +226,10 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
     def test_wrapping_and_blank_lines_count_toward_the_viewport(self) -> None:
         self.rp.on_thinking("x" * 45 + "\n\nlast")
         self.assertEqual(self.rp._thinking_screen_rows, 5)
-        latest = self.stream.getvalue().rsplit("\033[4F", 1)[-1]
+        latest = self.stream.getvalue().rsplit("\033[5F", 1)[-1]
         self.assertIn("last", latest)
-        self.assertEqual(latest.count("\033[E"), 4)
+        # Five content rows plus one blank row fill the reserved viewport.
+        self.assertEqual(latest.count("\033[E"), 5)
 
     def test_tool_shows_a_dot_until_it_finishes(self) -> None:
         with patch("agent7.repl.time.monotonic", side_effect=[10.0, 12.4]):
@@ -307,14 +308,61 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         self.assertIsNone(self.rp._tool_started_at)
         self.assertTrue(self.stream.getvalue().endswith("\033[1F\r\033[J"))
 
+    def test_bottom_of_screen_uses_a_fixed_reserved_viewport(self) -> None:
+        self.rp.on_thinking("one")
+        # The region is reserved before the first token, while the cursor is
+        # still at its first body row. Later growth cannot change the rewind.
+        self.assertEqual(self.rp._thinking_height, 6)
+        self.assertIn("\n" * 6 + "\033[5F\r\033[J", self.stream.getvalue())
+
+        self.rp.on_thinking("\n" + "\n".join(f"line {i}" for i in range(12)))
+        self.rp.on_tool(1, "bash", {"command": "pwd"}, "done")
+        self.assertIn("\033[5F\r\033[J  ✓ bash  pwd", self.stream.getvalue())
+
+    def test_short_terminal_reserves_a_smaller_viewport(self) -> None:
+        repl.err._height = 6
+        self.rp.on_thinking("one")
+        self.assertEqual(self.rp._thinking_height, 2)
+        self.rp.on_tool(1, "bash", {"command": "pwd"}, "done")
+        self.assertIn("\033[1F\r\033[J  ✓ bash  pwd", self.stream.getvalue())
+
     def test_closing_erases_the_viewport_before_tool_output(self) -> None:
         self.rp.on_thinking("one\ntwo")
         self.rp.on_tool(1, "bash", {"command": "pwd"}, "done")
         text = self.stream.getvalue()
-        self.assertIn("\033[1F\r\033[J", text)
+        self.assertIn("\033[5F\r\033[J", text)
         self.assertTrue(text.endswith("✓ bash  pwd\n"))
         self.assertFalse(self.rp._thinking_open)
         self.assertEqual(self.rp._thinking_screen_rows, 0)
+
+    def test_thinking_rewind_recalculates_rows_after_a_terminal_resize(self) -> None:
+        self.rp.on_thinking("x" * 32)  # two 20-cell rows at the initial width
+        self.assertEqual(self.rp._thinking_screen_rows, 2)
+
+        # Six reserved rows plus one reflowed row for each painted line mean
+        # the cursor is eight rows from the top after the terminal narrows.
+        repl.err._width = 10
+        self.rp.on_tool(1, "bash", {"command": "pwd"}, "done")
+        self.assertIn("\033[7F\r\033[J", self.stream.getvalue())
+        self.assertTrue(self.stream.getvalue().endswith("pwd\n"))
+
+    def test_notices_close_thinking_before_printing(self) -> None:
+        selection = SimpleNamespace(intent="coding", scores={}, error=None)
+        cases = (
+            (lambda: self.rp.on_compact(2), "# compacted"),
+            (lambda: self.rp.on_failover("old", "new", RuntimeError("boom")), "# route:"),
+            (lambda: self.rp.on_auto_selected("new", selection), "# auto:"),
+        )
+        for notify, expected in cases:
+            with self.subTest(expected=expected):
+                self.stream.seek(0)
+                self.stream.truncate()
+                self.rp.on_thinking("one\ntwo")
+                notify()
+                self.assertFalse(self.rp._thinking_open)
+                text = self.stream.getvalue()
+                self.assertIn("\033[5F\r\033[J" + expected.split()[0], text)
+                self.assertIn(expected, text)
 
     def test_model_wait_is_visible_until_thinking_starts(self) -> None:
         with patch.object(self.rp, "_paint", side_effect=lambda text: text):
