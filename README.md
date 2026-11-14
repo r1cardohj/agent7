@@ -177,9 +177,11 @@ Answer deltas also appear immediately in a terminal: Rich Live repaints up to 30
 per second, then renders the complete reply when the stream ends. Rendering is
 incremental — a block split at blank lines outside code fences is parsed and pre-rendered
 once when it closes, and only the block being typed is re-parsed per repaint, so long
-answers stay smooth. A draft emitted before a tool call is cleared rather than mistaken
-for the final answer. Redirected answers remain buffered and are rendered once without
-terminal control codes.
+answers stay smooth. The live view is capped to one screen and follows the latest lines;
+when the stream ends it is replaced by one complete static reply, so intermediate frames
+never duplicate text in the terminal scrollback. A draft emitted before a tool call is
+cleared rather than mistaken for the final answer. Redirected answers remain buffered
+and are rendered once without terminal control codes.
 
 Type `@` in the REPL to complete files and directories from the cwd:
 `fix @agent7/agent.py`.

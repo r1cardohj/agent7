@@ -108,6 +108,19 @@ class MarkdownStreamTests(unittest.TestCase):
                 actual = self.console.render_lines(group, pad=False)
                 self.assertEqual(plain(actual), plain(expected))
 
+    def test_bounded_render_keeps_only_the_latest_lines(self) -> None:
+        text = "\n\n".join(f"paragraph {i}" for i in range(8)) + "\n\ntail"
+        full = MarkdownStream(self.console).render(text)
+        expected = plain(self.console.render_lines(full, pad=False))[-3:]
+
+        bounded = MarkdownStream(self.console).render(text, max_lines=3)
+        actual = plain(self.console.render_lines(bounded, pad=False))
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(len(actual), 3)
+        self.assertIn("tail", actual[-1])
+        self.assertNotIn("paragraph 0", "\n".join(actual))
+
     def test_unclosed_fence_stays_in_the_reparsed_tail(self) -> None:
         group = self.stream.render("```py\nx = 1")
         self.assertEqual(len(group.renderables), 1)

@@ -92,15 +92,16 @@ class ReplyPrinter:
         self._tool_started_at = None
         text = "".join(self.buf)
         # A Live refresh reads self.buf, so finish it before clearing the text.
-        streamed = self._stop_live(discard=not text.strip())
+        streamed = self._stop_live(discard=True)
         self.buf.clear()
         self._chars = 0
         if text.strip():
             answer = Markdown(text)
             if not streamed:
                 console.print()
-                console.print(answer)
-            # A live reply is already on screen; never print a second copy.
+            # Live frames are transient. Keep exactly one complete copy in the
+            # terminal scrollback instead of every intermediate repaint.
+            console.print(answer)
             console.print()
 
     def _stop_live(self, *, discard: bool = False) -> bool:
@@ -141,7 +142,9 @@ class ReplyPrinter:
                 # MarkdownStream parses completed blocks once and re-parses
                 # only the in-progress tail per repaint. The final stop()
                 # refresh also reads the complete buffer before __exit__ clears it.
-                get_renderable=lambda: self._md_stream.render("".join(self.buf)),
+                get_renderable=lambda: self._md_stream.render(
+                    "".join(self.buf), max_lines=max(1, console.height - 1)
+                ),
                 refresh_per_second=_ANSWER_REFRESH_PER_SECOND,
                 redirect_stdout=False, redirect_stderr=False,
                 vertical_overflow="visible",

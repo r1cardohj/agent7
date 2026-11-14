@@ -140,10 +140,16 @@ class ReplyPrinterStreamingTests(unittest.TestCase):
             live.update.assert_not_called()  # parsing is coalesced into Live repaints
             self.assertFalse(rp._counting)
 
-            rp.__exit__(None, None, None)
+            with patch("agent7.repl.console.print", wraps=repl.console.print) as print_:
+                rp.__exit__(None, None, None)
 
         live.stop.assert_called_once_with()
-        self.assertFalse(live.transient)
+        self.assertTrue(live.transient)
+        final_markdown = [
+            call.args[0].markup for call in print_.call_args_list
+            if call.args and isinstance(call.args[0], repl.Markdown)
+        ]
+        self.assertEqual(final_markdown, ["# Hello\n\n**world**"])
         self.assertIsNone(rp._live)
 
     def test_real_live_output_is_visible_before_the_stream_ends(self) -> None:
@@ -171,8 +177,21 @@ class ReplyPrinterStreamingTests(unittest.TestCase):
             rp.on_delta("final answer")
             rp.__exit__(None, None, None)
 
-        self.assertFalse(final.transient)
+        self.assertTrue(final.transient)
         final.stop.assert_called_once_with()
+
+    def test_live_viewport_is_bounded_to_the_terminal_height(self) -> None:
+        stream = MagicMock()
+        stream.render.return_value = "latest frame"
+        with patch("agent7.repl.Live") as live_type, \
+             patch("agent7.repl.MarkdownStream", return_value=stream):
+            rp = repl.ReplyPrinter()
+            rp.on_delta("answer")
+            render = live_type.call_args.kwargs["get_renderable"]
+            self.assertEqual(render(), "latest frame")
+
+        stream.render.assert_called_with("answer", max_lines=repl.console.height - 1)
+        rp._stop_live(discard=True)
 
     def test_live_start_failure_falls_back_to_the_final_answer(self) -> None:
         with patch("agent7.repl.Live", side_effect=RuntimeError("no live display")):

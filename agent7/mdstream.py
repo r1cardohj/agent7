@@ -63,7 +63,7 @@ class MarkdownStream:
         self._flat: list[Segment] = []
         self._stable: Segments | None = None
 
-    def render(self, text: str) -> Group:
+    def render(self, text: str, *, max_lines: int | None = None) -> RenderableType:
         if self._width != self._console.width:
             # Pre-rendered segments no longer reflow after a resize; rebuild
             # the cache from the full text at the new width.
@@ -83,7 +83,21 @@ class MarkdownStream:
             if parts:
                 parts.append(_BLOCK_SEPARATOR)
             parts.append(Markdown(tail))
-        return Group(*parts)
+        group = Group(*parts)
+        if max_lines is None:
+            return group
+        lines = self._console.render_lines(group, pad=False)
+        if len(lines) <= max(1, max_lines):
+            return group
+        # Rich Live's own overflow modes keep the *first* screenful. A reply
+        # needs the opposite: follow the latest text without letting intermediate
+        # frames scroll into the terminal history.
+        flat: list[Segment] = []
+        for line in lines[-max(1, max_lines):]:
+            if flat:
+                flat.append(Segment.line())
+            flat.extend(line)
+        return Segments(flat)
 
     def _consume(self, chunk: str) -> None:
         """Parse and pre-render one newly completed chunk (once per block)."""
