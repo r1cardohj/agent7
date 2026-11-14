@@ -6,12 +6,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from prompt_toolkit.formatted_text import to_formatted_text
-from prompt_toolkit.keys import Keys
 from rich.console import Console
+from rich.segment import Segments
 
 import agent7.repl as repl
-from agent7.pager import PromptToolkitPager, _status
 
 
 class ReplyPrinterPreviewTests(unittest.TestCase):
@@ -100,6 +98,96 @@ class ReplyPrinterPreviewTests(unittest.TestCase):
         self.rp.on_preview("write  x.txt  +1 -1")
         self.assertEqual(self.rp.buf, ["some streamed answer text"])
         self.assertNotIn("some streamed answer text", self.out())
+
+
+class ReplyPrinterStreamingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.orig_err, self.orig_console = repl.err, repl.console
+        self.stream = io.StringIO()
+        repl.err = Console(file=self.stream, width=80, color_system=None, force_terminal=False)
+        repl.console = Console(
+            file=self.stream, width=80, height=20,
+            color_system="standard", force_terminal=True,
+        )
+
+    def tearDown(self) -> None:
+        repl.err, repl.console = self.orig_err, self.orig_console
+
+    def test_live_refresh_reads_the_accumulated_markdown(self) -> None:
+        with patch("agent7.repl.Live") as live_type:
+            live = live_type.return_value
+            rp = repl.ReplyPrinter()
+            rp.on_delta("# Hel")
+
+            render = live_type.call_args.kwargs["get_renderable"]
+            group = render()
+            self.assertEqual(len(group.renderables), 1)
+            self.assertEqual(group.renderables[0].markup, "# Hel")
+            self.assertIs(live_type.call_args.kwargs["console"], repl.console)
+            self.assertEqual(
+                live_type.call_args.kwargs["refresh_per_second"],
+                repl._ANSWER_REFRESH_PER_SECOND,
+            )
+            self.assertEqual(live_type.call_args.kwargs["vertical_overflow"], "visible")
+            live.start.assert_called_once_with(refresh=True)
+
+            rp.on_delta("lo\n\n**world**")
+            group = render()
+            # "# Hello\n\n" is a completed block (pre-rendered segments);
+            # only the in-progress tail stays a re-parsed Markdown object.
+            self.assertIsInstance(group.renderables[0], Segments)
+            self.assertEqual(group.renderables[-1].markup, "**world**")
+            live.update.assert_not_called()  # parsing is coalesced into Live repaints
+            self.assertFalse(rp._counting)
+
+            rp.__exit__(None, None, None)
+
+        live.stop.assert_called_once_with()
+        self.assertFalse(live.transient)
+        self.assertIsNone(rp._live)
+
+    def test_real_live_output_is_visible_before_the_stream_ends(self) -> None:
+        rp = repl.ReplyPrinter()
+        rp.on_delta("**bold**")
+        self.assertIn("bold", self.stream.getvalue())
+        self.assertNotIn("**bold**", self.stream.getvalue())
+
+        rp.on_delta(" and `code`")
+        rp.__exit__(None, None, None)
+        self.assertIn("code", self.stream.getvalue())
+
+    def test_tool_call_discards_a_streamed_draft(self) -> None:
+        draft, final = MagicMock(), MagicMock()
+        with patch("agent7.repl.Live", side_effect=[draft, final]):
+            rp = repl.ReplyPrinter()
+            rp.on_delta("temporary draft")
+            rp.on_answer_to_thinking()
+
+            self.assertTrue(draft.transient)
+            draft.stop.assert_called_once_with()
+            self.assertEqual(rp.buf, [])
+            self.assertIsNone(rp._live)
+
+            rp.on_delta("final answer")
+            rp.__exit__(None, None, None)
+
+        self.assertFalse(final.transient)
+        final.stop.assert_called_once_with()
+
+    def test_live_start_failure_falls_back_to_the_final_answer(self) -> None:
+        with patch("agent7.repl.Live", side_effect=RuntimeError("no live display")):
+            with repl.ReplyPrinter() as rp:
+                rp.on_delta("**fallback**")
+        self.assertIn("fallback", self.stream.getvalue())
+        self.assertNotIn("**fallback**", self.stream.getvalue())
+
+    def test_non_terminal_output_never_starts_live(self) -> None:
+        repl.console = Console(file=self.stream, width=80, force_terminal=False)
+        with patch("agent7.repl.Live") as live_type:
+            with repl.ReplyPrinter() as rp:
+                rp.on_delta("plain answer")
+        live_type.assert_not_called()
+        self.assertIn("plain answer", self.stream.getvalue())
 
 
 class ReplyPrinterThinkingViewportTests(unittest.TestCase):
@@ -263,184 +351,36 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         self.assertIn("│ new", reopened)
 
 
-class PromptToolkitPagerTests(unittest.TestCase):
-    def setUp(self) -> None:
-        with patch("agent7.pager.Application") as application:
-            PromptToolkitPager().show("\033[31mfirst\033[0m\nsecond")
-        self.application = application
-        self.kwargs = application.call_args.kwargs
-        self.window = self.kwargs["layout"].current_window
-        self.bindings = self.kwargs["key_bindings"]
-
-    def press(self, key: str, event: SimpleNamespace) -> None:
-        self.bindings.get_bindings_for_keys((key,))[-1].handler(event)
-
-    def event(self) -> SimpleNamespace:
-        layout = SimpleNamespace(current_window=self.window)
-        return SimpleNamespace(app=SimpleNamespace(layout=layout))
-
-    def test_preserves_all_text_and_runs_outside_the_agent_event_loop(self) -> None:
-        fragments = to_formatted_text(self.window.content.text)
-        self.assertEqual("".join(part[1] for part in fragments), "first\nsecond")
-        self.assertTrue(self.kwargs["full_screen"])
-        self.application.return_value.run.assert_called_once_with(in_thread=True)
-
-    def test_arrow_and_page_keys_scroll_in_both_directions(self) -> None:
-        self.window.render_info = SimpleNamespace(content_height=20, window_height=5)
-        event = self.event()
-        self.press(Keys.Down, event)
-        self.assertEqual(self.window.vertical_scroll, 1)
-        self.assertEqual(self.window.content.get_cursor_position().y, 1)
-        self.press(" ", event)
-        self.assertEqual(self.window.vertical_scroll, 5)
-        self.press(Keys.PageDown, event)
-        self.assertEqual(self.window.vertical_scroll, 9)
-        self.press(Keys.PageUp, event)
-        self.assertEqual(self.window.vertical_scroll, 5)
-        self.press(Keys.Up, event)
-        self.assertEqual(self.window.vertical_scroll, 4)
-
-    def test_vi_and_emacs_scroll_keys_match_less(self) -> None:
-        self.window.render_info = SimpleNamespace(content_height=40, window_height=9)
-        event = self.event()
-        self.press("j", event)
-        self.assertEqual(self.window.vertical_scroll, 1)
-        self.press("k", event)
-        self.assertEqual(self.window.vertical_scroll, 0)
-        self.press("f", event)
-        self.assertEqual(self.window.vertical_scroll, 8)
-        self.press("b", event)
-        self.assertEqual(self.window.vertical_scroll, 0)
-        self.press("c-d", event)
-        self.assertEqual(self.window.vertical_scroll, 4)
-        self.press("c-u", event)
-        self.assertEqual(self.window.vertical_scroll, 0)
-
-    def test_home_end_and_g_g_jump_to_the_ends(self) -> None:
-        self.window.render_info = SimpleNamespace(content_height=40, window_height=9)
-        event = self.event()
-        self.press(Keys.End, event)
-        self.assertEqual(self.window.vertical_scroll, 31)
-        self.press(Keys.Home, event)
-        self.assertEqual(self.window.vertical_scroll, 0)
-        self.press("G", event)
-        self.assertEqual(self.window.vertical_scroll, 31)
-        self.press("g", event)
-        self.assertEqual(self.window.vertical_scroll, 0)
-
-    def test_scrolling_stops_at_the_actual_bottom(self) -> None:
-        self.window.render_info = SimpleNamespace(content_height=20, window_height=5)
-        self.window.vertical_scroll = 14
-        event = self.event()
-        self.press(Keys.Down, event)
-        self.press(" ", event)
-        self.assertEqual(self.window.vertical_scroll, 15)
-
-    def test_q_exits(self) -> None:
-        event = MagicMock()
-        self.press("q", event)
-        event.app.exit.assert_called_once_with()
-
-    def test_escape_also_exits(self) -> None:
-        event = MagicMock()
-        self.press("escape", event)
-        event.app.exit.assert_called_once_with()
-
-    def test_status_bar_reports_the_visible_range(self) -> None:
-        self.window.render_info = SimpleNamespace(content_height=40, window_height=9)
-        self.assertIn("1-9/40", "".join(part[1] for part in _status(self.window)))
-        self.window.vertical_scroll = 31
-        text = "".join(part[1] for part in _status(self.window))
-        self.assertIn("32-40/40", text)
-        self.assertIn("q quit", text)
-
-    def test_a_pager_that_cannot_start_does_not_raise(self) -> None:
-        # PowerShell hosts without a real console buffer (mintty, ISE) make
-        # prompt_toolkit raise; the reply must still get printed by the caller.
-        with patch("agent7.pager.Application") as application:
-            application.return_value.run.side_effect = RuntimeError("no console")
-            self.assertIsNone(PromptToolkitPager().show("text"))
-
-
-class ReplyPrinterPagerTests(unittest.TestCase):
+class ReplyPrinterFinalAnswerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.orig_err, self.orig_console = repl.err, repl.console
         self.stream = io.StringIO()
         repl.err = Console(file=self.stream, width=120, color_system=None, force_terminal=False)
-        repl.console = Console(file=self.stream, width=80, height=5, force_terminal=True)
+        repl.console = Console(file=self.stream, width=80, force_terminal=False)
 
     def tearDown(self) -> None:
         repl.err, repl.console = self.orig_err, self.orig_console
 
-    def test_short_interactive_answer_is_printed_without_a_pager(self) -> None:
-        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
-             patch("agent7.repl.console.pager") as get_pager:
-            with repl.ReplyPrinter() as rp:
-                rp.on_delta("**final answer**")
-        get_pager.assert_not_called()
-        self.assertIn("final answer", self.stream.getvalue())
+    def test_buffered_answer_is_rendered_as_markdown_once(self) -> None:
+        with repl.ReplyPrinter(stream_markdown=False) as rp:
+            rp.on_delta("**final answer**")
+        text = self.stream.getvalue()
+        self.assertIn("final answer", text)
+        self.assertNotIn("**", text)
+        self.assertEqual(text.count("final answer"), 1)
 
-    def test_long_interactive_answer_is_paged_then_left_in_terminal(self) -> None:
-        answer = "\n\n".join(f"paragraph {i}" for i in range(4))
-        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
-             patch("agent7.repl.sys.platform", "linux"), \
-             patch("agent7.repl.console.pager", wraps=repl.console.pager) as get_pager, \
-             patch("rich.pager.SystemPager.show") as show:
-            with repl.ReplyPrinter() as rp:
-                rp.on_delta(answer)
-        get_pager.assert_called_once_with(pager=None, styles=True)
-        show.assert_called_once()
-        self.assertIn("paragraph 3", show.call_args.args[0])
-        self.assertIn("paragraph 3", self.stream.getvalue())
+    def test_long_buffered_answer_prints_fully(self) -> None:
+        answer = "\n\n".join(f"paragraph {i}" for i in range(40))
+        with repl.ReplyPrinter(stream_markdown=False) as rp:
+            rp.on_delta(answer)
+        text = self.stream.getvalue()
+        self.assertIn("paragraph 0", text)
+        self.assertIn("paragraph 39", text)
+        self.assertEqual(text.count("paragraph 39"), 1)
 
-    def test_windows_long_answer_uses_the_builtin_pager(self) -> None:
-        answer = "\n\n".join(f"paragraph {i}" for i in range(4))
-        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
-             patch("agent7.repl.sys.platform", "win32"), \
-             patch("agent7.repl.console.pager", wraps=repl.console.pager) as get_pager, \
-             patch("agent7.repl.PromptToolkitPager.show") as show:
-            with repl.ReplyPrinter() as rp:
-                rp.on_delta(answer)
-        pager = get_pager.call_args.kwargs["pager"]
-        self.assertIsInstance(pager, PromptToolkitPager)
-        get_pager.assert_called_once_with(pager=pager, styles=True)
-        self.assertIn("paragraph 3", show.call_args.args[0])
-
-    def test_answer_fitting_exactly_one_screen_is_not_paged(self) -> None:
-        answer = "\n\n".join(f"line {i}" for i in range(3))
-        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
-             patch("agent7.repl.console.pager") as get_pager:
-            with repl.ReplyPrinter() as rp:
-                rp.on_delta(answer)
-        get_pager.assert_not_called()
-
-    def test_wrapping_counts_toward_the_screen_height(self) -> None:
-        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
-             patch("agent7.repl.sys.platform", "linux"), \
-             patch("agent7.repl.console.pager", wraps=repl.console.pager) as get_pager, \
-             patch("rich.pager.SystemPager.show"):
-            with repl.ReplyPrinter() as rp:
-                rp.on_delta(" ".join(["word"] * 160))
-        get_pager.assert_called_once_with(pager=None, styles=True)
-
-    def test_a_broken_pager_still_prints_the_answer_once(self) -> None:
-        answer = "\n\n".join(f"paragraph {i}" for i in range(4))
-        with patch("agent7.repl.sys.stdin.isatty", return_value=True), \
-             patch("agent7.repl.sys.platform", "win32"), \
-             patch("agent7.repl.PromptToolkitPager.show", side_effect=RuntimeError("boom")):
-            with repl.ReplyPrinter() as rp:
-                rp.on_delta(answer)
-        self.assertEqual(self.stream.getvalue().count("paragraph 3"), 1)
-        # The console must not stay in capture mode after the failure.
-        repl.console.print("after the pager")
-        self.assertIn("after the pager", self.stream.getvalue())
-
-    def test_non_interactive_output_does_not_open_a_pager(self) -> None:
-        repl.console = Console(file=self.stream, width=80, force_terminal=False)
-        with patch("agent7.repl.console.pager") as get_pager:
-            with repl.ReplyPrinter() as rp:
-                rp.on_delta("final answer")
-        get_pager.assert_not_called()
+    def test_non_terminal_output_prints_the_answer(self) -> None:
+        with repl.ReplyPrinter() as rp:
+            rp.on_delta("final answer")
         self.assertIn("final answer", self.stream.getvalue())
 
 

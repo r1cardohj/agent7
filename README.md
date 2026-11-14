@@ -30,10 +30,9 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 ## Features
 
 - **Deliberately minimal harness** — four tools, one loop, no orchestration
-- **Complete CLI agent UX** — streaming thinking + answer, tool lines with ✓/✗, edit/write preview, vi-mode REPL with a bottom status bar, fuzzy `@path` completion, isolated session resume and safe deletion
+- **Complete CLI agent UX** — streaming thinking + live Markdown answers, tool lines with ✓/✗, edit/write preview, vi-mode REPL with a bottom status bar, fuzzy `@path` completion, isolated session resume and safe deletion
 - **Slash commands** — `/help` `/session` `/model` `/status` `/login` `/logout` `/compact`
-- **Markdown rendering** — final replies rendered as Rich Markdown in the terminal, thanks rich.
-- **Paged final replies** — interactive answers that exceed one screen open in your system pager (usually `less`), or a built-in pager on Windows; shorter answers print directly. The built-in pager shows which lines are on screen and accepts the arrow keys, PageUp/PageDown, Space, Home/End, the mouse wheel, and `q` (or Esc) to continue. The rendered reply stays in the terminal after you quit. Redirected output is never paged.
+- **Streaming Markdown rendering** — answer deltas update a Rich Live display as they arrive, coalesced into 30 repaints per second. Rendering is incremental: completed blocks are parsed and pre-rendered once, and only the in-progress block is re-parsed per repaint. Long replies stay in the terminal scrollback; there is no pager.
 - **Provider login** — paste an API key for DeepSeek or Kimi (`/login` or env); switch models in-session
 - **Auto intent routing** — one-shot tasks use it by default; `/model auto` scores the current task against reviewed available models, then fails over in score order
 - **Optional Herdr background runs** — inside a Herdr terminal with `hc` on `PATH`, a bundled on-demand skill manages long tests/builds and services while agent7 keeps working; outside Herdr agent7 uses ordinary synchronous bash
@@ -173,6 +172,14 @@ show up dimmed under a `thinking` header, before the answer and above each tool 
 terminal, the latest six visual lines scroll inside a fixed-height viewport that is cleared
 afterward; redirected output retains the full text without control codes. Reasoning text is
 display only; opaque protocol items needed to continue a tool call are kept with the session.
+
+Answer deltas also appear immediately in a terminal: Rich Live repaints up to 30 times
+per second, then renders the complete reply when the stream ends. Rendering is
+incremental — a block split at blank lines outside code fences is parsed and pre-rendered
+once when it closes, and only the block being typed is re-parsed per repaint, so long
+answers stay smooth. A draft emitted before a tool call is cleared rather than mistaken
+for the final answer. Redirected answers remain buffered and are rendered once without
+terminal control codes.
 
 Type `@` in the REPL to complete files and directories from the cwd:
 `fix @agent7/agent.py`.

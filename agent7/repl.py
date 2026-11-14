@@ -30,6 +30,7 @@ from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.key_binding.vi_state import InputMode
 from prompt_toolkit.styles import Style
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
 
@@ -38,7 +39,7 @@ from .commands import dispatch, known_names
 from .hooks import emit_lifecycle
 from .interrupt import run_with_interrupt_keys
 from .mascot import print_mascot
-from .pager import PromptToolkitPager
+from .mdstream import MarkdownStream
 from .providers import list_providers, login_hints
 from .routing import AUTO_REF
 from .session import (
@@ -51,28 +52,18 @@ from .session import (
 console, err = Console(stderr=False), Console(stderr=True)
 
 
-def _discard_paged_capture() -> None:
-    """Close a capture level a failed pager left open.
-
-    `PagerContext.__exit__` returns before `_exit_buffer()` when the pager
-    raises, so the console would stay in "capture" mode and silently swallow
-    every later reply. Rich offers no public way back out.
-    """
-    while getattr(console, "_buffer_index", 0) > 0:
-        console._exit_buffer()
-    buffer = getattr(console, "_buffer", None)
-    if buffer is not None:
-        buffer.clear()
-
-
 _THINK_HEADER = "  thinking"
 _THINK_PREFIX = "  │ "
 _THINK_LINES = 6
 _THINK_ON, _THINK_OFF = "\033[36;2m", "\033[0m"
 _TOOL_TICK_INTERVAL = 1.0
+_ANSWER_REFRESH_PER_SECOND = 30.0
 
 class ReplyPrinter:
-    def __init__(self) -> None:
+    def __init__(self, *, stream_markdown: bool = True) -> None:
+        self._stream_markdown = stream_markdown
+        self._live: Live | None = None
+        self._md_stream: MarkdownStream | None = None
         self.buf: list[str] = []
         self._chars = 0
         self._thinking_open = False
@@ -97,26 +88,66 @@ class ReplyPrinter:
         self._clear_tool()
         self._tool_started_at = None
         text = "".join(self.buf)
+        # A Live refresh reads self.buf, so finish it before clearing the text.
+        streamed = self._stop_live(discard=not text.strip())
         self.buf.clear()
         self._chars = 0
         if text.strip():
-            console.print()
             answer = Markdown(text)
-            if console.is_terminal and sys.stdin.isatty():
-                lines = console.render_lines(answer, pad=False)
-                if len(lines) > console.height:
-                    # pydoc falls back to more.com on Windows, which does not
-                    # provide working arrow/page navigation in PowerShell.
-                    pager = PromptToolkitPager() if sys.platform == "win32" else None
-                    try:
-                        with console.pager(pager=pager, styles=True):
-                            console.print(answer)
-                    except Exception:
-                        # Never let a broken pager cost the user the answer;
-                        # the print below is the fallback.
-                        _discard_paged_capture()
-            console.print(answer)
+            if not streamed:
+                console.print()
+                console.print(answer)
+            # A live reply is already on screen; never print a second copy.
             console.print()
+
+    def _stop_live(self, *, discard: bool = False) -> bool:
+        live, self._live = self._live, None
+        if live is None:
+            return False
+        try:
+            live.transient = discard
+            live.stop()
+        except Exception:
+            # Rendering must never swallow the answer or leave the cursor hidden.
+            console.show_cursor(True)
+            return False
+        return True
+
+    def _discard_answer(self) -> None:
+        self._stop_live(discard=True)
+        self._md_stream = None
+        self.buf.clear()
+        self._chars = 0
+
+    def _update_live_answer(self) -> bool:
+        if not self._stream_markdown or not console.is_terminal:
+            return False
+        if self._live is not None:
+            return True
+        text = "".join(self.buf)
+        if not text.strip():
+            return False
+        self._clear_waiting()
+        self._close_thinking()
+        self._clear_counter()
+        try:
+            console.print()
+            self._md_stream = MarkdownStream(console)
+            self._live = Live(
+                console=console,
+                # MarkdownStream parses completed blocks once and re-parses
+                # only the in-progress tail per repaint. The final stop()
+                # refresh also reads the complete buffer before __exit__ clears it.
+                get_renderable=lambda: self._md_stream.render("".join(self.buf)),
+                refresh_per_second=_ANSWER_REFRESH_PER_SECOND,
+                redirect_stdout=False, redirect_stderr=False,
+                vertical_overflow="visible",
+            )
+            self._live.start(refresh=True)
+        except Exception:
+            self._stop_live(discard=True)
+            return False
+        return True
 
     def _write(self, text: str) -> None:
         out = getattr(err, "file", None) or sys.stderr
@@ -185,6 +216,7 @@ class ReplyPrinter:
         self._clear_tool()
         self._close_thinking()
         self._clear_counter()
+        self._discard_answer()
         if not err.is_terminal:
             return
         self._waiting = True
@@ -273,16 +305,14 @@ class ReplyPrinter:
         # and end the thinking block so later reasoning opens a fresh one.
         self._clear_waiting()
         self._close_thinking()
-        if not self.buf:
-            return
-        self.buf.clear()
-        self._chars = 0
+        self._discard_answer()
         self._clear_counter()
 
     def on_delta(self, text: str) -> None:
         self.buf.append(text)
         self._chars += len(text)
-        self._show_counter()
+        if not self._update_live_answer():
+            self._show_counter()
 
     def _draw_running_tool(
         self, name: str, args: dict, elapsed: int, serial: int,
@@ -319,8 +349,7 @@ class ReplyPrinter:
         self._close_thinking()
         self._clear_counter()
         self._clear_tool()
-        self.buf.clear()
-        self._chars = 0
+        self._discard_answer()
         self._tool_running = True
         self._tool_serial += 1
         serial = self._tool_serial
@@ -339,8 +368,7 @@ class ReplyPrinter:
         self._clear_tool()
         self._close_thinking()
         self._clear_counter()
-        self.buf.clear()
-        self._chars = 0
+        self._discard_answer()
         ok = not result.startswith("error:")
         mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
         meta = ""
