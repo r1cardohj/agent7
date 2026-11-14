@@ -185,9 +185,13 @@ def delete_session(cwd: Path, session_id: str) -> Path:
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with suppress(OSError):
         root.chmod(0o700)
+    # A stale process can recreate a previously deleted session ID. Keep both
+    # copies instead of refusing every later deletion or overwriting old trash.
     target = root / f"{session_id}.json"
-    if target.exists():
-        raise ValueError(f"a trashed session already has this id: {session_id}")
+    serial = 2
+    while target.exists():
+        target = root / f"{session_id}.{serial}.json"
+        serial += 1
     try:
         source.replace(target)
     except OSError as e:

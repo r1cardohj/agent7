@@ -101,9 +101,11 @@ active sessions are saved automatically after tasks, commands, interruptions, an
 
 `--delete` uses the same picker when no ID is given and always asks for confirmation before moving
 the snapshot to `${XDG_STATE_HOME:-~/.local/state}/agent7/trash/`. It never overwrites an older
-trashed session. Inside the REPL, use `/session delete` or `/session delete SESSION_ID`; the delete
-picker omits the active session, while naming the active ID directly is refused so a later save
-cannot silently recreate it. There is no automatic trash cleanup yet.
+trashed session: if the same ID was recreated, later copies become `SESSION_ID.2.json`,
+`SESSION_ID.3.json`, and so on instead of blocking deletion. Inside the REPL, use
+`/session delete` or `/session delete SESSION_ID`; the delete picker omits the active session,
+while naming the active ID directly is refused so a later save cannot silently recreate it.
+There is no automatic trash cleanup yet.
 Model calls use the OpenAI Responses API with local function tools. Sessions replay raw output
 items to their originating provider where required, without using server-side conversation state;
 older snapshots and provider switches use portable function calls and results instead.

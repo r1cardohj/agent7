@@ -113,13 +113,32 @@ class SessionStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no session"):
             load(self.cwd, other.id)
 
-    def test_delete_refuses_to_overwrite_an_existing_trashed_session(self) -> None:
+    def test_delete_preserves_existing_trash_with_a_unique_name(self) -> None:
         path = self.save()
         trash_session_dir().mkdir(parents=True)
-        (trash_session_dir() / f"{self.state.id}.json").write_text("old trash")
-        with self.assertRaisesRegex(ValueError, "already has this id"):
-            delete_session(self.cwd, self.state.id)
-        self.assertTrue(path.exists())
+        old_trash = trash_session_dir() / f"{self.state.id}.json"
+        old_trash.write_text("old trash")
+
+        trash_path = delete_session(self.cwd, self.state.id)
+
+        self.assertFalse(path.exists())
+        self.assertEqual(old_trash.read_text(), "old trash")
+        self.assertEqual(trash_path, trash_session_dir() / f"{self.state.id}.2.json")
+        self.assertEqual(json.loads(trash_path.read_text())["id"], self.state.id)
+
+    def test_recreated_session_id_can_be_deleted_again(self) -> None:
+        self.save()
+        first_trash = delete_session(self.cwd, self.state.id)
+        recreated = self.save()
+
+        second_trash = delete_session(self.cwd, self.state.id)
+
+        self.assertFalse(recreated.exists())
+        self.assertNotEqual(first_trash, second_trash)
+        self.assertTrue(first_trash.is_file())
+        self.assertEqual(second_trash, trash_session_dir() / f"{self.state.id}.2.json")
+        self.assertTrue(second_trash.is_file())
+        self.assertEqual(list_sessions(self.cwd), [])
 
     def test_name_is_compact_and_limited_to_a_readable_length(self) -> None:
         self.state.messages[1]["content"] = "  first   line\n" + "x" * 100
