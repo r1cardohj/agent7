@@ -5,15 +5,15 @@
        alt="A real agent7 session: the REPL opens with Seven, one sentence is typed, and agent7 changes and tests greet.py" width="820">
 </p>
 
-<p align="center"><sub>A real session — one sentence in, five tools out.</sub></p>
+<p align="center"><sub>A real session — one sentence in, six tools out.</sub></p>
 
-**The simplest coding agent. Five tools, one loop.**
+**The simplest coding agent. Six tools, one loop.**
 
 A deliberately minimal harness — all-in on modern, carefully chosen model providers.
 Fast and precise. No seatbelt; hold on.
 
 No orchestration: no plan mode, no subagents, no parallel tasks, no background jobs.
-You give it one sentence; it reads files, edits files, runs commands, fetches web pages, then stops.
+You give it one sentence; it reads files, edits files, runs commands, searches and fetches web pages, then stops.
 Built for people who work on one thing at a time — you hold one task in your head, and so does it.
 
 ## Meet Seven
@@ -29,8 +29,9 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 
 ## Features
 
-- **Deliberately minimal harness** — five tools, one loop, no orchestration
+- **Deliberately minimal harness** — six tools, one loop, no orchestration
 - **Web fetch** — fetch an `http(s)` page and extract its readable Markdown text with metadata; HTML downloading and extraction run through trafilatura
+- **Web search** — ranked results from the DeepSeek Search API with `site:` / `lang:` / `after:` syntax; the tool ships an on-demand skill (`skills/websearch/SKILL.md`) holding the syntax table and result-triage rules, so the always-on schema stays short
 - **Complete CLI agent UX** — streaming thinking + live Markdown answers, tool lines with ✓/✗, edit/write preview, vi-mode REPL with a bottom status bar, fuzzy `@path` completion, isolated session resume and safe deletion
 - **Slash commands** — `/help` `/session` `/model` `/status` `/login` `/logout` `/compact`
 - **Streaming Markdown rendering** — answer deltas update a Rich Live display as they arrive, coalesced into 30 repaints per second. Rendering is incremental: completed blocks are parsed and pre-rendered once, and only the in-progress block is re-parsed per repaint. Long replies stay in the terminal scrollback; there is no pager.
@@ -225,6 +226,8 @@ A run that ends with no visible text never ends silently: you get either
 | `write` | Create or overwrite a whole file | `+N -M` diff stats |
 | `edit` | Precise replacements; one call may include multiple `edits[]` against the original file (no overlaps) | `+N -M` diff stats |
 | `bash` | Host shell in the cwd (bash / PowerShell / cmd) | ~12k chars |
+| `fetch` | Fetch an `http(s)` page and extract readable Markdown (trafilatura) | 12k chars by default, capped at 50k via `max_chars` |
+| `search` | Web search via the DeepSeek Search API; returns ranked titles, URLs, summaries, dates and authority | 12k chars; 8 results by default |
 
 That's it. No `grep`, no `list_dir`, no `todo`, no `task`.
 Need more capability? Let the agent use `bash`.

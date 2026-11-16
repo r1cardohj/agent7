@@ -32,7 +32,7 @@ class MascotTests(unittest.TestCase):
         print_mascot(Console(file=output, force_terminal=True, color_system="truecolor"))
         self.assertIn("agent7", output.getvalue())
         self.assertIn("Seven", output.getvalue())
-        self.assertIn("five tools, one loop", output.getvalue())
+        self.assertIn("six tools, one loop", output.getvalue())
 
 
 if __name__ == "__main__":
