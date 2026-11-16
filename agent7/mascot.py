@@ -66,6 +66,6 @@ def print_mascot(console: Console) -> None:
     """Print the REPL welcome; one-shot and redirected output never call this."""
     console.print()
     console.print(mascot_text(color=console.color_system is not None))
-    console.print("  [bold #c5b8f2]agent7[/bold #c5b8f2]  [dim]four tools, one loop[/dim]")
+    console.print("  [bold #c5b8f2]agent7[/bold #c5b8f2]  [dim]five tools, one loop[/dim]")
     console.print("  [dim]Seven · your tiny coding companion[/dim]")
     console.print()

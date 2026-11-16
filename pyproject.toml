@@ -36,6 +36,7 @@ dependencies = [
     "prompt-toolkit>=3.0.0",
     "fzp>=0.2.2",
     "click>=8.1",
+    "trafilatura>=2.3,<3",
 ]
 
 [project.urls]
