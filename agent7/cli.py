@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import click
-from openai import AsyncOpenAI
 
 from . import __version__
 from .agent import DEFAULT_MAX_TURNS, SHELL, SYSTEM, Interrupted
@@ -26,6 +25,7 @@ from .providers import (
     get_provider,
     list_providers,
     login_hints,
+    make_client,
     resolve_all,
     resolve_default,
 )
@@ -296,7 +296,7 @@ async def async_main(options: Options) -> None:
         prov, cred = picked
         client = prov.make_client(cred)
     else:
-        client = AsyncOpenAI(api_key="missing", base_url=list_providers()[0].default_base)
+        client = make_client("missing", list_providers()[0].default_base)
         if task:
             keys = ", ".join(k for p in list_providers() for k in p.env_keys)
             print(f"No credentials. Set {keys},\n"

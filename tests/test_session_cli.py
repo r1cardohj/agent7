@@ -63,7 +63,7 @@ class SessionCliTests(unittest.TestCase):
         original = path.read_bytes()
         with patch("agent7.cli.resolve_all", return_value={}), \
              patch("agent7.cli.resolve_default", return_value=None), \
-             patch("agent7.cli.AsyncOpenAI") as client, \
+             patch("agent7.cli.make_client") as client, \
              patch("agent7.repl.PromptSession") as prompt:
             client.return_value.close = AsyncMock()
             prompt.return_value.prompt_async.side_effect = EOFError
@@ -74,7 +74,7 @@ class SessionCliTests(unittest.TestCase):
     def test_empty_new_repl_does_not_create_a_snapshot(self) -> None:
         with patch("agent7.cli.resolve_all", return_value={}), \
              patch("agent7.cli.resolve_default", return_value=None), \
-             patch("agent7.cli.AsyncOpenAI") as client, \
+             patch("agent7.cli.make_client") as client, \
              patch("agent7.repl.PromptSession") as prompt:
             client.return_value.close = AsyncMock()
             prompt.return_value.prompt_async.side_effect = EOFError
@@ -84,7 +84,7 @@ class SessionCliTests(unittest.TestCase):
     def test_ctrl_c_discards_input_and_returns_to_the_prompt(self) -> None:
         with patch("agent7.cli.resolve_all", return_value={}), \
              patch("agent7.cli.resolve_default", return_value=None), \
-             patch("agent7.cli.AsyncOpenAI") as client, \
+             patch("agent7.cli.make_client") as client, \
              patch("agent7.repl.PromptSession") as prompt:
             client.return_value.close = AsyncMock()
             prompt.return_value.prompt_async.side_effect = [KeyboardInterrupt, EOFError]
@@ -279,7 +279,7 @@ class SessionCliTests(unittest.TestCase):
         save(state, created_at="2025-01-01T00:00:00+00:00")
         with patch("agent7.cli.resolve_all", return_value={}), \
              patch("agent7.cli.resolve_default", return_value=None), \
-             patch("agent7.cli.AsyncOpenAI") as client, \
+             patch("agent7.cli.make_client") as client, \
              patch("agent7.repl.PromptSession") as prompt, \
              patch("agent7.cli.print_history") as history:
             client.return_value.close = AsyncMock()

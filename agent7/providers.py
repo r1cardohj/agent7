@@ -10,6 +10,20 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from . import __version__
+
+
+class Agent7Client(AsyncOpenAI):
+    """OpenAI-compatible client identified as agent7, not `AsyncOpenAI/Python <sdk>`."""
+
+    @property
+    def user_agent(self) -> str:
+        return f"agent7/{__version__}"
+
+
+def make_client(api_key: str, base_url: str) -> Agent7Client:
+    return Agent7Client(api_key=api_key, base_url=base_url)
+
 def _auth_path() -> Path:
     home = os.environ.get("AGENT7_HOME", "").strip()
     if home:
@@ -108,8 +122,8 @@ class ApiKeyProvider:
         finally:
             await client.close()
 
-    def make_client(self, cred: Credential) -> AsyncOpenAI:
-        return AsyncOpenAI(api_key=cred.api_key, base_url=cred.base_url)
+    def make_client(self, cred: Credential) -> Agent7Client:
+        return make_client(cred.api_key, cred.base_url)
 
 _BUILTINS = [
     ApiKeyProvider("deepseek", ("ds",), ("DEEPSEEK_API_KEY",),
