@@ -571,7 +571,11 @@ def _retryable(exc: BaseException) -> bool:
     status = getattr(exc, "status_code", None)
     if isinstance(status, int):
         return status in RETRY_STATUS
-    return type(exc).__name__ in _RETRY_ERRORS
+    if type(exc).__name__ in _RETRY_ERRORS:
+        return True
+    # Streaming Responses failures can be plain APIError without status_code.
+    # Kimi reports temporary capacity exhaustion only in the error text/body.
+    return "overloaded" in f"{exc} {getattr(exc, 'body', '')}".lower()
 
 
 def _can_failover(exc: BaseException) -> bool:

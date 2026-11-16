@@ -46,6 +46,16 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(answer, "ok")
         self.assertEqual(client.calls, 2)
 
+    def test_kimi_overloaded_stream_error_is_retried(self) -> None:
+        class APIError(Exception):
+            pass
+
+        overloaded = APIError("The engine is currently overloaded, please try again later")
+        answer, client = self.run_agent([([], overloaded), text_turn("ok")])
+
+        self.assertEqual(answer, "ok")
+        self.assertEqual(client.calls, 2)
+
     def test_connection_error_is_retried(self) -> None:
         class APIConnectionError(Exception):
             pass
