@@ -36,6 +36,63 @@ Credentials come from the normal agent7 environment/login store. `git` and Pytho
 The default fixed refs can be changed with `--fast-model provider/model` and
 `--strong-model provider/model`.
 
+## Head-to-head comparison
+
+`evals.compare` runs agent7, Pi, and Kimi Code CLI against the same fixture and hidden
+verifier. The default is 12 tasks × 3 agents × 1 repeat = **36 real agent runs**. Inspect
+it without credentials or API usage:
+
+```bash
+uv run python -m evals.compare --dry-run
+```
+
+Start with a four-category, 12-run pilot:
+
+```bash
+uv run python -m evals.compare \
+  --task quick-greeting,coding-json-lines,debug-async-close,reasoning-config-precedence \
+  --output /tmp/agent7-compare-pilot
+```
+
+Run the full suite only when the API spend is acceptable:
+
+```bash
+uv run python -m evals.compare
+```
+
+All three agents request the same K3-256k model from the Kimi Coding endpoint. Pi and
+Kimi Code use an isolated `kimi-bench/k3-256k` provider backed by the agent7 Kimi API key,
+rather than their local OAuth login state:
+
+| Agent | Default model | Token source |
+| --- | --- | --- |
+| agent7 | `kimi/k3-256k` | OpenAI Responses usage events |
+| Pi | `kimi-bench/k3-256k` | JSON-mode assistant usage, nested usage, and compaction usage |
+| Kimi Code | `kimi-bench/k3-256k` | The fresh session journal, including every session agent |
+
+Token totals are cumulative per model call, including repeated context, cache reads, and
+reasoning output. They are an efficiency signal, not a provider price. Kimi Code's
+`stream-json` stdout has no usage fields; parsing its `wire.jsonl` is required. Missing token
+data is reported as `n/a`, not zero.
+
+Agent time starts immediately before the agent loop/process and ends when it exits or is
+interrupted. Fixture copying and hidden verification are excluded. Completion is binary
+independent verification, not a model-written score or partial human rubric.
+
+For reproducibility, Pi runs in an isolated agent directory with sessions, local extensions,
+MCP, skills, prompt templates, and context-file discovery disabled. Kimi Code runs with a
+fresh `KIMI_CODE_HOME`, a minimal generated config, and an empty skills directory; built-in
+Kimi capabilities such as subagents remain available, and their tokens are included. The API
+key is passed through `AGENT7_KIMI_API_KEY` and is never written to results or artifacts.
+`--timeout` applies to every agent. `--agent7-max-turns` applies only to agent7; Pi and Kimi
+retain their configured loop limits. Agent7 uses Responses; Pi and Kimi Code use their compatible
+Chat Completions configurations (`--pi-api openai-responses` remains available for protocol
+debugging). This is a fixed-endpoint harness comparison, not a proof that every generation
+parameter is identical.
+
+One repeat is a smoke measurement of this small suite. Repeat at least three times before
+treating completion or token differences as stable.
+
 ## Strategies
 
 | Name | Behavior |
@@ -64,6 +121,8 @@ artifacts/<run-id>/
   result.json
   answer.txt
   events.jsonl       # route/tool/usage events, not prompts or credentials
+  agent-output.jsonl # raw external CLI stdout when present; may contain prompts/code
+  agent-stderr.txt   # raw external CLI stderr when present
   changes.patch      # diff against the pristine fixture, including new files
   verify.txt         # independent verifier output
 ```

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import agent7.agent as A
 from agent7.agent import estimate_tokens, run_agent
-from responses_fakes import FakeClient, FakeStream, text_turn, usage_turn
+from responses_fakes import FakeClient, FakeStream, call_turn, text_turn, usage_turn
 
 
 class _Status(Exception):
@@ -40,6 +40,17 @@ class RetryTests(unittest.TestCase):
         )
         return answer, client
 
+    @staticmethod
+    def history(results: int) -> list[dict[str, Any]]:
+        """Tool results whose assistant call was dropped by truncation."""
+        return [
+            {"role": "user", "content": "earlier turn"},
+            *[
+                {"role": "tool", "tool_call_id": f"c{i}", "content": "z" * 3_000}
+                for i in range(results)
+            ],
+        ]
+
     def test_rate_limit_is_retried(self) -> None:
         answer, client = self.run_agent([_Status(429), text_turn("ok")])
 
@@ -57,13 +68,18 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(client.calls, 2)
 
     def test_connection_error_is_retried(self) -> None:
-        class APIConnectionError(Exception):
-            pass
-
-        answer, client = self.run_agent([APIConnectionError("boom"), text_turn("ok")])
+        # Real SDK transport errors have no usable HTTP status.
+        error = A.APIConnectionError(request=None)
+        answer, client = self.run_agent([error, text_turn("ok")])
 
         self.assertEqual(answer, "ok")
         self.assertEqual(client.calls, 2)
+
+    def test_compaction_drops_tool_results_without_their_call(self) -> None:
+        new_msgs, _ = A.compact_messages(self.history(3))
+        A._without_orphan_tool_results(new_msgs)
+
+        self.assertNotIn("tool", [message["role"] for message in new_msgs])
 
     def test_retry_budget_is_finite(self) -> None:
         with self.assertRaises(_Status):
@@ -84,6 +100,31 @@ class RetryTests(unittest.TestCase):
             )
 
         self.assertEqual(seen, ["partial"])
+
+    def test_tool_history_error_retries_with_portable_history(self) -> None:
+        error = _Status(
+            400,
+            "an assistant message with 'tool_calls' must be followed by tool messages; "
+            "tool_call_ids did not have response messages: read:0",
+        )
+        answer, client = self.run_agent([
+            call_turn(("read", {"path": "missing.py"})), error, text_turn("done"),
+        ])
+
+        self.assertEqual(answer, "done")
+        self.assertEqual(client.calls, 3)
+        replayed_calls = [
+            item for item in client.requests[-1]["input"]
+            if item.get("type") == "function_call"
+        ]
+        self.assertEqual(len(replayed_calls), 1)
+        self.assertEqual(replayed_calls[0]["call_id"], "call_0")
+        self.assertNotIn("id", replayed_calls[0])
+
+    def test_tool_history_error_without_raw_output_is_not_retried(self) -> None:
+        error = _Status(400, "tool_call_ids did not have response messages: read:0")
+        with self.assertRaises(_Status):
+            self.run_agent([error])
 
     def test_usage_comes_from_the_completed_response(self) -> None:
         seen: list[dict[str, int]] = []

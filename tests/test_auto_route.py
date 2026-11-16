@@ -128,6 +128,18 @@ class AutoFailoverTests(unittest.TestCase):
         self.assertEqual(len([m for m in messages if m.get("role") == "user"]), 1)
         self.assertTrue(any(change[1] is first and change[0] is second for change in changes))
 
+    def test_connection_error_retries_without_switching_providers(self) -> None:
+        first = target("deepseek", "chat", [A.APIConnectionError(request=None)])
+        second = target("kimi", "k2", [text_turn("wrong")])
+        route = FailoverRoute((first, second))
+
+        with self.assertRaises(A.APIConnectionError):
+            self.run_route(route)
+
+        self.assertEqual(first.client.calls, 4)
+        self.assertEqual(second.client.calls, 0)
+        self.assertEqual(route.current, first)
+
     def test_auth_and_missing_model_errors_fail_over_without_retrying(self) -> None:
         for status in (401, 403, 404):
             with self.subTest(status=status):

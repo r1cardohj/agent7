@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI
 
 from . import web_fetch, web_search
 from .responses import (
@@ -566,12 +566,17 @@ _RETRY_ERRORS = frozenset({
     "APIConnectionError", "APITimeoutError", "RateLimitError",
     "InternalServerError", "ServiceUnavailableError", "BadGatewayError",
 })
+# Connection and timeout errors have no usable HTTP status; they are transient.
+_TRANSIENT_ERRORS = _RETRY_ERRORS | {"APIConnectionError", "APITimeoutError"}
+
 
 def _retryable(exc: BaseException) -> bool:
     status = getattr(exc, "status_code", None)
     if isinstance(status, int):
         return status in RETRY_STATUS
-    if type(exc).__name__ in _RETRY_ERRORS:
+    if type(exc).__name__ in _RETRY_ERRORS or any(
+        cls.__name__ in _TRANSIENT_ERRORS for cls in type(exc).__mro__
+    ):
         return True
     # Streaming Responses failures can be plain APIError without status_code.
     # Kimi reports temporary capacity exhaustion only in the error text/body.
@@ -580,6 +585,10 @@ def _retryable(exc: BaseException) -> bool:
 
 def _can_failover(exc: BaseException) -> bool:
     """Whether another target may help; auth/model errors get no local retries."""
+    # The request never reached a provider. Keep retries on the current target:
+    # switching providers would only disguise a local/network transport failure.
+    if isinstance(exc, (APIConnectionError, APITimeoutError)):
+        return False
     return _retryable(exc) or getattr(exc, "status_code", None) in FAILOVER_STATUS
 
 
@@ -591,6 +600,36 @@ def _is_context_overflow(exc: BaseException) -> bool:
         "context_length", "context length", "maximum context", "too many tokens",
         "prompt is too long", "input is too long",
     ))
+
+def _is_tool_history_error(exc: BaseException) -> bool:
+    """Some compatible Responses backends reject valid raw tool-call replay."""
+    if getattr(exc, "status_code", None) != 400:
+        return False
+    text = f"{exc} {getattr(exc, 'body', '')}".lower()
+    return "tool_call" in text and (
+        "must be followed by tool messages" in text
+        or "did not have response messages" in text
+    )
+
+
+def _without_orphan_tool_results(messages: list[dict[str, Any]]) -> None:
+    """Drop tool results whose call is no longer in history, in place.
+
+    Truncating compaction can keep a tool result while dropping the assistant
+    turn that requested it. Responses rejects that as an orphan
+    `function_call_output`, so a request is then answered without the call.
+    """
+    calls = {
+        call.get("id")
+        for message in messages
+        if message.get("role") == "assistant"
+        for call in message.get("tool_calls") or []
+    }
+    messages[:] = [
+        message for message in messages
+        if message.get("role") != "tool" or message.get("tool_call_id") in calls
+    ]
+
 
 def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     """Rough size for providers that never report usage: ~4 chars per token."""
@@ -815,6 +854,7 @@ async def run_agent(
                 new_msgs, n = compact_messages(messages)
                 if n:
                     discard_raw_output(new_msgs)
+                    _without_orphan_tool_results(new_msgs)
                     messages[:] = new_msgs
                     last_prompt = None
                     await _emit(on_compact, n)
@@ -843,6 +883,15 @@ async def run_agent(
                     messages.append({"role": "assistant", "content": e.partial})
                 raise
             except Exception as e:
+                # A compatible Responses backend may mismatch function_call.id and
+                # call_id while converting raw replay to chat history. The raw items
+                # are optional; retry once with the portable assistant/tool messages.
+                if _is_tool_history_error(e) and any(
+                    RAW_ITEMS_KEY in message for message in messages
+                ):
+                    discard_raw_output(messages)
+                    last_prompt = None
+                    continue
                 # Server-side context overflow: shrink hard, then retry the same turn.
                 # The retry makes no progress, so it must not spend the turn budget.
                 retries += 1
@@ -855,6 +904,7 @@ async def run_agent(
                 if not n:
                     raise
                 discard_raw_output(squeezed)
+                _without_orphan_tool_results(squeezed)
                 messages[:] = squeezed
                 last_prompt = None
                 await _emit(on_compact, n)

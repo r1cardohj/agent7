@@ -318,6 +318,71 @@ retries that turn once.
   returns; `bash` captures to temp files and reads back ~12k chars. A 100 MB log costs
   a few hundred KB of memory, not 300 MB.
 
+## Head-to-head benchmark
+
+On **2026-11-16**, agent7, Pi, and Kimi Code ran the same 12 coding tasks once each:
+**12 tasks × 3 agents × 1 repeat = 36 live model runs**. Every run started from a fresh copy of
+`evals/repos/pyapp`; the hidden checks in `evals/verify.py` were copied in only after the agent
+stopped. Completion is therefore an independent pass/fail result, not a model-written score.
+
+### Model and harness configuration
+
+All three agents requested **K3-256k from the same Kimi Coding endpoint**. The provider aliases
+are different only because each harness has its own provider configuration:
+
+| Harness | Version measured | Requested model | API and thinking configuration |
+| --- | --- | --- | --- |
+| agent7 | 0.3.2-based working tree with the fixes in this commit | `kimi/k3-256k` | Responses; provider default |
+| Pi | 1.4.0 | `kimi-bench/k3-256k` | Chat Completions; thinking `high` |
+| Kimi Code | 2.4.1 | `kimi-bench/k3-256k` | Chat Completions; default effort `high` |
+
+Pi was rerun as a separate batch after correcting its compatible API configuration to Chat
+Completions and `system` rather than the unsupported `developer` role. Its earlier Responses
+runs, which failed during tool-history replay, are not included. The agent7 measurement includes
+this commit's Responses replay and transport-retry fixes.
+
+### What the 12 tasks test
+
+The prompts, including one Chinese prompt per category, are in
+[`evals/tasks.json`](evals/tasks.json). These are small, objectively verifiable tasks, not open-ended
+architecture or human-preference evaluations.
+
+| Category | Task | Required change |
+| --- | --- | --- |
+| Quick | `quick-greeting` | Trim a name, default blank input to `world`, and return an exact greeting. |
+| Quick | `quick-readme-command` | Replace a README example with one exact report command and no unrelated edits. |
+| Quick | `quick-boolean-flag` | Parse only `1`, `true`, `yes`, and `on` as true, ignoring case and whitespace. |
+| Coding | `coding-slugify` | Implement ASCII lowercasing, non-alphanumeric-run collapsing, and hyphen trimming. |
+| Coding | `coding-json-lines` | Parse JSON Lines, skip blanks, and report the actual source line for invalid JSON. |
+| Coding | `coding-retry-after` | Parse delay seconds and HTTP dates, clamp negatives, and reject missing/invalid values. |
+| Debugging | `debug-pagination` | Fix an off-by-one slice so non-final pages contain exactly `per_page` items. |
+| Debugging | `debug-memoize` | Make cache keys distinguish positional args, keyword args, and decorated functions. |
+| Debugging | `debug-async-close` | Wake a runner blocked on its tick so `close()` finishes promptly without API changes. |
+| Reasoning | `reasoning-transaction-rollback` | Undo only completed operations in reverse order and re-raise the original failure. |
+| Reasoning | `reasoning-snapshot-migration` | Migrate v1 snapshots to v2 without input mutation or shared mutable nested data. |
+| Reasoning | `reasoning-config-precedence` | Resolve defaults < file < `APP_*` environment < explicit overrides, preserving inputs. |
+
+### Results
+
+| Agent | Completion | Median agent time | Median total tokens | Total tokens | Tokens per passed task |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **agent7** | **12/12 (100%)** | **27.4s** | **7,430** | **87,733** | **7,311** |
+| Pi | 12/12 (100%) | 29.5s | 9,514 | 124,892 | 10,408 |
+| Kimi Code | 12/12 (100%) | 34.1s | 51,820 | 963,933 | 80,328 |
+
+Agent time starts immediately before the agent loop/process and ends when it exits, excluding
+fixture setup and hidden verification. Tokens are cumulative across model calls, including repeated
+context, cache reads, and reasoning output; they are an efficiency signal, not a dollar cost.
+Kimi Code totals include every session agent. No outlier was removed: Kimi Code's `debug-memoize`
+run alone used **368,024 tokens over 206.7s**, which raises its total but not its median.
+
+On this suite all three tied on completion, while agent7 had the lowest median time and token use.
+This is **one repeat of a small task pack**, not a general coding-agent ranking. Repeat at least
+three times before treating completion or efficiency differences as stable. The runner, metric
+definitions, raw-artifact layout, and reproduction commands are documented in
+[`evals/README.md`](evals/README.md); inspect the plan with
+`uv run python -m evals.compare --dry-run`.
+
 ## Evaluating auto routing
 
 `evals/` contains an opt-in, live-API benchmark that compares fixed models, a simple

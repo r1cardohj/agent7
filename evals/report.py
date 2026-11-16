@@ -183,6 +183,200 @@ def render_report(records: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+COMPARISON_ORDER = ("agent7", "pi", "kimi")
+
+
+def _token_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        record for record in records
+        if _valid(record)
+        and (
+            record.get("usage_observed")
+            or any(int(record.get(key, 0) or 0) for key in (
+                "prompt_tokens", "completion_tokens", "total_tokens",
+            ))
+        )
+    ]
+
+
+def _comparison_rows(records: list[dict[str, Any]]) -> Iterable[dict[str, Any]]:
+    names = list(dict.fromkeys(record["strategy"] for record in records))
+    names.sort(key=lambda name: (
+        COMPARISON_ORDER.index(name) if name in COMPARISON_ORDER else 99, name,
+    ))
+    for name in names:
+        rows = [record for record in records if record["strategy"] == name]
+        valid = [record for record in rows if _valid(record)]
+        usage = _token_records(valid)
+        successes = sum(bool(record["success"]) for record in valid)
+        yield {
+            "agent": name,
+            "runs": len(rows),
+            "valid": len(valid),
+            "passed": successes,
+            "completion": 100 * successes / len(valid) if valid else None,
+            "token_data": f"{len(usage)}/{len(valid)}",
+            "agent_time": _median(
+                valid, "agent_seconds" if valid and "agent_seconds" in valid[0] else "wall_seconds",
+            ) if valid else None,
+            "input": _median(usage, "prompt_tokens") if usage else None,
+            "output": _median(usage, "completion_tokens") if usage else None,
+            "tokens": _median(usage, "total_tokens") if usage else None,
+            "total_tokens": sum(int(record.get("total_tokens", 0) or 0) for record in usage),
+        }
+
+
+def _comparison_cell(records: list[dict[str, Any]]) -> str:
+    valid = [record for record in records if _valid(record)]
+    if not valid:
+        return "n/a"
+    time_key = "agent_seconds" if "agent_seconds" in valid[0] else "wall_seconds"
+    usage = _token_records(valid)
+    passed = sum(bool(record["success"]) for record in valid)
+    tokens = f"{int(_median(usage, 'total_tokens')):,} tok" if usage else "n/a tok"
+    return (
+        f"{passed}/{len(valid)} · {_number(_median(valid, time_key))}s · {tokens}"
+    )
+
+
+def render_comparison_report(
+    records: list[dict[str, Any]], *, config: dict[str, Any] | None = None,
+) -> str:
+    """Render the head-to-head completion, time, and token comparison."""
+    lines = [
+        "# Coding-agent head-to-head evaluation",
+        "",
+        f"Generated: {datetime.now(timezone.utc).isoformat()}",
+        "",
+        "Completion is binary independent verification. Infrastructure and harness "
+        "failures are excluded from completion denominators and shown in raw results.",
+        "",
+        "| Agent | Runs | Valid | Passed | Completion % | Token data | "
+        "Median agent s | Median input | Median output | Median total tokens | "
+        "Total tokens |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    agents = [row["agent"] for row in _comparison_rows(records)]
+    for row in _comparison_rows(records):
+        lines.append(
+            f"| {row['agent']} | {row['runs']} | {row['valid']} | {row['passed']} | "
+            f"{_number(row['completion'])} | {row['token_data']} | "
+            f"{_number(row['agent_time'])} | {_number(row['input'], 0)} | "
+            f"{_number(row['output'], 0)} | {_number(row['tokens'], 0)} | "
+            f"{row['total_tokens']:,} |"
+        )
+    lines += [
+        "",
+        "`Token data` is the number of valid runs with provider-reported usage. "
+        "Missing token data is shown as `n/a`, never as zero. Total tokens are "
+        "cumulative model-call tokens, including repeated context and reasoning output.",
+    ]
+
+    if config:
+        models = config.get("models") or {}
+        versions = config.get("agent_versions") or {}
+        lines += [
+            "",
+            "## Configuration",
+            "",
+            "| Agent | Requested model | CLI version |",
+            "| --- | --- | --- |",
+        ]
+        for agent in agents:
+            model = models.get(agent) or "n/a"
+            version = versions.get(agent) or "n/a"
+            lines.append(f"| {agent} | `{model}` | {version} |")
+        if config.get("pi_thinking"):
+            lines.append(f"\nPi thinking level: `{config['pi_thinking']}`")
+        if config.get("pi_api"):
+            lines.append(f"Pi API: `{config['pi_api']}`")
+        if config.get("agent7_max_turns"):
+            lines.append(f"agent7 max turns: `{config['agent7_max_turns']}`")
+        if config.get("merge_note"):
+            lines += ["", f"Batch note: {config['merge_note']}"]
+
+    categories = sorted({record.get("category", "unknown") for record in records})
+    lines += [
+        "",
+        "## Completion by category",
+        "",
+        "| Category | " + " | ".join(agents) + " |",
+        "| --- | " + " | ".join("---:" for _ in agents) + " |",
+    ]
+    for category in categories:
+        cells = []
+        for agent in agents:
+            rows = [
+                record for record in records
+                if record["strategy"] == agent and record.get("category") == category
+                and _valid(record)
+            ]
+            cells.append(
+                f"{sum(bool(row['success']) for row in rows)}/{len(rows)}" if rows else "n/a"
+            )
+        lines.append(f"| {category} | " + " | ".join(cells) + " |")
+
+    task_ids = list(dict.fromkeys(record["task_id"] for record in records))
+    lines += [
+        "",
+        "## Paired task summary",
+        "",
+        "Each cell is `passed/valid · median agent seconds · median total tokens`. "
+        "Runs without provider token data use `n/a tok`.",
+        "",
+        "| Task | " + " | ".join(agents) + " |",
+        "| --- | " + " | ".join("---:" for _ in agents) + " |",
+    ]
+    for task_id in task_ids:
+        cells = []
+        for agent in agents:
+            rows = [
+                record for record in records
+                if record["task_id"] == task_id and record["strategy"] == agent
+            ]
+            cells.append(_comparison_cell(rows))
+        lines.append(f"| {task_id} | " + " | ".join(cells) + " |")
+
+    if "agent7" in agents:
+        lines += [
+            "",
+            "## Paired completion delta: agent7 minus baseline",
+            "",
+            "Percentile bootstrap over tasks (2,000 resamples, fixed seed); repeats are "
+            "averaged within each task. With one repeat this is descriptive only.",
+            "",
+            "| Baseline | Paired tasks | Delta pp | 95% interval pp |",
+            "| --- | ---: | ---: | ---: |",
+        ]
+        for baseline in agents:
+            if baseline == "agent7":
+                continue
+            delta = paired_success_delta(records, "agent7", baseline)
+            interval = "n/a" if delta["tasks"] == 0 else (
+                f"[{_number(delta['low_pp'])}, {_number(delta['high_pp'])}]"
+            )
+            lines.append(
+                f"| {baseline} | {delta['tasks']} | {_number(delta['delta_pp'])} | {interval} |"
+            )
+
+    lines += [
+        "",
+        "## Metric definitions and limits",
+        "",
+        "- Agent time starts immediately before the agent process/loop and ends when "
+        "it exits or is interrupted; fixture setup and hidden verification are excluded.",
+        "- Token counts are cumulative per model call, not final context size. Kimi "
+        "Code totals include every session agent; Pi totals include assistant, nested, "
+        "and compaction usage where reported.",
+        "- Inspect `artifacts/*/changes.patch`, `verify.txt`, and `result.json` before "
+        "trusting an outlier.",
+        "- This task pack is small and objective. One repeat measures this concrete "
+        "suite, not broad coding-agent quality.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", type=Path, help="results.jsonl or its run directory")

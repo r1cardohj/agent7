@@ -81,6 +81,12 @@ class AgentResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    usage_observed: bool = False
+    token_source: str = ""
+    raw_output: str = ""
+    raw_error: str = ""
     model_rounds: int = 0
     tool_rounds: int = 0
     tool_calls: int = 0
@@ -258,6 +264,10 @@ class AgentRunner:
                 result.prompt_tokens += usage.get("prompt_tokens", 0)
                 result.completion_tokens += usage.get("completion_tokens", 0)
                 result.total_tokens += usage.get("total_tokens", 0)
+                result.cache_read_tokens += usage.get("cache_read_tokens", 0)
+                result.cache_write_tokens += usage.get("cache_write_tokens", 0)
+                result.usage_observed = True
+                result.token_source = "agent7-responses"
                 result.events.append({"event": "usage", **usage})
 
             def on_route(target: RouteTarget, previous: RouteTarget | None, error) -> None:
@@ -325,6 +335,10 @@ def _record_workdir(artifact: Path, cwd: Path, baseline: str, outcome: AgentResu
         "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in outcome.events),
         encoding="utf-8",
     )
+    if outcome.raw_output:
+        (artifact / "agent-output.jsonl").write_text(outcome.raw_output, encoding="utf-8")
+    if outcome.raw_error:
+        (artifact / "agent-stderr.txt").write_text(outcome.raw_error, encoding="utf-8")
     if not baseline or not cwd.is_dir():
         return
     _run(["git", "add", "-N", "."], cwd)
@@ -405,6 +419,7 @@ async def execute_run(
     status = "runner_error"
     verify_exit: int | None = None
     baseline = ""
+    agent_seconds = 0.0
     workdir_recorded = False
     with tempfile.TemporaryDirectory(prefix="agent7-eval-") as temporary:
         cwd = Path(temporary) / "repo"
@@ -417,7 +432,13 @@ async def execute_run(
                 if setup.returncode:
                     raise RuntimeError(f"setup exited {setup.returncode}")
             baseline = _git_baseline(cwd)
-            outcome = await _with_timeout(runner, task, cwd, strategy, timeout or task.timeout)
+            agent_started = time.perf_counter()
+            try:
+                outcome = await _with_timeout(
+                    runner, task, cwd, strategy, timeout or task.timeout,
+                )
+            finally:
+                agent_seconds = time.perf_counter() - agent_started
             _record_workdir(artifact, cwd, baseline, outcome)
             workdir_recorded = True
             if outcome.error is not None:
@@ -464,6 +485,7 @@ async def execute_run(
         "repeat": repeat,
         "started_at": started_at,
         "wall_seconds": round(time.perf_counter() - started, 3),
+        "agent_seconds": round(agent_seconds, 3),
         "status": status,
         "success": status == "passed",
         "valid": status not in INVALID_STATUSES,
@@ -480,6 +502,10 @@ async def execute_run(
         "prompt_tokens": outcome.prompt_tokens,
         "completion_tokens": outcome.completion_tokens,
         "total_tokens": outcome.total_tokens,
+        "cache_read_tokens": outcome.cache_read_tokens,
+        "cache_write_tokens": outcome.cache_write_tokens,
+        "usage_observed": outcome.usage_observed,
+        "token_source": outcome.token_source,
         "model_rounds": outcome.model_rounds,
         "tool_rounds": outcome.tool_rounds,
         "tool_calls": outcome.tool_calls,
