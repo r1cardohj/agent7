@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import threading
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -118,7 +119,8 @@ class Session:
     created_at: str = field(default_factory=timestamp)
     persisted: bool = field(default=False, repr=False)
     models_cache: list[str] | None = None
-    _models_fetch: asyncio.Task[list[str]] | None = field(default=None, repr=False)
+    _models_fetch: Any = field(default=None, repr=False)
+    _models_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     model_ref: str | None = None
     context_limit: int | None = None
     prompt_tokens: int | None = None
@@ -159,6 +161,16 @@ class Session:
     def remember(self, provider_id: str, cred: Credential) -> None:
         self.credentials[provider_id] = cred
 
+    def publish_models(
+        self, fetch: Any, refs: list[str], credentials: dict[str, Credential],
+    ) -> None:
+        """Publish discovery only when it is still the session's current fetch."""
+        with self._models_lock:
+            if self._models_fetch is not fetch:
+                return
+            self.models_cache = refs
+            self.credentials.update(credentials)
+
     async def apply(self, provider: Provider | str, cred: Credential) -> None:
         if isinstance(provider, str):
             p = get_provider(provider)
@@ -196,10 +208,10 @@ class Session:
             await _close_client(old)
 
     async def close(self) -> None:
-        if self._models_fetch is not None and not self._models_fetch.done():
-            self._models_fetch.cancel()
-            with suppress(asyncio.CancelledError, Exception):
-                await self._models_fetch
+        # Model discovery runs in a daemon thread. Closing the UI must never
+        # join it: a blocked DNS or HTTP call there must not delay Ctrl-D.
+        with self._models_lock:
+            self._models_fetch = None
         if self.route is not None:
             await self.route.close()
         else:

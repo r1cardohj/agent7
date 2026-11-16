@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from getpass import getpass
 
 from .agent import SYSTEM, compact_messages
 from .providers import (
+    Credential,
     agent7_auth_path,
     describe_found,
     get_provider,
@@ -40,80 +42,107 @@ def list_commands() -> list[tuple[str, str]]:
 def known_names() -> list[str]:
     return sorted(_COMMANDS)
 
-async def _fetch_models(session: Session) -> list[str]:
+MODEL_LIST_TIMEOUT = 5.0
+MODEL_LIST_JOIN_TIMEOUT = 12.0
+
+
+def _discover_models(session: Session) -> tuple[list[str], dict[str, Credential]]:
+    """Synchronous provider sweep for a daemon worker, bounded per provider."""
+    credentials = dict(session.credentials)
     if session.credential and session.provider_id:
-        session.remember(session.provider_id, session.credential)
+        credentials[session.provider_id] = session.credential
     for pid, cred in resolve_all().items():
-        session.credentials.setdefault(pid, cred)
-    if not session.credentials:
-        session.models_cache = []
-        return []
+        credentials.setdefault(pid, cred)
+    if not credentials:
+        return [], credentials
     order = {p.id: i for i, p in enumerate(list_providers())}
     errors, refs = [], []
-
-    async def _one(pid: str):
+    for pid, cred in credentials.items():
         p = get_provider(pid)
         if not p:
-            return pid, [], "unknown"
+            errors.append(f"{pid}: unknown")
+            continue
         try:
-            return pid, await p.list_models(session.credentials[pid]), None
+            ids = p.list_models_sync(cred, timeout=MODEL_LIST_TIMEOUT)
         except Exception as e:  # noqa: BLE001
-            return pid, [], str(e)
-
-    for pid, ids, err in await asyncio.gather(*[_one(p) for p in session.credentials]):
-        if err:
-            errors.append(f"{pid}: {err}")
+            errors.append(f"{pid}: {e}")
         else:
             refs.extend(f"{pid}/{m}" for m in ids)
     refs = sorted(set(refs), key=lambda r: (order.get(r.partition("/")[0], 99), r))
-    session.models_cache = refs
     if errors and not refs:
         raise RuntimeError("; ".join(errors))
-    return refs
+    return refs, credentials
 
 
-def _consume_models_fetch(task: asyncio.Task[list[str]]) -> None:
-    # A background prefetch must not emit "exception was never retrieved" when
-    # nobody runs /model. Awaiting the same task later still raises normally.
-    if not task.cancelled():
-        task.exception()
+class ModelsFetch:
+    """Daemon-thread provider discovery that process exit never waits for."""
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+        self.error: BaseException | None = None
+        self._done = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name="agent7-model-discovery", daemon=True,
+        )
+
+    @property
+    def done(self) -> bool:
+        return self._done.is_set()
+
+    def start(self) -> None:
+        self._thread.start()
+
+    async def wait(self, timeout: float | None = None) -> None:
+        """Cooperatively join from the UI loop without owning the worker thread."""
+        loop = asyncio.get_running_loop()
+        deadline = None if timeout is None else loop.time() + timeout
+        while not self._done.is_set():
+            if deadline is not None and loop.time() >= deadline:
+                raise TimeoutError("model list is still loading")
+            await asyncio.sleep(0.05)
+        if self.error is not None:
+            raise self.error
+
+    def _run(self) -> None:
+        try:
+            refs, credentials = _discover_models(self.session)
+            self.session.publish_models(self, refs, credentials)
+        except BaseException as e:  # noqa: BLE001  background failure surfaces on /model
+            self.error = e
+        finally:
+            self._done.set()
 
 
-def _start_models_fetch(session: Session) -> asyncio.Task[list[str]]:
-    task = asyncio.create_task(_fetch_models(session))
-    session._models_fetch = task
-    task.add_done_callback(_consume_models_fetch)
-    return task
+def _start_models_fetch(session: Session) -> ModelsFetch:
+    fetch = ModelsFetch(session)
+    session._models_fetch = fetch
+    fetch.start()
+    return fetch
 
 
-def prefetch_models(session: Session) -> asyncio.Task[list[str]] | None:
-    """Populate the model cache without blocking the REPL prompt."""
+def prefetch_models(session: Session) -> ModelsFetch | None:
+    """Populate the model cache without putting network work on the UI loop."""
     if session.models_cache is not None:
         return None
-    task = getattr(session, "_models_fetch", None)
-    if task is None or task.done():
-        task = _start_models_fetch(session)
-    return task
+    fetch = session._models_fetch
+    if fetch is None or fetch.done:
+        fetch = _start_models_fetch(session)
+    return fetch
 
 
 async def fetch_models(session: Session, *, refresh: bool = False) -> list[str]:
-    task = getattr(session, "_models_fetch", None)
-    if refresh:
-        if task is not None and not task.done():
-            try:
-                await asyncio.shield(task)
-            except Exception:
-                pass  # A forced refresh still gets its own request.
-        task = _start_models_fetch(session)
-    elif task is not None:
-        # Join an in-flight prefetch; never issue a duplicate provider sweep.
-        pass
-    elif session.models_cache is not None:
+    fetch = session._models_fetch
+    if not refresh and fetch is not None and not fetch.done:
+        await fetch.wait(MODEL_LIST_JOIN_TIMEOUT)
+    if not refresh and session.models_cache is not None:
         return session.models_cache
-    else:
-        task = _start_models_fetch(session)
-    # A cancelled /model must not cancel the shared background prefetch.
-    return await asyncio.shield(task)
+    if fetch is not None and fetch.done and fetch.error is not None:
+        raise fetch.error
+    fetch = _start_models_fetch(session)
+    await fetch.wait(MODEL_LIST_JOIN_TIMEOUT)
+    if session.models_cache is not None:
+        return session.models_cache
+    raise RuntimeError("model list unavailable")
 
 def resolve_model_ref(session: Session, name: str) -> tuple[str, str, str] | str:
     available, raw = session.models_cache or [], name.strip()

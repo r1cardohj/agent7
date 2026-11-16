@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAI
 
 from . import __version__
 
@@ -21,8 +21,20 @@ class Agent7Client(AsyncOpenAI):
         return f"agent7/{__version__}"
 
 
+class Agent7SyncClient(OpenAI):
+    """OpenAI-compatible synchronous client identified as agent7."""
+
+    @property
+    def user_agent(self) -> str:
+        return f"agent7/{__version__}"
+
+
 def make_client(api_key: str, base_url: str) -> Agent7Client:
     return Agent7Client(api_key=api_key, base_url=base_url)
+
+
+def make_sync_client(api_key: str, base_url: str, *, timeout: float) -> Agent7SyncClient:
+    return Agent7SyncClient(api_key=api_key, base_url=base_url, timeout=timeout)
 
 def _auth_path() -> Path:
     home = os.environ.get("AGENT7_HOME", "").strip()
@@ -121,6 +133,15 @@ class ApiKeyProvider:
             return sorted({m.id for m in page.data if getattr(m, "id", None)})
         finally:
             await client.close()
+
+    def list_models_sync(self, cred: Credential, *, timeout: float) -> list[str]:
+        """Run provider discovery in the caller's thread, bounded by `timeout`."""
+        client = make_sync_client(cred.api_key, cred.base_url, timeout=timeout)
+        try:
+            page = client.models.list()
+            return sorted({m.id for m in page.data if getattr(m, "id", None)})
+        finally:
+            client.close()
 
     def make_client(self, cred: Credential) -> Agent7Client:
         return make_client(cred.api_key, cred.base_url)

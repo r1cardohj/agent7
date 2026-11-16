@@ -132,8 +132,9 @@ snapshot untouched. Because `-m` takes the following word as its value, a bare `
 needs a separator:
 `agent7 -m -- "fix it"` (or put the task first: `agent7 "fix it" -m`).
 Reusing a saved model does not block startup on provider discovery. Interactive sessions
-refresh the model list in the background; `/model` joins an in-flight refresh instead of
-issuing duplicate requests, or reads the populated cache immediately.
+refresh the model list on a daemon worker; `/model` joins that in-flight refresh instead of
+issuing duplicate requests, or reads the populated cache immediately. Process exit never
+waits for the worker, so a blocked DNS or HTTP call cannot delay Ctrl-D.
 
 Choose `auto` with `agent7 -m auto` or `/model auto`; one-shot tasks use it by default, and there
 is no route configuration. agent7

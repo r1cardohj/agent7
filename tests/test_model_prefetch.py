@@ -1,6 +1,7 @@
-"""Background model discovery shares one request and never outlives the session."""
+"""Model discovery stays responsive, shares one worker, and never delays exit."""
 
 import asyncio
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -14,19 +15,24 @@ class ModelPrefetchTests(unittest.TestCase):
         async def exercise() -> None:
             session = Session(model="m", cwd=Path("."), client=None)
             calls = 0
-            release = asyncio.Event()
+            started = threading.Event()
+            release = threading.Event()
 
-            async def fetch(_session):
+            def discover(_session):
                 nonlocal calls
                 calls += 1
-                await release.wait()
-                return ["deepseek/deepseek-flash"]
+                started.set()
+                self.assertTrue(release.wait(timeout=2))
+                return ["deepseek/deepseek-flash"], {}
 
-            with patch("agent7.commands._fetch_models", new=fetch):
+            with patch("agent7.commands._discover_models", new=discover):
                 background = prefetch_models(session)
                 first = asyncio.create_task(fetch_models(session))
                 second = asyncio.create_task(fetch_models(session))
-                await asyncio.sleep(0)
+                for _ in range(200):
+                    if started.is_set() and first and second:
+                        break
+                    await asyncio.sleep(0.01)
                 self.assertIs(session._models_fetch, background)
                 self.assertFalse(first.done())
                 self.assertFalse(second.done())
@@ -35,30 +41,44 @@ class ModelPrefetchTests(unittest.TestCase):
                 refs = await asyncio.gather(first, second)
                 self.assertEqual(refs, [["deepseek/deepseek-flash"]] * 2)
                 self.assertEqual(calls, 1)
+                self.assertEqual(session.models_cache, ["deepseek/deepseek-flash"])
             await session.close()
 
         asyncio.run(exercise())
 
-    def test_closing_the_session_cancels_an_unfinished_prefetch(self) -> None:
+    def test_closing_the_session_never_waits_for_a_stuck_prefetch(self) -> None:
         async def exercise() -> None:
             session = Session(model="m", cwd=Path("."), client=None)
-            started = asyncio.Event()
-            cancelled = asyncio.Event()
+            started = threading.Event()
+            release = threading.Event()
 
-            async def fetch(_session):
+            def discover(_session):
                 started.set()
-                try:
-                    await asyncio.Event().wait()
-                except asyncio.CancelledError:
-                    cancelled.set()
-                    raise
+                self.assertTrue(release.wait(timeout=2))
+                return [], {}
 
-            with patch("agent7.commands._fetch_models", new=fetch):
+            with patch("agent7.commands._discover_models", new=discover):
                 task = prefetch_models(session)
-                await started.wait()
-                await session.close()
-                self.assertTrue(cancelled.is_set())
-                self.assertTrue(task.done())
+                self.assertTrue(started.wait(timeout=1))
+                await asyncio.wait_for(session.close(), timeout=1)
+                self.assertFalse(task.done)
+                release.set()
+                self.assertTrue(task._done.wait(timeout=2))
+                self.assertIsNone(session.models_cache)
+
+        asyncio.run(exercise())
+
+    def test_background_failure_surfaces_when_model_is_requested(self) -> None:
+        async def exercise() -> None:
+            session = Session(model="m", cwd=Path("."), client=None)
+
+            def discover(_session):
+                raise RuntimeError("network blocked")
+
+            with patch("agent7.commands._discover_models", new=discover):
+                prefetch_models(session)
+                with self.assertRaisesRegex(RuntimeError, "network blocked"):
+                    await fetch_models(session)
 
         asyncio.run(exercise())
 
