@@ -9,7 +9,7 @@ resolution-markers = [
 
 [[package]]
 name = "agent7"
-version = "0.3.0"
+version = "0.3.3"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -1139,6 +1139,7 @@ resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'emscripten'",
     "(python_full_version >= '3.11' and sys_platform != 'emscripten') or (python_full_version == '3.11.*' and sys_platform == 'emscripten')",
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/cf/e7/67c67920a3b5183388e0853a0a564a4bf60f2dd190a4e7626f5dad2fed62/regex-2026.11.15.tar.gz", hash = "sha256:d6ec7e29e62ebf93ab2a593d1137022b6025497d8610e5cb666d52f9ee5bb0ce", size = 419660, upload-time = "2026-11-15T17:04:15.71Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/64/92/93d093a6cd53f7f76984369dffdfb59b6aae1a5cabdf8289e8bbef5fc7e9/regex-2026.11.15-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:f11f0d4110a071aa6d8da35c199fdcc607271cb8c23babbf00aadc2d02b85b00", size = 496457, upload-time = "2026-11-15T17:01:33.23Z" },
     { url = "https://files.pythonhosted.org/packages/b3/2e/80d094f13931bed092ec821629a3c433cc01a8d24ccfeb4ea82fdc131077/regex-2026.11.15-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:c56b4d165feb65211571007f4b016d142b52fffb91b30bb4b38175cf3acd3917", size = 295963, upload-time = "2026-11-15T17:01:37.432Z" },
