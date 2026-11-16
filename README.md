@@ -249,9 +249,10 @@ This is an observer only: it adds no model tools, is inactive outside herdr, and
 protocol bytes to a non-terminal stream. Set `AGENT7_NO_HERDR=1` to disable it.
 
 When both `HC_TERMINAL_ID` and the `hc` command are available, agent7 adds only a
-short pointer to its packaged [Herdr skill](agent7/skills/herdr/SKILL.md). The model
-reads that skill with the ordinary `read` tool before its first `hc` command in a
-task, keeping the full protocol out of the resident system prompt. Tests and builds
+short pointer to its packaged [Herdr skill](agent7/skills/herdr/SKILL.md). Before
+starting any test or build expected to exceed about 60 seconds, or any service, the
+model must read that skill with the ordinary `read` tool and use `hc` as directed.
+This keeps the full protocol out of the resident system prompt. Tests and builds
 start once with `hc run --bg --no-notify`, allow independent work, then collect the
 result with `hc wait` — `hc read` only when failure logs matter. Services use a
 stable name, never `--rm`, confirm readiness with `hc wait --output` or `hc read`,

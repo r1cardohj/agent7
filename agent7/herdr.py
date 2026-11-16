@@ -32,8 +32,9 @@ _HerdrWhich = Callable[[str], str | None]
 _BACKGROUND_TASKS_POINTER = """\
 
 Herdr background runs: `hc` is available in bash. Use plain bash for fast
-commands. Before your first `hc` command for a long-running test, build, or
-service in each task, read and follow this bundled skill exactly:
+commands. For every test or build expected to run beyond about 60 seconds,
+and every service, use `hc` as directed by this bundled skill. Read and
+follow the skill exactly before starting that work in each task:
 `{skill_path}`
 Do not use hc before reading it. If the file cannot be read, use ordinary
 bash with a suitable timeout instead of guessing the protocol.
