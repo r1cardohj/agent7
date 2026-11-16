@@ -30,7 +30,7 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 ## Features
 
 - **Deliberately minimal harness** — six tools, one loop, no orchestration
-- **Web fetch** — fetch an `http(s)` page and extract its readable Markdown text with metadata; HTML downloading and extraction run through trafilatura
+- **Web fetch** — fetch an `http(s)` page and extract its readable Markdown text with metadata; proxy-aware urllib3 handles downloads, trafilatura extracts HTML, and raw Markdown/JSON pass through without HTML conversion
 - **Web search** — ranked results from the DeepSeek Search API with `site:` / `lang:` / `after:` syntax; the tool ships an on-demand skill (`skills/websearch/SKILL.md`) holding the syntax table and result-triage rules, so the always-on schema stays short
 - **Complete CLI agent UX** — streaming thinking + live Markdown answers, tool lines with ✓/✗, edit/write preview, vi-mode REPL with a bottom status bar, fuzzy `@path` completion, isolated session resume and safe deletion
 - **Slash commands** — `/help` `/session` `/model` `/status` `/login` `/logout` `/compact`
@@ -226,7 +226,7 @@ A run that ends with no visible text never ends silently: you get either
 | `write` | Create or overwrite a whole file | `+N -M` diff stats |
 | `edit` | Precise replacements; one call may include multiple `edits[]` against the original file (no overlaps) | `+N -M` diff stats |
 | `bash` | Host shell in the cwd (bash / PowerShell / cmd) | ~12k chars |
-| `fetch` | Fetch an `http(s)` page and extract readable Markdown (trafilatura) | 12k chars by default, capped at 50k via `max_chars` |
+| `fetch` | Fetch an `http(s)` page with proxy-aware downloads; extract readable HTML Markdown (trafilatura), pass through Markdown/JSON, or fall back to clean plain text | 12k chars by default, capped at 50k via `max_chars` |
 | `search` | Web search via the DeepSeek Search API; returns ranked titles, URLs, summaries, dates and authority | 12k chars; 8 results by default |
 
 That's it. No `grep`, no `list_dir`, no `todo`, no `task`.
