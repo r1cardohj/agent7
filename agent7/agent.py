@@ -23,6 +23,7 @@ from . import web_fetch, web_search
 from .core import (
     DEFAULT_MAX_TURNS,
     AgentInterrupted,
+    Attachment,
     CancellationToken,
     EventEmitter,
     EventListener,
@@ -643,7 +644,8 @@ def compact_messages(
         role, content = m.get("role"), m.get("content")
         if role == "tool" and i < old_tool_before:
             updated = m
-            if m.get(IMAGES_KEY):
+            image_blocks = m.get(IMAGES_KEY) or m.get("_attachments")
+            if image_blocks:
                 # Old screenshots are the bulkiest history there is; keep the note.
                 updated = {
                     **updated,
@@ -651,6 +653,7 @@ def compact_messages(
                     + "\n[image omitted: compacted]",
                 }
                 updated.pop(IMAGES_KEY, None)
+                updated.pop("_attachments", None)
                 content = updated["content"]
             if isinstance(content, str) and len(content) > tool_max_chars:
                 updated = {
@@ -776,6 +779,7 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     for m in messages:
         chars += len(str(m.get("content") or ""))
         images += len(m.get(IMAGES_KEY) or [])
+        images += len(m.get("_attachments") or [])
         for call in m.get("tool_calls") or []:
             chars += len(str((call.get("function") or {}).get("arguments") or ""))
     return chars // 4 + images * IMAGE_TOKEN_ESTIMATE + 1
@@ -1219,12 +1223,10 @@ def create_tool_registry(dispatcher: Callable[..., Any] | None = None) -> ToolRe
             if isinstance(result, ToolImageOutput):
                 return ToolResult(
                     result.text,
-                    {
-                        IMAGES_KEY: [
-                            {"data": block.data, "mimeType": block.mime_type}
-                            for block in result.images
-                        ]
-                    },
+                    attachments=[
+                        Attachment(data=block.data, mime_type=block.mime_type, kind="image")
+                        for block in result.images
+                    ],
                 )
             return result
 

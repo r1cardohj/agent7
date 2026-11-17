@@ -13,6 +13,7 @@ from .lifecycle import LifecycleHooks, run_with_lifecycle
 from .plugins import PluginContext, PluginManager
 from .tools import ToolContext, ToolExecutor, ToolRegistry
 from .types import (
+    TOOL_ATTACHMENTS_KEY,
     AgentInterrupted,
     CancellationToken,
     Message,
@@ -20,6 +21,7 @@ from .types import (
     RunResult,
     RunStatus,
     ToolCall,
+    ToolResult,
     new_run_id,
 )
 
@@ -77,6 +79,11 @@ def _private_state(message: Message, state: dict[str, Any]) -> None:
     for key, value in state.items():
         if key.startswith("_"):
             message[key] = value
+
+
+def _merge_attachments(message: Message, result: ToolResult) -> None:
+    if result.attachments:
+        message[TOOL_ATTACHMENTS_KEY] = [block.to_dict() for block in result.attachments]
 
 
 class Agent:
@@ -282,6 +289,7 @@ class Agent:
                         "content": execution.result.text,
                     }
                     _private_state(tool_message, execution.result.state)
+                    _merge_attachments(tool_message, execution.result)
                     messages.append(tool_message)
                 pending = []
 

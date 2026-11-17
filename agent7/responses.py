@@ -106,14 +106,15 @@ def tool_output(message: dict[str, Any], *, vision: bool = True) -> str | list[d
     of letting the provider reject the whole request.
     """
     text = message.get("content") or ""
-    blocks = message.get(IMAGES_KEY) if vision else None
+    blocks = (message.get(IMAGES_KEY) or message.get("_attachments")) if vision else None
     if not isinstance(blocks, list) or not blocks:
         return text
     parts: list[dict[str, Any]] = [{"type": "input_text", "text": text}]
     for block in blocks:
         if not isinstance(block, dict):
             continue
-        data, mime = block.get("data"), block.get("mimeType") or "image/png"
+        data = block.get("data")
+        mime = block.get("mimeType") or block.get("mime_type") or "image/png"
         if isinstance(data, str) and data:
             parts.append({"type": "input_image", "image_url": f"data:{mime};base64,{data}"})
     return parts if len(parts) > 1 else text

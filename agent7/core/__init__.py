@@ -35,7 +35,9 @@ from .plugins import (
 )
 from .tools import Tool, ToolContext, ToolExecution, ToolExecutor, ToolRegistry
 from .types import (
+    TOOL_ATTACHMENTS_KEY,
     AgentInterrupted,
+    Attachment,
     CancellationToken,
     Message,
     ModelTurn,
@@ -50,6 +52,7 @@ from .types import (
 __all__ = [
     "Agent",
     "AgentInterrupted",
+    "Attachment",
     "BackendRegistry",
     "CancellationToken",
     "DEFAULT_MAX_TURNS",
@@ -78,6 +81,7 @@ __all__ = [
     "RunStatus",
     "RuntimeEvent",
     "RuntimeEventKind",
+    "TOOL_ATTACHMENTS_KEY",
     "Tool",
     "ToolCall",
     "ToolContext",

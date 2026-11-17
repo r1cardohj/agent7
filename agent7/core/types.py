@@ -14,6 +14,8 @@ from typing import Any
 
 Message = dict[str, Any]
 JSONState = dict[str, Any]
+# Generic tool-result attachment blocks carried next to a text message.
+TOOL_ATTACHMENTS_KEY = "_attachments"
 
 
 def new_run_id() -> str:
@@ -58,11 +60,24 @@ class ModelTurn:
 
 
 @dataclass(frozen=True)
+class Attachment:
+    """One model-facing attachment, independent of any provider wire format."""
+
+    data: str
+    mime_type: str
+    kind: str = "image"
+
+    def to_dict(self) -> dict[str, str]:
+        return {"kind": self.kind, "mime_type": self.mime_type, "data": self.data}
+
+
+@dataclass(frozen=True)
 class ToolResult:
-    """Text shown to the model plus optional JSON-safe private history state."""
+    """Text shown to the model plus provider-neutral result extensions."""
 
     text: str
     state: JSONState = field(default_factory=dict)
+    attachments: tuple[Attachment, ...] = ()
 
 
 @dataclass(frozen=True)

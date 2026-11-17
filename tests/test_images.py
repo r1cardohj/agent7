@@ -13,6 +13,7 @@ from PIL import Image
 from responses_fakes import FakeClient, call_turn, text_turn
 
 from agent7.agent import compact_messages, dispatch_tool, estimate_tokens, run_agent
+from agent7.core import TOOL_ATTACHMENTS_KEY
 from agent7.images import (
     ToolImageOutput,
     detect_mime,
@@ -125,7 +126,7 @@ class ReadImageToolTests(unittest.TestCase):
 
         self.assertEqual(answer, "done")
         tool_message = next(m for m in messages if m.get("role") == "tool")
-        self.assertEqual(len(tool_message[IMAGES_KEY]), 1)
+        self.assertEqual(len(tool_message[TOOL_ATTACHMENTS_KEY]), 1)
         outputs = [
             i for i in client.requests[1]["input"] if i.get("type") == "function_call_output"
         ]

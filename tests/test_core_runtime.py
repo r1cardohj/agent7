@@ -9,8 +9,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent7.core import (
+    TOOL_ATTACHMENTS_KEY,
     Agent,
     AgentInterrupted,
+    Attachment,
     CancellationToken,
     EventBus,
     LifecycleHooks,
@@ -20,6 +22,7 @@ from agent7.core import (
     Tool,
     ToolCall,
     ToolRegistry,
+    ToolResult,
 )
 
 
@@ -111,6 +114,38 @@ class CoreLoopTests(unittest.TestCase):
         self.assertEqual(events[4].payload["result"], "hello")
         # Event payloads are transport-safe; no SDK/UI objects leak into them.
         json.dumps([event.to_dict() for event in events])
+
+    def test_tool_result_attachments_are_provider_neutral(self):
+        attachment = Attachment(data="QUJD", mime_type="image/png", kind="image")
+
+        def attach_image(_context, _args):
+            return ToolResult("image result", attachments=(attachment,))
+
+        registry = ToolRegistry(
+            (
+                Tool.define(
+                    "attach",
+                    "Return an attachment.",
+                    {},
+                    attach_image,
+                ),
+            )
+        )
+        backend = FakeBackend(
+            [ModelTurn(calls=[ToolCall("call-1", "attach", "{}")]), ModelTurn(text="done")]
+        )
+        messages = []
+
+        result = asyncio.run(
+            Agent(backend, tools=registry).run("go", cwd=self.cwd, messages=messages)
+        )
+
+        self.assertEqual(result.text, "done")
+        tool_message = next(message for message in messages if message.get("role") == "tool")
+        self.assertEqual(
+            tool_message[TOOL_ATTACHMENTS_KEY],
+            [{"kind": "image", "mime_type": "image/png", "data": "QUJD"}],
+        )
 
     def test_turn_limit_is_a_typed_blocked_result(self):
         backend = FakeBackend([ModelTurn(calls=[ToolCall("call-1", "echo", '{"text":"again"}')])])

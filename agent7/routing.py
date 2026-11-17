@@ -221,7 +221,7 @@ def build_auto_route(
 
 def _has_images(messages: list[dict[str, Any]]) -> bool:
     """Whether this conversation already carries inline images for the model."""
-    return any(message.get(IMAGES_KEY) for message in messages)
+    return any(message.get(IMAGES_KEY) or message.get("_attachments") for message in messages)
 
 
 def _vision_eligible(targets: tuple[RouteTarget, ...]) -> tuple[RouteTarget, ...]:
