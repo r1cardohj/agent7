@@ -58,10 +58,13 @@ class ProcessImageTests(unittest.TestCase):
     def test_undecodable_bytes_are_omitted(self) -> None:
         self.assertIsNone(process_image(b"not an image", "image/png"))
 
-    def test_supports_vision_only_excludes_known_text_models(self) -> None:
-        self.assertFalse(supports_vision("deepseek/deepseek-chat"))
+    def test_supports_vision_uses_the_reviewed_table_then_heuristics(self) -> None:
+        self.assertTrue(supports_vision("deepseek-flash"))
+        self.assertTrue(supports_vision("deepseek/deepseek-flash"))
+        self.assertTrue(supports_vision("kimi/kimi-for-coding"))
+        self.assertTrue(supports_vision("deepseek-v4-pro"))
         self.assertFalse(supports_vision("text-embedding-3-large"))
-        self.assertTrue(supports_vision("kimi-for-coding"))
+        self.assertFalse(supports_vision("whisper-1"))
         self.assertTrue(supports_vision("some-unknown-model"))
         self.assertTrue(supports_vision(None))
 
@@ -89,10 +92,15 @@ class ReadImageToolTests(unittest.TestCase):
         self.assertNotIn(result.images[0].data, result.text)
 
     def test_read_omits_the_image_for_a_text_only_model(self) -> None:
-        result = dispatch_tool(self.cwd, "read", {"path": "shot.png"}, model="deepseek-chat")
+        result = dispatch_tool(self.cwd, "read", {"path": "shot.png"}, model="text-embedding-3-large")
 
         self.assertIsInstance(result, str)
         self.assertIn("does not support images", result)
+
+    def test_read_keeps_the_image_for_deepseek_flash(self) -> None:
+        result = dispatch_tool(self.cwd, "read", {"path": "shot.png"}, model="deepseek-flash")
+        self.assertIsInstance(result, ToolImageOutput)
+        self.assertEqual(len(result.images), 1)
 
     def test_read_still_reads_text(self) -> None:
         (self.cwd / "a.py").write_text("x = 1\n", encoding="utf-8")
@@ -121,7 +129,7 @@ class ReadImageToolTests(unittest.TestCase):
         messages = []
 
         asyncio.run(run_agent(
-            "look", cwd=self.cwd, client=client, model="deepseek-chat",
+            "look", cwd=self.cwd, client=client, model="text-embedding-3-large",
             messages=messages, on_tool=lambda *a: None,
         ))
 

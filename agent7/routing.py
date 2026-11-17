@@ -31,6 +31,9 @@ class ModelCapability:
     scorer_priority: int | None = None
     supports_responses: bool = True
     supports_tools: bool = True
+    # Reviewed against the provider docs: deepseek-flash and the Kimi coding
+    # models all accept inline images, including in function_call_output.
+    supports_vision: bool = True
     routing_hint: str = ""
 
     @property
@@ -41,6 +44,7 @@ MODEL_CAPABILITIES = (
     ModelCapability(
         provider_id="deepseek", model="deepseek-flash", context_limit=1_048_576,
         strengths=frozenset({"fast", "coding"}), scorer_priority=1,
+        supports_vision=True,
         routing_hint="Fast general coding, explanations, and quick edits.",
     ),
     ModelCapability(

@@ -34,19 +34,30 @@ MAX_IMAGE_BYTES = int(4.5 * 1024 * 1024)
 IMAGE_TOKEN_ESTIMATE = 1000  # rough per-image cost for compaction pressure
 CLIPBOARD_TIMEOUT = 10.0
 
-# Only models known to be text-only are excluded; an unknown model gets the
-# image and the provider's own error, which beats silently dropping context.
+# Known text-only model families. Reviewed vision models are looked up in the
+# capability table first; an unknown model gets the image and the provider's own
+# error, which beats silently dropping context.
 _TEXT_ONLY = (
-    "deepseek", "text-", "embedding", "embed", "whisper", "tts", "rerank",
+    "text-", "embedding", "embed", "whisper", "tts", "rerank",
     "bge-", "e5-", "moderation",
 )
 
 
 def supports_vision(model: str | None) -> bool:
-    """Best-effort vision gate, used both by `read` and by request building."""
+    """Whether this model may receive inline images.
+
+    Reviewed models answer from the routing capability table (DeepSeek Flash
+    and the Kimi coding models are vision-capable); anything unlisted falls
+    back to excluding only known text-only families.
+    """
     name = (model or "").lower()
     if not name:
         return True
+    bare = name.rsplit("/", 1)[-1]
+    from .routing import MODEL_CAPABILITIES  # local: keeps images.py dependency-free
+    for capability in MODEL_CAPABILITIES:
+        if capability.model.lower() == bare:
+            return capability.supports_vision
     return not any(hint in name for hint in _TEXT_ONLY)
 
 

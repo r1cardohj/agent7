@@ -162,8 +162,10 @@ interleaved. Writes are atomic: an interrupted `write` or `edit` leaves the orig
 untouched.
 
 Images travel inside the `read` tool result, so a session snapshot keeps them and later rounds
-can still see them. Text-only models (for example DeepSeek) get the text note instead of the
-image, and compaction drops old images while keeping their notes.
+can still see them. Vision is checked against the reviewed capability table first (DeepSeek
+Flash and the Kimi coding models both accept images, including in tool results); text-only
+models get the text note instead of the image, and compaction drops old images while keeping
+their notes.
 
 On Windows, agent7 selects Git Bash, then PowerShell, then `cmd`; on other platforms it uses
 bash. The selected shell is written into the system prompt. Override it with
