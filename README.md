@@ -38,6 +38,7 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 - **Provider login** — paste an API key for DeepSeek or Kimi (`/login` or env); switch models in-session
 - **Auto intent routing** — one-shot tasks use it by default; `/model auto` scores the current task against reviewed available models, then fails over in score order
 - **Optional Herdr background runs** — inside a Herdr terminal with `hc` on `PATH`, a bundled on-demand skill manages long tests/builds and services while agent7 keeps working; outside Herdr agent7 uses ordinary synchronous bash
+- **One-command mobile access** — `agent7 deploy` installs Tailscale from its verified official static archive and prepares SSH for Herdr Mobile, with `--check`, `--sshd`, and `--auth-key` modes
 
 
 ## Install
@@ -86,6 +87,26 @@ uv run agent7 --help                             # --cwd, --max-turns, -m, -r, -
 The command line is a [click](https://click.palletsprojects.com) command in `agent7/cli.py`
 (options, session bootstrap, one-shot runs); the prompt, completion menu and reply rendering
 live in `agent7/repl.py`.
+
+### Remote access from your phone
+
+`agent7 deploy` prepares this machine for Herdr Mobile over Tailscale and SSH.
+Tailscale itself comes from Tailscale's versioned official static archive, with a
+sha256 check, so the default path does not use apt or another package manager:
+
+```bash
+agent7 deploy              # install/start Tailscale, join the tailnet, enable Tailscale SSH
+agent7 deploy --check      # verify readiness without changing the system
+agent7 deploy --stop       # stop tailscaled; keep binaries, config, and login state
+agent7 deploy --sshd       # use the system OpenSSH server instead of Tailscale SSH
+agent7 deploy --auth-key … # unattended tailnet login ($TAILSCALE_AUTHKEY also works)
+```
+
+The command is idempotent; when Tailscale needs authentication, an interactive run
+shows the login URL and waits, while `--auth-key` supports unattended setup.
+`--sshd` is the exception: installing the system OpenSSH server still uses the host's
+package manager. On the phone, connect Herdr Mobile to the machine's Tailscale name or `100.x` address;
+agent7 sessions report their state to the Herdr Inbox when they run inside herdr-core.
 
 Every conversation is a separate session with a unique `sess-…` ID and its own snapshot, including
 multiple sessions in the same workspace. Its readable name is generated automatically from the first

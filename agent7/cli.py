@@ -122,9 +122,48 @@ def _force_utf8_stdio() -> None:
             pass
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
+class Agent7CLI(click.Command):
+    """Top-level command with the reserved native `deploy` operation.
+
+    Intercepting the first word before click parses top-level options lets
+    `agent7 deploy --check` keep deploy-specific options without turning the
+    natural-language task interface into a click command group.
+    """
+
+    def main(
+        self,
+        args: list[str] | tuple[str, ...] | None = None,
+        prog_name: str | None = None,
+        complete_var: str | None = None,
+        standalone_mode: bool = True,
+        windows_expand_args: bool = True,
+        **extra: object,
+    ) -> object:
+        argv = list(sys.argv[1:] if args is None else args)
+        if argv and argv[0] == "deploy":
+            return deploy_command.main(
+                args=argv[1:],
+                prog_name=f"{PROG} deploy",
+                complete_var=complete_var,
+                standalone_mode=standalone_mode,
+                windows_expand_args=windows_expand_args,
+                **extra,
+            )
+        return super().main(
+            args=args,
+            prog_name=prog_name,
+            complete_var=complete_var,
+            standalone_mode=standalone_mode,
+            windows_expand_args=windows_expand_args,
+            **extra,
+        )
+
+
 @click.command(
+    cls=Agent7CLI,
     name=PROG,
     help="agent7 — minimal coding agent. Omit TASK to open the REPL.",
+    epilog="Remote access: `agent7 deploy` prepares Tailscale + SSH for Herdr Mobile.",
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 @click.version_option(__version__, "--version", prog_name=PROG, message=f"{PROG} %(version)s")
@@ -147,6 +186,9 @@ def main(task: tuple[str, ...], cwd: Path | None, max_turns: int | None, resume:
          delete: str | None, model: str | None) -> None:
     _force_utf8_stdio()
     _load_dotenv()
+    if task and task[0] == "deploy":
+        _run_deploy(list(task[1:]))
+        return
     task_text, resume_value = _resume_args(" ".join(task).strip(), resume)
     options = Options(task=task_text, cwd=cwd, max_turns=max_turns, resume=resume_value,
                       delete=delete, model=model)
@@ -155,6 +197,43 @@ def main(task: tuple[str, ...], cwd: Path | None, max_turns: int | None, resume:
     except KeyboardInterrupt:
         # Startup/cleanup happens outside the per-turn handler in repl_loop.
         err.print("\n[dim]# interrupted[/dim]")
+
+
+@click.command(name="deploy")
+@click.option("--check", "check_only", is_flag=True,
+              help="verify remote access without changing the system")
+@click.option("--stop", is_flag=True,
+              help="stop tailscaled without removing its binaries or login state")
+@click.option("--sshd", is_flag=True,
+              help="use the system OpenSSH server instead of Tailscale SSH")
+@click.option("--auth-key", "auth_key", default=None, metavar="KEY",
+              envvar="TAILSCALE_AUTHKEY",
+              help="Tailscale auth key for unattended login (default: $TAILSCALE_AUTHKEY)")
+def deploy_command(
+    check_only: bool, stop: bool, sshd: bool, auth_key: str | None,
+) -> None:
+    """Prepare this machine for Herdr Mobile over Tailscale + SSH."""
+    from .remote import RemoteError, deploy_mobile_ssh, stop_tailscale
+
+    if stop and (check_only or sshd or auth_key):
+        raise click.UsageError("--stop cannot be combined with --check, --sshd, or --auth-key")
+    try:
+        if stop:
+            stop_tailscale()
+            return
+        code = deploy_mobile_ssh(check=check_only, sshd=sshd, auth_key=auth_key or "")
+    except RemoteError as e:
+        err.print(f"[red]# deploy failed: {e}[/red]")
+        raise SystemExit(1) from None
+    if code:
+        raise SystemExit(code)
+
+
+def _run_deploy(argv: list[str]) -> None:
+    """Parse the reserved `agent7 deploy ...` words with the deploy command."""
+    ctx = deploy_command.make_context("agent7 deploy", argv)
+    with ctx:
+        deploy_command.invoke(ctx)
 
 def resolve_max_turns(options: Options) -> int:
     """CLI > $AGENT7_MAX_TURNS > default.
