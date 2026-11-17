@@ -23,7 +23,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
-    { name = "fzp", specifier = ">=0.2.2" },
+    { name = "fzp", specifier = ">=0.2.3" },
     { name = "openai", specifier = ">=1.40.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.0" },
     { name = "rich", specifier = ">=13.0.0" },
@@ -288,15 +288,15 @@ wheels = [
 
 [[package]]
 name = "fzp"
-version = "0.2.2"
+version = "0.2.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "prompt-toolkit" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/8f/9043dd57a584422506c03de20749a9daf8f59ad309d789d739bab6b546ee/fzp-0.2.2.tar.gz", hash = "sha256:a6c15b172f69d9b0b05689027c584938b93c9e06903747de27ffe2a47b3b85b4", size = 14615, upload-time = "2026-11-08T12:40:53.625Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/2c/67ab485db6642d6be0eba89151d4e698056702045ebf35feae6bb25c1fb8/fzp-0.2.3.tar.gz", hash = "sha256:43a05e6f9e3c8e53bd844d730207b05a18dcec8f20f86fb2426c595f521561e6", size = 16165, upload-time = "2026-11-16T15:32:15.289Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/91/0290dee52ddba886a7cf1dca75c9d95f6263dfa22c2169581f2f57f7a670/fzp-0.2.2-py3-none-any.whl", hash = "sha256:839f3e42c8f6893dc80c4d50b505a601c5beede99a07091e560d15a4cfec6509", size = 16799, upload-time = "2026-11-08T12:40:52.433Z" },
+    { url = "https://files.pythonhosted.org/packages/79/a2/61c56d385983a21d29f813fc64d9463353f2d1f4ac3a2f310d1f481c0260/fzp-0.2.3-py3-none-any.whl", hash = "sha256:f4e86f61880256fd704e5a0df28c47997c8dd561d942b000d9315e4f5365db31", size = 18313, upload-time = "2026-11-16T15:32:14.129Z" },
 ]
 
 [[package]]

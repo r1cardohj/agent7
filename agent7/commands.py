@@ -298,13 +298,11 @@ def cmd_status(session: Session, args: list[str]) -> CommandResult:
     ))
 
 async def _delete_session(session: Session, args: list[str]) -> CommandResult:
-    from .repl import confirm_session_delete, pick_session
+    from .repl import confirm_sessions_delete, pick_sessions
 
     current = getattr(session, "id", "")
-    if len(args) > 1:
-        return CommandResult(message="usage: /session delete [SESSION_ID]")
     if args:
-        session_id = args[0]
+        session_ids = list(args)
     else:
         snapshots = [
             snapshot for snapshot in list_sessions(session.cwd)
@@ -312,31 +310,39 @@ async def _delete_session(session: Session, args: list[str]) -> CommandResult:
         ]
         if not snapshots:
             return CommandResult(message="no other saved sessions in this workspace")
-        picked = await pick_session(snapshots)
-        if picked is None:
+        picked = await pick_sessions(snapshots)
+        if not picked:
             return CommandResult(
                 message="delete: cancelled (Esc/Ctrl-C in the picker selects nothing)"
             )
-        session_id = picked
-    if session_id == current:
+        session_ids = picked
+    if current in session_ids:
         return CommandResult(
             message="cannot delete the active session — switch to another session first"
         )
     try:
-        snapshot = load(session.cwd, session_id)
-        if not confirm_session_delete(snapshot):
-            return CommandResult(
-                message=f"delete: cancelled — kept {snapshot['name']} ({session_id})"
+        snapshots = [load(session.cwd, session_id) for session_id in session_ids]
+        if not confirm_sessions_delete(snapshots):
+            kept = ", ".join(
+                f"{snapshot.get('name') or 'New session'} ({snapshot.get('id', '?')})"
+                for snapshot in snapshots
             )
-        trash_path = delete_session(session.cwd, session_id)
+            return CommandResult(message=f"delete: cancelled — kept {kept}")
+        trashed = [
+            (snapshot, delete_session(session.cwd, snapshot["id"]))
+            for snapshot in snapshots
+        ]
     except ValueError as e:
         return CommandResult(message=str(e))
-    return CommandResult(
-        message=f"deleted {snapshot['name']} ({session_id}) → {trash_path}"
-    )
+    lines = [
+        f"deleted {snapshot.get('name') or 'New session'} "
+        f"({snapshot.get('id', '?')}) → {trash_path}"
+        for snapshot, trash_path in trashed
+    ]
+    return CommandResult(message="\n".join(lines))
 
 
-@command("session", help="switch/delete sessions  (/session | /session delete <id>)")
+@command("session", help="switch/delete sessions  (/session | /session delete <id...>)")
 async def cmd_session(session: Session, args: list[str]) -> CommandResult:
     # Picker/UI lives in repl; the local import avoids the commands <-> repl
     # import cycle while keeping this a normal discoverable slash command.

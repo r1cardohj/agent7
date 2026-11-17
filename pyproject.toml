@@ -34,7 +34,7 @@ dependencies = [
     "openai>=1.40.0",
     "rich>=13.0.0",
     "prompt-toolkit>=3.0.0",
-    "fzp>=0.2.2",
+    "fzp>=0.2.3",
     "click>=8.1",
     "trafilatura>=2.3,<3",
 ]

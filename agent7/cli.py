@@ -30,10 +30,11 @@ from .providers import (
     resolve_default,
 )
 from .repl import (
-    confirm_session_delete,
+    confirm_sessions_delete,
     err,
     pick_model,
     pick_session,
+    pick_sessions,
     print_history,
     repl_loop,
     run_turn,
@@ -141,7 +142,7 @@ def _force_utf8_stdio() -> None:
               help="resume a session by ID; bare -r picks one from a menu")
 @click.option("--delete", is_flag=False, flag_value=PICK_DELETE, default=None,
               metavar="SESSION_ID",
-              help="move a session to trash; bare --delete picks one from a menu")
+              help="move session(s) to trash; bare --delete multi-picks from a menu")
 def main(task: tuple[str, ...], cwd: Path | None, max_turns: int | None, resume: str | None,
          delete: str | None, model: str | None) -> None:
     _force_utf8_stdio()
@@ -203,29 +204,39 @@ async def choose_model(session: Session, ids: list[str], *, current: str = "") -
     return picked
 
 async def delete_requested_session(options: Options, cwd: Path) -> None:
-    """Pick/confirm one snapshot and soft-delete it before agent startup."""
-    session_id = options.delete
+    """Pick/confirm one or more snapshots and soft-delete them before startup."""
+    session_ids = [] if options.delete == PICK_DELETE else [options.delete]
     try:
-        if session_id == PICK_DELETE:
+        if options.delete == PICK_DELETE:
             if not can_pick_models():
                 raise SystemExit("a bare --delete shows a session menu, which needs a terminal; "
                                  "use agent7 --delete SESSION_ID instead")
             snapshots = list_sessions(cwd)
             if not snapshots:
                 raise SystemExit(f"no sessions for workspace: {cwd}")
-            picked = await pick_session(snapshots)
-            if picked is None:
+            picked = await pick_sessions(snapshots)
+            if not picked:
                 err.print("[dim]# delete cancelled[/dim]")
                 return
-            session_id = picked
-        snapshot = resume(cwd, session_id)
-        if not confirm_session_delete(snapshot):
-            err.print(f"[dim]# delete cancelled — kept {snapshot['name']} ({session_id})[/dim]")
+            session_ids = picked
+        snapshots = [resume(cwd, session_id) for session_id in session_ids]
+        if not confirm_sessions_delete(snapshots):
+            kept = ", ".join(
+                f"{snapshot.get('name') or 'New session'} ({snapshot.get('id', '?')})"
+                for snapshot in snapshots
+            )
+            err.print(f"[dim]# delete cancelled — kept {kept}[/dim]")
             return
-        trash_path = delete_session(cwd, session_id)
+        trashed = [
+            (snapshot, delete_session(cwd, snapshot["id"])) for snapshot in snapshots
+        ]
     except ValueError as e:
         raise SystemExit(str(e)) from None
-    err.print(f"[dim]# deleted {snapshot['name']} ({session_id}) → {trash_path}[/dim]")
+    for snapshot, trash_path in trashed:
+        err.print(
+            f"[dim]# deleted {snapshot.get('name') or 'New session'} "
+            f"({snapshot.get('id', '?')}) → {trash_path}[/dim]"
+        )
 
 async def async_main(options: Options) -> None:
     """Run one task, or open the REPL, for an already-parsed command line."""

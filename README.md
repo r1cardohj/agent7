@@ -101,11 +101,13 @@ messages are omitted. For compatibility, `-r "continue"` still resumes the lates
 that one-shot without opening the picker. Opening or leaving an untouched new REPL creates no file;
 active sessions are saved automatically after tasks, commands, interruptions, and exit.
 
-`--delete` uses the same picker when no ID is given and always asks for confirmation before moving
-the snapshot to `${XDG_STATE_HOME:-~/.local/state}/agent7/trash/`. It never overwrites an older
+`--delete` uses the same picker when no ID is given — now in fzf-style multi-select mode, where
+Tab toggles sessions and Enter deletes every picked one — and always asks for confirmation listing
+all doomed sessions before moving them to `${XDG_STATE_HOME:-~/.local/state}/agent7/trash/`. It never overwrites an older
 trashed session: if the same ID was recreated, later copies become `SESSION_ID.2.json`,
 `SESSION_ID.3.json`, and so on instead of blocking deletion. Inside the REPL, use
-`/session delete` or `/session delete SESSION_ID`; the delete picker omits the active session,
+`/session delete` (same multi-select picker) or `/session delete SESSION_ID...` with several IDs at
+once; the delete picker omits the active session,
 while naming the active ID directly is refused so a later save cannot silently recreate it.
 There is no automatic trash cleanup yet.
 Model calls use the OpenAI Responses API with local function tools. Sessions replay raw output

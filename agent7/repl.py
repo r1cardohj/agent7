@@ -724,17 +724,54 @@ async def pick_session(snapshots: list[dict], *, current: str = "") -> str | Non
     return ids.get(picked) if picked is not None else None
 
 
+async def pick_sessions(snapshots: list[dict], *, current: str = "") -> list[str] | None:
+    """Fuzzy-pick sessions in fzf-style multi-select mode (Tab toggles).
+
+    Returns the picked IDs (one when the user just presses Enter), or None
+    when the user aborts with Esc/Ctrl-C.
+    """
+    items, ids = session_choices(snapshots, current)
+    if not items:
+        return None
+    picked = await Picker(items, multi=True).pick_async()
+    if picked is None:
+        return None
+    rows = picked if isinstance(picked, list) else [picked]
+    return [session_id for row in rows if (session_id := ids.get(row)) is not None]
+
+
 def confirm_session_delete(
     snapshot: dict,
     *,
     input_fn: Callable[[str], str] | None = None,
 ) -> bool:
     """Ask for an explicit yes; EOF and Ctrl-C are both a safe no."""
-    name = snapshot.get("name") or "New session"
-    session_id = snapshot.get("id", "?")
-    err.print(f"[yellow]# delete {name} ({session_id})?[/yellow]")
-    err.print("[yellow]# type y to confirm, or n to cancel[/yellow]")
+    return confirm_sessions_delete([snapshot], input_fn=input_fn)
+
+
+def confirm_sessions_delete(
+    snapshots: list[dict],
+    *,
+    input_fn: Callable[[str], str] | None = None,
+) -> bool:
+    """Ask for an explicit yes before deleting one or more sessions.
+
+    Every doomed session is listed so the confirmation matches what the
+    multi-select picker returned; EOF and Ctrl-C are both a safe no.
+    """
     reader = input_fn or input
+    if not snapshots:
+        return False
+    if len(snapshots) == 1:
+        name = snapshots[0].get("name") or "New session"
+        session_id = snapshots[0].get("id", "?")
+        err.print(f"[yellow]# delete {name} ({session_id})?[/yellow]")
+    else:
+        err.print(f"[yellow]# delete these {len(snapshots)} sessions?[/yellow]")
+        for snapshot in snapshots:
+            name = snapshot.get("name") or "New session"
+            err.print(f"[yellow]#   {name} ({snapshot.get('id', '?')})[/yellow]")
+    err.print("[yellow]# type y to confirm, or n to cancel[/yellow]")
     try:
         answer = reader("delete? [y/n] ")
     except (EOFError, KeyboardInterrupt):

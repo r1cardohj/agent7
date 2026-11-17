@@ -14,7 +14,12 @@ from rich.console import Console
 from agent7.agent import SYSTEM
 from agent7.cli import Options, async_main
 from agent7.commands import dispatch
-from agent7.repl import confirm_session_delete, pick_session, session_choices
+from agent7.repl import (
+    confirm_sessions_delete,
+    pick_session,
+    pick_sessions,
+    session_choices,
+)
 from agent7.session import Session
 from agent7.store import list_sessions, load, new_session_id, save, trash_session_dir
 
@@ -46,6 +51,36 @@ class SessionPickerTests(unittest.TestCase):
         self.assertEqual(picked, "sess-current")
         self.assertEqual(ids[items[1]], "sess-old")
 
+    def test_multi_picker_maps_every_row_and_enables_multi(self) -> None:
+        snapshots = [
+            {"id": "sess-a", "name": "first"},
+            {"id": "sess-b", "name": "second"},
+        ]
+        items, ids = session_choices(snapshots)
+        with patch("agent7.repl.Picker") as picker:
+            picker.return_value.pick_async = AsyncMock(
+                return_value=[items[0], items[1]]
+            )
+            picked = asyncio.run(pick_sessions(snapshots))
+        picker.assert_called_once_with(items, multi=True)
+        self.assertEqual(picked, ["sess-a", "sess-b"])
+        self.assertEqual(ids[items[1]], "sess-b")
+
+    def test_multi_picker_falls_back_to_the_highlighted_row(self) -> None:
+        snapshots = [{"id": "sess-a", "name": "first"}]
+        items, _ = session_choices(snapshots)
+        with patch("agent7.repl.Picker") as picker:
+            # Enter with no Tab-toggled rows returns the single highlighted row.
+            picker.return_value.pick_async = AsyncMock(return_value=items[0])
+            picked = asyncio.run(pick_sessions(snapshots))
+        self.assertEqual(picked, ["sess-a"])
+
+    def test_cancelling_the_multi_picker_returns_none(self) -> None:
+        with patch("agent7.repl.Picker") as picker:
+            picker.return_value.pick_async = AsyncMock(return_value=None)
+            picked = asyncio.run(pick_sessions([{"id": "sess-a", "name": "a"}]))
+        self.assertIsNone(picked)
+
     def test_cancelling_the_picker_returns_none(self) -> None:
         with patch("agent7.repl.Picker") as picker:
             picker.return_value.pick_async = AsyncMock(return_value=None)
@@ -62,8 +97,8 @@ class SessionPickerTests(unittest.TestCase):
             return ""
 
         with patch("agent7.repl.err", new=output):
-            confirmed = confirm_session_delete(
-                {"id": "sess-a", "name": "readable name"}, input_fn=reader
+            confirmed = confirm_sessions_delete(
+                [{"id": "sess-a", "name": "readable name"}], input_fn=reader
             )
 
         self.assertFalse(confirmed)
@@ -71,6 +106,26 @@ class SessionPickerTests(unittest.TestCase):
         text = stream.getvalue()
         self.assertIn("delete readable name (sess-a)?", text)
         self.assertIn("type y to confirm, or n to cancel", text)
+
+    def test_multi_delete_confirmation_lists_every_doomed_session(self) -> None:
+        stream = io.StringIO()
+        output = Console(file=stream, width=120, color_system=None)
+
+        def reader(prompt: str) -> str:
+            return "y"
+
+        snapshots = [
+            {"id": "sess-a", "name": "first"},
+            {"id": "sess-b", "name": "second"},
+        ]
+        with patch("agent7.repl.err", new=output):
+            confirmed = confirm_sessions_delete(snapshots, input_fn=reader)
+
+        self.assertTrue(confirmed)
+        text = stream.getvalue()
+        self.assertIn("delete these 2 sessions?", text)
+        self.assertIn("first (sess-a)", text)
+        self.assertIn("second (sess-b)", text)
 
     def test_delete_cancelled_by_the_prompt_is_explicit(self) -> None:
         target = {"id": "sess-b", "name": "second", "cwd": "/tmp/work"}
@@ -80,8 +135,8 @@ class SessionPickerTests(unittest.TestCase):
         )
         with patch("agent7.commands.list_sessions", return_value=[target]), \
              patch("agent7.commands.load", return_value=target), \
-             patch("agent7.repl.pick_session", new=AsyncMock(return_value="sess-b")), \
-             patch("agent7.repl.confirm_session_delete", return_value=False):
+             patch("agent7.repl.pick_sessions", new=AsyncMock(return_value=["sess-b"])), \
+             patch("agent7.repl.confirm_sessions_delete", return_value=False):
             result = asyncio.run(dispatch(state, "/session rm"))
         self.assertEqual(result.message, "delete: cancelled — kept second (sess-b)")
 
@@ -137,8 +192,8 @@ class SessionSwitchTests(unittest.TestCase):
             messages=list(active.messages), id=active.id, persisted=True,
         )
 
-        with patch("agent7.repl.pick_session", new=AsyncMock(return_value=target.id)) as picker, \
-             patch("agent7.repl.confirm_session_delete", return_value=True) as confirm:
+        with patch("agent7.repl.pick_sessions", new=AsyncMock(return_value=[target.id])) as picker, \
+             patch("agent7.repl.confirm_sessions_delete", return_value=True) as confirm:
             result = asyncio.run(dispatch(state, "/session delete"))
 
         self.assertEqual([data["id"] for data in picker.await_args.args[0]], [target.id])
@@ -148,6 +203,31 @@ class SessionSwitchTests(unittest.TestCase):
         self.assertEqual([data["id"] for data in list_sessions(self.cwd)], [active.id])
         self.assertTrue((trash_session_dir() / f"{target.id}.json").is_file())
 
+    def test_session_delete_accepts_several_ids_at_once(self) -> None:
+        active = snapshot_state(self.cwd, "active task")
+        first = snapshot_state(self.cwd, "delete one")
+        second = snapshot_state(self.cwd, "delete two")
+        save(active, created_at="2025-01-01T00:00:00+00:00")
+        save(first, created_at="2025-01-02T00:00:00+00:00")
+        save(second, created_at="2025-01-03T00:00:00+00:00")
+        state = Session(
+            model="test", model_ref="deepseek/test", cwd=self.cwd, client=None,
+            messages=list(active.messages), id=active.id, persisted=True,
+        )
+
+        with patch("agent7.repl.pick_sessions", new=AsyncMock()) as picker, \
+             patch("agent7.repl.confirm_sessions_delete", return_value=True):
+            result = asyncio.run(dispatch(state, f"/session delete {first.id} {second.id}"))
+
+        picker.assert_not_awaited()
+        self.assertIn("deleted delete one", result.message)
+        self.assertIn("deleted delete two", result.message)
+        self.assertEqual(
+            [data["id"] for data in list_sessions(self.cwd)], [active.id]
+        )
+        self.assertTrue((trash_session_dir() / f"{first.id}.json").is_file())
+        self.assertTrue((trash_session_dir() / f"{second.id}.json").is_file())
+
     def test_session_delete_refuses_the_active_session_before_confirmation(self) -> None:
         active = snapshot_state(self.cwd, "active task")
         save(active, created_at="2025-01-01T00:00:00+00:00")
@@ -155,8 +235,8 @@ class SessionSwitchTests(unittest.TestCase):
             model="test", model_ref="deepseek/test", cwd=self.cwd, client=None,
             messages=list(active.messages), id=active.id, persisted=True,
         )
-        with patch("agent7.repl.pick_session", new=AsyncMock()) as picker, \
-             patch("agent7.repl.confirm_session_delete") as confirm:
+        with patch("agent7.repl.pick_sessions", new=AsyncMock()) as picker, \
+             patch("agent7.repl.confirm_sessions_delete") as confirm:
             result = asyncio.run(dispatch(state, f"/session delete {active.id}"))
         picker.assert_not_awaited()
         confirm.assert_not_called()
@@ -296,10 +376,10 @@ class DeleteCliTests(unittest.TestCase):
 
     def test_bare_delete_uses_picker_confirmation_and_trash(self) -> None:
         stream = io.StringIO()
-        picker = AsyncMock(return_value=self.saved.id)
+        picker = AsyncMock(return_value=[self.saved.id])
         with patch("agent7.cli.can_pick_models", return_value=True), \
-             patch("agent7.cli.pick_session", new=picker), \
-             patch("agent7.cli.confirm_session_delete", return_value=True), \
+             patch("agent7.cli.pick_sessions", new=picker), \
+             patch("agent7.cli.confirm_sessions_delete", return_value=True), \
              patch("agent7.cli.err", new=Console(file=stream, width=120, color_system=None)):
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd), "--delete"])))
 
@@ -310,9 +390,45 @@ class DeleteCliTests(unittest.TestCase):
         self.assertEqual(list_sessions(self.cwd), [])
         self.assertIn(f"deleted delete from cli ({self.saved.id})", stream.getvalue())
 
+    def test_bare_delete_trashes_every_picked_session(self) -> None:
+        stream = io.StringIO()
+        other = snapshot_state(self.cwd, "delete me too")
+        save(other, created_at="2025-01-02T00:00:00+00:00")
+        picker = AsyncMock(return_value=[self.saved.id, other.id])
+        with patch("agent7.cli.can_pick_models", return_value=True), \
+             patch("agent7.cli.pick_sessions", new=picker), \
+             patch("agent7.cli.confirm_sessions_delete", return_value=True), \
+             patch("agent7.cli.err", new=Console(file=stream, width=120, color_system=None)):
+            asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd), "--delete"])))
+
+        self.assertEqual(list_sessions(self.cwd), [])
+        self.assertTrue((trash_session_dir() / f"{self.saved.id}.json").is_file())
+        self.assertTrue((trash_session_dir() / f"{other.id}.json").is_file())
+        text = stream.getvalue()
+        self.assertIn(f"deleted delete from cli ({self.saved.id})", text)
+        self.assertIn(f"deleted delete me too ({other.id})", text)
+
+    def test_multi_delete_declined_keeps_every_session(self) -> None:
+        stream = io.StringIO()
+        other = snapshot_state(self.cwd, "kept one")
+        save(other, created_at="2025-01-02T00:00:00+00:00")
+        picker = AsyncMock(return_value=[self.saved.id, other.id])
+        with patch("agent7.cli.can_pick_models", return_value=True), \
+             patch("agent7.cli.pick_sessions", new=picker), \
+             patch("agent7.cli.confirm_sessions_delete", return_value=False), \
+             patch("agent7.cli.err", new=Console(file=stream, width=120, color_system=None)):
+            asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd), "--delete"])))
+
+        self.assertEqual(
+            {data["id"] for data in list_sessions(self.cwd)},
+            {self.saved.id, other.id},
+        )
+        self.assertFalse(trash_session_dir().exists())
+        self.assertIn("delete cancelled", stream.getvalue())
+
     def test_direct_delete_can_be_cancelled_without_moving_the_file(self) -> None:
         path = save(self.saved, created_at=self.saved.created_at)
-        with patch("agent7.cli.confirm_session_delete", return_value=False):
+        with patch("agent7.cli.confirm_sessions_delete", return_value=False):
             asyncio.run(async_main(Options.parse([
                 "--cwd", str(self.cwd), "--delete", self.saved.id,
             ])))
