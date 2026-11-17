@@ -143,12 +143,14 @@ def _truncate(s: str, limit: int, *, tag: str = "truncated") -> str:
 
 
 def run_shell(
-    cwd: Path,
+    cwd: Path | None,
     command: str,
     timeout: int | None = None,
     *,
     shell: Shell | None = None,
 ) -> str:
+    if cwd is None:
+        return "error: no workspace is configured"
     selected = shell or resolve_shell()
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")

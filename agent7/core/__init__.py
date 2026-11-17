@@ -21,6 +21,7 @@ from .events import (
 )
 from .filesystem import ImageReader, VisionSupport
 from .lifecycle import (
+    LifecycleContext,
     LifecycleEvent,
     LifecycleHooks,
     LifecycleKind,
@@ -40,6 +41,7 @@ from .plugins import (
     discover_plugins,
 )
 from .search import SearchProvider
+from .session import MemorySessionStore, RunContext, RuntimeSession, SessionStore
 from .shell import Shell
 from .tools import Tool, ToolContext, ToolExecution, ToolExecutor, ToolRegistry
 from .types import (
@@ -71,6 +73,7 @@ __all__ = [
     "EventListener",
     "HistoryPolicy",
     "ImageReader",
+    "LifecycleContext",
     "LifecycleEvent",
     "LifecycleHooks",
     "LifecycleKind",
@@ -79,6 +82,7 @@ __all__ = [
     "Message",
     "ModelBackend",
     "ModelRequest",
+    "MemorySessionStore",
     "ModelTurn",
     "PLUGIN_API_VERSION",
     "PLUGIN_ENTRY_POINT",
@@ -88,12 +92,15 @@ __all__ = [
     "PluginInfo",
     "PluginManager",
     "Recovery",
+    "RunContext",
     "RunResult",
     "RunStatus",
     "RuntimeEvent",
     "RuntimeEventKind",
+    "RuntimeSession",
     "TOOL_ATTACHMENTS_KEY",
     "SearchProvider",
+    "SessionStore",
     "Shell",
     "Tool",
     "ToolCall",

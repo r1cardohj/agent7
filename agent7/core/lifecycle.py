@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -33,12 +33,22 @@ def _workspace_key(cwd: Path) -> str:
 
 
 @dataclass(frozen=True)
+class LifecycleContext:
+    """Minimal session identity for lifecycle observers."""
+
+    session_id: str
+    cwd: Path | None = None
+    model: str = ""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class LifecycleEvent:
     kind: LifecycleKind
     seq: int
     session_id: str
-    cwd: Path
-    model: str
+    cwd: Path | None = None
+    model: str = ""
     reason: str = ""
     run_id: str = ""
     workspace_id: str = ""
@@ -89,19 +99,34 @@ class LifecycleHooks:
         run_id: str = "",
     ) -> None:
         self._seq += 1
-        cwd = Path(session.cwd).resolve()
-        workspace_id = _workspace_key(cwd)
-        # A workspace contains many conversations. Prefer the real session ID;
-        # the hash remains available separately and as a legacy fallback.
-        session_id = str(
-            getattr(session, "id", "") or getattr(session, "session_id", "") or workspace_id
-        )
+        if isinstance(session, LifecycleContext):
+            context = session
+        else:
+            raw_cwd = getattr(session, "cwd", None) or getattr(session, "workspace", None)
+            cwd = Path(raw_cwd).resolve() if raw_cwd is not None else None
+            metadata = getattr(session, "metadata", None)
+            session_id = (
+                getattr(session, "id", "")
+                or getattr(session, "session_id", "")
+                or (metadata.get("session_id", "") if isinstance(metadata, Mapping) else "")
+            )
+            context = LifecycleContext(
+                session_id=str(session_id or "session"),
+                cwd=cwd,
+                model=str(
+                    getattr(session, "model_ref", "")
+                    or getattr(session, "model", "")
+                    or (metadata.get("model", "") if isinstance(metadata, Mapping) else "")
+                ),
+                metadata=metadata if isinstance(metadata, Mapping) else {},
+            )
+        workspace_id = _workspace_key(context.cwd) if context.cwd is not None else ""
         event = LifecycleEvent(
             kind=kind,
             seq=self._seq,
-            session_id=session_id,
-            cwd=cwd,
-            model=getattr(session, "model_ref", None) or session.model,
+            session_id=context.session_id,
+            cwd=context.cwd,
+            model=context.model,
             reason=reason,
             run_id=run_id,
             workspace_id=workspace_id,

@@ -98,7 +98,7 @@ class ToolRegistry:
 class ToolContext:
     """Host-neutral execution context supplied to every tool/plugin."""
 
-    cwd: Path
+    cwd: Path | None  # required only by filesystem/shell tools
     call: ToolCall
     model: str | None = None
     user_question: str | None = None

@@ -280,6 +280,6 @@ def fetch(url: str, max_chars: int | None = None) -> str:
     return _truncate(text, limit)
 
 
-def tool_fetch(_cwd: Path, url: str, max_chars: int | None = None) -> str:
+def tool_fetch(_cwd: Path | None, url: str, max_chars: int | None = None) -> str:
     """fetch tool handler: cwd is unused because fetching has no workspace path."""
     return fetch(url, max_chars)

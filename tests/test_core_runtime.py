@@ -17,9 +17,12 @@ from agent7.core import (
     CancellationToken,
     EventBus,
     LifecycleHooks,
+    MemorySessionStore,
     ModelTurn,
     PluginError,
+    RunContext,
     RunStatus,
+    RuntimeSession,
     Shell,
     Tool,
     ToolCall,
@@ -286,6 +289,64 @@ class BuiltinToolTests(unittest.TestCase):
         self.assertEqual(messages[4]["content"], "local result for agent")
         self.assertEqual(provider.seen, [("agent", None, "go")])
         self.assertEqual(registry.names(), ("read", "write", "edit", "bash", "fetch", "search"))
+
+
+class GenericSessionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cwd = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_runtime_session_runs_without_a_workspace(self):
+        session = RuntimeSession(id="assistant-1", metadata={"model": "assistant"})
+        store = MemorySessionStore()
+        registry = create_builtin_registry(
+            BuiltinToolsConfig(shell=Shell("bash", ("/bin/bash", "-lc")))
+        )
+        backend = FakeBackend(
+            [
+                ModelTurn(calls=[ToolCall("call-1", "read", '{"path":"any.txt"}')]),
+                ModelTurn(text="assistant answer", finish_reason="stop"),
+            ]
+        )
+        context = RunContext(session=session, run_id="run-assistant")
+
+        result = asyncio.run(Agent(backend, tools=registry).run_in_context(context, "hello there"))
+
+        self.assertEqual(result.text, "assistant answer")
+        self.assertEqual(result.session_id, "assistant-1")
+        self.assertEqual(result.run_id, "run-assistant")
+        tool_message = next(m for m in session.messages if m.get("role") == "tool")
+        self.assertEqual(tool_message["content"], "error: no workspace is configured")
+
+        asyncio.run(store.save(session))
+        loaded = asyncio.run(store.load("assistant-1"))
+        self.assertEqual(loaded.id, "assistant-1")
+        self.assertEqual(loaded.messages, session.messages)
+        loaded.messages.append({"role": "user", "content": "mutation"})
+        self.assertNotEqual(loaded.messages, session.messages)
+
+    def test_runtime_session_lifecycle_needs_no_cwd_or_model_attribute(self):
+        session = RuntimeSession(id="assistant-2")
+        hooks = LifecycleHooks()
+        events = []
+        hooks.subscribe(events.append)
+        backend = FakeBackend([ModelTurn(text="done")])
+        agent = Agent(backend, lifecycle=hooks)
+
+        result = asyncio.run(agent.run("hello", session=session))
+
+        self.assertEqual(result.text, "done")
+        observed = [
+            (event.kind, event.session_id, event.cwd, event.model, event.run_id) for event in events
+        ]
+        self.assertEqual(
+            observed,
+            [
+                ("turn_started", "assistant-2", None, "", result.run_id),
+                ("turn_succeeded", "assistant-2", None, "", result.run_id),
+            ],
+        )
 
 
 class PluginTests(unittest.TestCase):

@@ -107,6 +107,7 @@ class RunResult:
     status: RunStatus
     turns: int
     run_id: str
+    session_id: str = ""
     finish_reason: str | None = None
     stop_reason: str | None = None
     usage: dict[str, int] | None = None

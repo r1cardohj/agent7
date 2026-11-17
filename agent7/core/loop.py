@@ -11,6 +11,7 @@ from .backend import BackendRegistry, ModelBackend, ModelRequest
 from .events import EventBus, EventEmitter, EventListener
 from .lifecycle import LifecycleHooks, run_with_lifecycle
 from .plugins import PluginContext, PluginManager
+from .session import RunContext, RuntimeSession
 from .tools import ToolContext, ToolExecutor, ToolRegistry
 from .types import (
     TOOL_ATTACHMENTS_KEY,
@@ -136,8 +137,9 @@ class Agent:
         self,
         task: str,
         *,
-        cwd: Path,
-        messages: list[Message],
+        cwd: Path | None = None,
+        messages: list[Message] | None = None,
+        workspace: Any | None = None,
         max_turns: int = DEFAULT_MAX_TURNS,
         context_limit: int | None = None,
         prompt_tokens: int | None = None,
@@ -146,35 +148,91 @@ class Agent:
         session: Any | None = None,
         run_id: str = "",
     ) -> RunResult:
-        """Run one task, optionally wrapping it in Session lifecycle hooks."""
+        """Run one task in a session, optionally wrapping it in lifecycle hooks.
 
-        run_id = run_id or new_run_id()
-        listeners = (on_event,) if on_event is not None else ()
-        events = self.events.for_run(run_id, listeners=listeners)
-        work = self._run(
+        ``cwd`` is the legacy filesystem spelling of ``workspace``. Non-filesystem
+        agents may omit both; filesystem/shell tools then report a clear error if
+        a model nevertheless selects them.
+        """
+
+        runtime_session = session if isinstance(session, RuntimeSession) else None
+        if runtime_session is not None and messages is None:
+            messages = runtime_session.messages
+        if messages is None:
+            raise ValueError("messages are required when session is not a RuntimeSession")
+        selected_workspace = workspace if workspace is not None else cwd
+        if selected_workspace is None and runtime_session is not None:
+            metadata_workspace = runtime_session.metadata.get("workspace")
+            selected_workspace = metadata_workspace
+        if runtime_session is None:
+            session_id = (
+                getattr(session, "id", "") or getattr(session, "session_id", "") or "session"
+            )
+            runtime_session = RuntimeSession(
+                id=str(session_id),
+                messages=messages,
+                metadata={},
+            )
+        context = RunContext(
+            session=runtime_session,
+            run_id=run_id or new_run_id(),
+            workspace=selected_workspace,
+            cancellation=cancellation,
+        )
+        work = self.run_in_context(
+            context,
             task,
-            cwd=cwd.resolve(),
-            messages=messages,
             max_turns=max_turns,
             context_limit=context_limit,
             prompt_tokens=prompt_tokens,
-            cancellation=cancellation,
-            events=events,
+            on_event=on_event,
         )
         if session is not None:
-            return await run_with_lifecycle(session, work, run_id=run_id, hooks=self.lifecycle)
+            return await run_with_lifecycle(
+                session, work, run_id=context.run_id, hooks=self.lifecycle
+            )
         return await work
+
+    async def run_in_context(
+        self,
+        context: RunContext,
+        task: str,
+        *,
+        max_turns: int = DEFAULT_MAX_TURNS,
+        context_limit: int | None = None,
+        prompt_tokens: int | None = None,
+        on_event: EventListener | None = None,
+    ) -> RunResult:
+        """Run one task using an explicit per-run context."""
+
+        listeners = (on_event,) if on_event is not None else ()
+        events = self.events.for_run(context.run_id, listeners=listeners)
+        services = {**self.services, **dict(context.services)}
+        return await self._run(
+            task,
+            workspace=context.workspace,
+            messages=context.session.messages,
+            session_id=context.session.id,
+            max_turns=max_turns,
+            context_limit=context_limit,
+            prompt_tokens=prompt_tokens,
+            cancellation=context.cancellation,
+            services=services,
+            events=events,
+        )
 
     async def _run(
         self,
         task: str,
         *,
-        cwd: Path,
+        workspace: Any | None,
         messages: list[Message],
+        session_id: str,
         max_turns: int,
         context_limit: int | None,
         prompt_tokens: int | None,
         cancellation: CancellationToken | None,
+        services: Mapping[str, Any],
         events: EventEmitter,
     ) -> RunResult:
         if max_turns < 1:
@@ -254,6 +312,7 @@ class Agent:
                         status=RunStatus.SUCCEEDED,
                         turns=turns,
                         run_id=events.run_id,
+                        session_id=session_id,
                         finish_reason=finish_reason,
                         usage=last_usage,
                     )
@@ -273,12 +332,12 @@ class Agent:
                     execution = await self.executor.execute(
                         call,
                         ToolContext(
-                            cwd=cwd,
+                            cwd=workspace,
                             call=call,
                             model=turn.model or self.backend.model,
                             user_question=question,
                             cancellation=cancellation,
-                            services=self.services,
+                            services=services,
                         ),
                         events,
                         turn=turns,
@@ -298,6 +357,7 @@ class Agent:
                 status=RunStatus.BLOCKED,
                 turns=turns,
                 run_id=events.run_id,
+                session_id=session_id,
                 finish_reason=finish_reason,
                 stop_reason="max_turns",
                 usage=last_usage,

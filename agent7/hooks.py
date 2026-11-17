@@ -5,6 +5,7 @@ import the terminal or agent7 session/storage implementation.
 """
 
 from .core.lifecycle import (
+    LifecycleContext,
     LifecycleEvent,
     LifecycleHooks,
     LifecycleKind,
@@ -15,6 +16,7 @@ from .core.lifecycle import (
 )
 
 __all__ = [
+    "LifecycleContext",
     "LifecycleEvent",
     "LifecycleHooks",
     "LifecycleKind",

@@ -100,7 +100,7 @@ def _truncate_text(s: str, limit: int, *, tag: str = "truncated") -> str:
 
 
 def read_file(
-    cwd: Path,
+    cwd: Path | None,
     path: str,
     offset: int | None = None,
     limit: int | None = None,
@@ -109,6 +109,8 @@ def read_file(
     image_reader: ImageReader | None = None,
     supports_vision: VisionSupport | None = None,
 ) -> str | ToolResult:
+    if cwd is None:
+        return "error: no workspace is configured"
     fp = resolve_path(cwd, path)
     if not fp.is_file():
         return f"error: not a file: {fp}"
@@ -170,11 +172,13 @@ def _write_stats(fp: Path, before: str, after: str, *, kind: str = "write") -> s
 
 
 def write_file(
-    cwd: Path,
+    cwd: Path | None,
     path: str,
     content: str,
     on_preview: Callable[[str], None] | None = None,
 ) -> str:
+    if cwd is None:
+        return "error: no workspace is configured"
     fp = resolve_path(cwd, path)
     try:
         before = fp.read_text(encoding="utf-8") if fp.exists() else ""
@@ -190,11 +194,13 @@ def write_file(
 
 
 def edit_file(
-    cwd: Path,
+    cwd: Path | None,
     path: str,
     edits: list[dict[str, Any]],
     on_preview: Callable[[str], None] | None = None,
 ) -> str:
+    if cwd is None:
+        return "error: no workspace is configured"
     fp = resolve_path(cwd, path)
     if not fp.is_file():
         return f"error: not a file: {fp}"
