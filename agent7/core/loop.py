@@ -257,7 +257,7 @@ class Agent:
                     if last_prompt is not None
                     else (self.history.estimate(messages) if self.history else _estimate(messages))
                 )
-                backend_limit = self.backend.context_limit
+                backend_limit = getattr(self.backend, "context_limit", None)
                 active_limit = backend_limit if backend_limit is not None else context_limit
                 if self.history and self.history.should_compact(prompt, active_limit):
                     new_messages, changed = self.history.compact(messages)
@@ -334,7 +334,7 @@ class Agent:
                         ToolContext(
                             cwd=workspace,
                             call=call,
-                            model=turn.model or self.backend.model,
+                            model=turn.model or getattr(self.backend, "model", None),
                             user_question=question,
                             cancellation=cancellation,
                             services=services,

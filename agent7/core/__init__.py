@@ -5,7 +5,7 @@ storage, or agent7's concrete tools. It can therefore be exercised with a fake
 backend and moved to a standalone distribution without moving the UI as well.
 """
 
-from .backend import BackendRegistry, ModelBackend, ModelRequest
+from .backend import BackendRegistry, ModelBackend, ModelInfo, ModelRequest
 from .builtin_tools import (
     BUILTIN_TOOL_SCHEMAS,
     BuiltinToolsConfig,
@@ -81,6 +81,7 @@ __all__ = [
     "ListenerError",
     "Message",
     "ModelBackend",
+    "ModelInfo",
     "ModelRequest",
     "MemorySessionStore",
     "ModelTurn",

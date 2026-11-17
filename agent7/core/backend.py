@@ -29,7 +29,14 @@ class ModelRequest:
 
 @runtime_checkable
 class ModelBackend(Protocol):
-    """The required backend boundary; ``prepare`` is an optional extension."""
+    """The required backend boundary; metadata and ``prepare`` are optional."""
+
+    async def complete(self, request: ModelRequest, events: EventEmitter) -> ModelTurn: ...
+
+
+@runtime_checkable
+class ModelInfo(Protocol):
+    """Optional backend metadata used by routing, status, and tool context."""
 
     @property
     def model(self) -> str: ...
@@ -39,8 +46,6 @@ class ModelBackend(Protocol):
 
     @property
     def context_limit(self) -> int | None: ...
-
-    async def complete(self, request: ModelRequest, events: EventEmitter) -> ModelTurn: ...
 
 
 BackendFactory = Callable[..., ModelBackend]

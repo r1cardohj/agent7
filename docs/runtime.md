@@ -2,8 +2,9 @@
 
 `agent7.core` is the internal boundary intended for a future standalone
 `agent0-runtime` package. It has no imports from the terminal, agent7 providers,
-session storage, or concrete coding tools. The CLI and a future GUI are both
-hosts of this runtime.
+or application-owned session storage. It contains the generic loop plus optional
+built-in filesystem/shell/web tools that other agent types can select without
+importing agent7's coding profile.
 
 ## Typed runs and structured events
 
@@ -39,16 +40,21 @@ model/text/reasoning deltas, routing, usage, compaction, tool start/preview/end,
 and terminal turn states. `event.to_dict()` is suitable for a future JSON-RPC or
 WebSocket adapter. `on_event` may be synchronous or asynchronous.
 
-For custom backends, instantiate `agent7.core.Agent` directly and implement:
+For custom backends, instantiate `agent7.core.Agent` directly. The required
+backend protocol is only `complete(request, events) -> ModelTurn`; `model`,
+`provider_id`, `context_limit`, and `prepare()` are optional metadata/policy:
 
 ```python
-async def complete(request, events) -> ModelTurn:
-    ...
+class Backend:
+    async def complete(self, request, events) -> ModelTurn:
+        ...
 ```
 
 The backend owns its wire protocol. The generic loop owns model/tool rounds,
-history policy, cancellation, and run outcomes. An optional `prepare()` method
-supports route selection before the first model request.
+history policy, cancellation, and run outcomes. agent7 provides
+`OpenAIResponsesBackend` for one endpoint and `RoutedResponsesBackend` for its
+intent/failover policy; another application can use either, neither, or a
+different backend entirely.
 
 ## Tool registry
 
@@ -80,6 +86,54 @@ Handlers receive a `ToolContext` and a decoded argument dictionary. They may be
 synchronous or asynchronous and return `str` or `ToolResult`. Synchronous
 handlers run in a worker thread, matching agent7's existing behavior.
 
+## Generic built-in tools
+
+The runtime includes provider-neutral `read`, `write`, `edit`, `bash`, `fetch`,
+and `search` definitions. Optional behavior is injected rather than imported:
+
+```python
+from agent7.core import BuiltinToolsConfig, create_builtin_registry, Shell
+
+registry = create_builtin_registry(
+    BuiltinToolsConfig(
+        shell=Shell("bash", ("/bin/bash", "-lc")),
+        search_provider=my_search_provider,  # any SearchProvider
+    )
+)
+agent = Agent(backend, tools=registry)
+```
+
+Image decoding is optional through `ImageReader`; search credentials stay in the
+application's `SearchProvider`. Filesystem/shell tools require a workspace only
+when selected by the model, so an assistant with no workspace can still use its
+own tools. agent7 injects its Pillow image reader and DeepSeek Search provider
+from `agent7.tool_adapters`; neither is part of the generic tool definitions.
+
+## Sessions and stores
+
+The core models only portable runtime state:
+
+```python
+from agent7.core import MemorySessionStore, RuntimeSession
+
+session = RuntimeSession(
+    id="assistant-1",
+    messages=[],
+    metadata={"persona": "general assistant"},
+)
+result = await agent.run("hello", session=session)
+```
+
+`RuntimeSession` contains an ID, message history, and application metadata. It
+does not prescribe names, credentials, paths, retention, workspace semantics, or
+a storage format. `SessionStore` is the persistence contract; the included
+`MemorySessionStore` is intended for tests and ephemeral agents. agent7's XDG
+JSON snapshots remain an agent7 implementation, not runtime policy.
+
+For explicit per-run state, use `RunContext` and `Agent.run_in_context()`. The
+legacy `cwd` parameter is the filesystem spelling of the optional run workspace;
+neither is required for a non-filesystem agent.
+
 ## Cancellation
 
 A host can cancel its asyncio task for immediate network-stream cancellation,
@@ -89,7 +143,7 @@ or pass a `CancellationToken` for cooperative cancellation:
 from agent7.core import CancellationToken
 
 token = CancellationToken()
-result_task = asyncio.create_task(run(..., cancellation=token))
+result_task = asyncio.create_task(agent.run(..., cancellation=token))
 token.cancel("window closed")
 await result_task  # raises AgentInterrupted
 ```

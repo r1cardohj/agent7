@@ -28,6 +28,7 @@ from .core import (
     EventEmitter,
     EventListener,
     LifecycleHooks,
+    ModelBackend,
     ModelRequest,
     ModelTurn,
     Recovery,
@@ -1037,8 +1038,8 @@ def _answer_pending(
             messages.append({"role": "tool", "tool_call_id": call_id, "content": note})
 
 
-class ResponsesBackend:
-    """agent7's OpenAI Responses/routing adapter for the generic backend SPI."""
+class OpenAIResponsesBackend:
+    """One OpenAI-compatible Responses endpoint implementing the backend SPI."""
 
     def __init__(
         self,
@@ -1046,14 +1047,13 @@ class ResponsesBackend:
         model: str,
         *,
         provider_id: str | None = None,
-        route: FailoverRoute | None = None,
         context_limit: int | None = None,
         on_route=None,
     ) -> None:
         self.client = client
         self._model = model
         self._provider_id = provider_id
-        self.route = route
+        self.route: FailoverRoute | None = None
         self._context_limit = context_limit
         self.on_route = on_route
 
@@ -1164,6 +1164,33 @@ class ResponsesBackend:
         )
 
 
+class RoutedResponsesBackend(OpenAIResponsesBackend):
+    """agent7's optional route selection and failover policy for Responses."""
+
+    def __init__(
+        self,
+        client: AsyncOpenAI,
+        model: str,
+        *,
+        route: FailoverRoute,
+        provider_id: str | None = None,
+        context_limit: int | None = None,
+        on_route=None,
+    ) -> None:
+        super().__init__(
+            client,
+            model,
+            provider_id=provider_id,
+            context_limit=context_limit,
+            on_route=on_route,
+        )
+        self.route = route
+
+
+# Compatibility name from the first runtime extraction pass.
+ResponsesBackend = RoutedResponsesBackend
+
+
 class ResponsesHistoryPolicy:
     """Responses-specific compaction and safe-retry decisions for the core loop."""
 
@@ -1241,11 +1268,13 @@ def create_tool_registry(dispatcher: Callable[..., Any] | None = None) -> ToolRe
 async def run_agent_result(
     task: str,
     *,
-    cwd: Path,
-    client: AsyncOpenAI,
-    model: str,
+    cwd: Path | None = None,
+    client: AsyncOpenAI | None = None,
+    model: str = "",
+    backend: ModelBackend | None = None,
+    workspace: Any | None = None,
     max_turns: int = DEFAULT_MAX_TURNS,
-    messages: list[dict[str, Any]],
+    messages: list[dict[str, Any]] | None = None,
     on_delta=None,
     on_thinking=None,
     on_answer_to_thinking=None,
@@ -1272,14 +1301,26 @@ async def run_agent_result(
 ) -> RunResult:
     """Run through the headless core and adapt its events to legacy callbacks."""
 
-    backend = ResponsesBackend(
-        client,
-        model,
-        provider_id=provider_id,
-        route=route,
-        context_limit=context_limit,
-        on_route=on_route,
-    )
+    if backend is None:
+        if client is None or not model:
+            raise ValueError("client and model are required when backend is not provided")
+        backend = (
+            RoutedResponsesBackend(
+                client,
+                model,
+                route=route,
+                provider_id=provider_id,
+                context_limit=context_limit,
+                on_route=on_route,
+            )
+            if route is not None
+            else OpenAIResponsesBackend(
+                client,
+                model,
+                provider_id=provider_id,
+                context_limit=context_limit,
+            )
+        )
     runtime = CoreAgent(
         backend,
         tools=registry if registry is not None else create_tool_registry(),
@@ -1326,6 +1367,7 @@ async def run_agent_result(
             task,
             cwd=cwd,
             messages=messages,
+            workspace=workspace,
             max_turns=max_turns,
             context_limit=context_limit,
             prompt_tokens=prompt_tokens,
