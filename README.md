@@ -37,7 +37,7 @@ To tweak the design, edit `agent7/mascot.py`, then run `python scripts/generate_
 - **Streaming Markdown rendering** — answer deltas update a Rich Live display as they arrive, coalesced into 30 repaints per second. Rendering is incremental: completed blocks are parsed and pre-rendered once, and only the in-progress block is re-parsed per repaint. Long replies stay in the terminal scrollback; there is no pager.
 - **Provider login** — paste an API key for DeepSeek or Kimi (`/login` or env); switch models in-session
 - **Auto intent routing** — one-shot tasks use it by default; `/model auto` scores the current task against reviewed available models, then fails over in score order
-- **Optional Herdr background runs** — inside a Herdr terminal with `hc` on `PATH`, a bundled on-demand skill manages long tests/builds and services while agent7 keeps working; outside Herdr agent7 uses ordinary synchronous bash
+- **Optional Herdr background runs** — inside a Herdr(app) terminal with `hc` on `PATH`, a bundled on-demand skill manages long tests/builds and services while agent7 keeps working; outside Herdr agent7 uses ordinary synchronous bash
 - **One-command mobile access** — `agent7 deploy` installs Tailscale from its verified official static archive and prepares SSH for Herdr Mobile, with `--check`, `--sshd`, and `--auth-key` modes
 
 
