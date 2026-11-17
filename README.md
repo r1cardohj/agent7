@@ -19,8 +19,11 @@ tools: read, write, edit, bash, fetch, and search. Given one task, it explores t
 makes changes, verifies them, and stops.
 
 The design is deliberately narrow. There is no plan mode, no subagents, no parallel tool
-execution, and no built-in background scheduler. agent7 works on one task at a time, in the
-foreground, and streams its reasoning, tool calls, and Markdown answer as they happen.
+execution, and no built-in background scheduler. agent7 works on one task at a time in a
+single foreground loop, and streams its reasoning, tool calls, and Markdown answer as they
+happen. Long tests, builds, and services can still run detached through Herdr's managed
+terminals when agent7 starts inside herdr-core; that is the only background path, and it is
+off elsewhere.
 
 ## Features
 
@@ -282,7 +285,9 @@ general coding-agent ranking; repeat it before drawing conclusions about the cur
 
 - **No sandbox.** Tools run with your account's privileges, and `bash` can do anything your
   shell can do. Run agent7 only on code and prompts you trust.
-- **No orchestration.** There are no subagents, parallel tasks, plan mode, or background jobs.
+- **No orchestration.** There are no subagents, parallel tasks, plan mode, or background
+  job scheduler. Background work exists only as Herdr-managed runs (see the Herdr integration
+  section); outside herdr-core every command runs synchronously in the foreground.
 - **No confirmation prompts for edits.** Review changes with your normal version control
   workflow.
 - **Network content is untrusted.** Fetched pages and search results are data, not
