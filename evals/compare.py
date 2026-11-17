@@ -63,13 +63,15 @@ def parse_agents(raw: str) -> list[str]:
     return agents
 
 
-def build_agent_plan(tasks: list[Task], agents: list[str], repeat: int) -> list[tuple[Task, str, int]]:
+def build_agent_plan(
+    tasks: list[Task], agents: list[str], repeat: int
+) -> list[tuple[Task, str, int]]:
     """Interleave agents within each task and rotate first-agent order."""
     if repeat < 1:
         raise ValueError("repeat must be at least one")
     plan: list[tuple[Task, str, int]] = []
     for task_index, task in enumerate(tasks):
-        rotated = agents[task_index % len(agents):] + agents[:task_index % len(agents)]
+        rotated = agents[task_index % len(agents) :] + agents[: task_index % len(agents)]
         for number in range(1, repeat + 1):
             plan.extend((task, agent, number) for agent in rotated)
     return plan
@@ -100,10 +102,18 @@ class ExternalProviderError(RuntimeError):
 def _provider_error(message: str) -> RuntimeError:
     """Keep provider/network failures separate from task-completion failures."""
     lowered = message.lower()
-    if any(marker in lowered for marker in (
-        "overloaded", "temporarily unavailable", "connection error",
-        "connection_error", "connection failed", "network error", "timed out",
-    )):
+    if any(
+        marker in lowered
+        for marker in (
+            "overloaded",
+            "temporarily unavailable",
+            "connection error",
+            "connection_error",
+            "connection failed",
+            "network error",
+            "timed out",
+        )
+    ):
         return ExternalProviderError(message, 503)
     if "rate limit" in lowered or "too many requests" in lowered:
         return ExternalProviderError(message, 429)
@@ -122,20 +132,22 @@ def _message_text(message: dict[str, Any]) -> str:
     if not isinstance(content, list):
         return ""
     return "".join(
-        part.get("text", "") for part in content
+        part.get("text", "")
+        for part in content
         if isinstance(part, dict) and isinstance(part.get("text"), str)
     )
 
 
 def _add_usage(
-    result: AgentResult, usage: dict[str, Any], *, source: str,
+    result: AgentResult,
+    usage: dict[str, Any],
+    *,
+    source: str,
 ) -> None:
     input_other = int(usage.get("inputOther") or usage.get("input") or 0)
     output = int(usage.get("output") or usage.get("output_tokens") or 0)
     cache_read = int(usage.get("inputCacheRead") or usage.get("cacheRead") or 0)
-    cache_write = int(
-        usage.get("inputCacheCreation") or usage.get("cacheWrite") or 0
-    )
+    cache_write = int(usage.get("inputCacheCreation") or usage.get("cacheWrite") or 0)
     prompt = input_other + cache_read + cache_write
     total_value = usage.get("totalTokens") or usage.get("total_tokens")
     total = int(total_value) if total_value is not None else prompt + output
@@ -149,11 +161,17 @@ def _add_usage(
     result.cache_write_tokens += cache_write
     result.usage_observed = True
     result.token_source = source
-    result.events.append({
-        "event": "usage", "source": source, "prompt_tokens": prompt,
-        "completion_tokens": output, "total_tokens": total,
-        "cache_read_tokens": cache_read, "cache_write_tokens": cache_write,
-    })
+    result.events.append(
+        {
+            "event": "usage",
+            "source": source,
+            "prompt_tokens": prompt,
+            "completion_tokens": output,
+            "total_tokens": total,
+            "cache_read_tokens": cache_read,
+            "cache_write_tokens": cache_write,
+        }
+    )
 
 
 def parse_pi_json(result: AgentResult, stdout: str) -> None:
@@ -168,23 +186,19 @@ def parse_pi_json(result: AgentResult, stdout: str) -> None:
             message = event.get("message") or {}
             if message.get("role") == "assistant":
                 result.model_rounds += 1
-                if usage := message.get("usage"):
-                    if isinstance(usage, dict):
-                        _add_usage(result, usage, source="pi-message")
+                if (usage := message.get("usage")) and isinstance(usage, dict):
+                    _add_usage(result, usage, source="pi-message")
                 stop = message.get("stopReason")
                 if stop in {"error", "aborted", "length"}:
                     detail = message.get("errorMessage") or stop
-                    terminal_errors.append(
-                        _provider_error(f"Pi response ended with {detail}")
-                    )
+                    terminal_errors.append(_provider_error(f"Pi response ended with {detail}"))
                 text = _message_text(message)
                 if text:
                     answers.append(text)
             elif message.get("role") == "toolResult":
                 # Nested model work contributes to a full-session total.
-                if usage := message.get("usage"):
-                    if isinstance(usage, dict):
-                        _add_usage(result, usage, source="pi-nested")
+                if (usage := message.get("usage")) and isinstance(usage, dict):
+                    _add_usage(result, usage, source="pi-nested")
         elif kind == "tool_execution_end":
             result.tool_calls += 1
         elif kind == "turn_end":
@@ -206,7 +220,10 @@ def parse_pi_json(result: AgentResult, stdout: str) -> None:
 
 
 async def _run_external(
-    command: list[str], cwd: Path, env: dict[str, str], result: AgentResult,
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    result: AgentResult,
 ) -> int:
     """Run one CLI, always retaining partial output for cancellation."""
     with tempfile.TemporaryDirectory(prefix=f"agent7-{result.token_source or 'cli'}-") as temporary:
@@ -215,7 +232,11 @@ async def _run_external(
         with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
             try:
                 process = await asyncio.create_subprocess_exec(
-                    *command, cwd=cwd, env=env, stdout=stdout, stderr=stderr,
+                    *command,
+                    cwd=cwd,
+                    env=env,
+                    stdout=stdout,
+                    stderr=stderr,
                     start_new_session=(os.name == "posix"),
                 )
             except OSError as error:
@@ -250,7 +271,7 @@ class Agent7Runner:
         self.current = self.runner.begin(strategy)
         return self.current
 
-    async def run(self, task: Task, cwd: Path, strategy: str) -> AgentResult:
+    async def run(self, task: Task, cwd: Path, _strategy: str) -> AgentResult:
         # AgentRunner maps fixed-fast/fixed-strong to configured model refs. The
         # comparison runner passes both through the same fast ref, so strategy
         # is only the display name supplied by execute_run.
@@ -258,28 +279,39 @@ class Agent7Runner:
 
 
 def make_pi_models(
-    provider: str, model: str, base_url: str, api: str = "openai-completions",
+    provider: str,
+    model: str,
+    base_url: str,
+    api: str = "openai-completions",
 ) -> str:
     """Pi models.json for the same Kimi Coding API used by agent7."""
-    return json.dumps({
-        "$schema": "https://pi.dev/schemas/models.schema.json",
-        "providers": {
-            provider: {
-                "baseUrl": base_url,
-                "api": api,
-                "apiKey": f"${BENCH_API_KEY_ENV}",
-                "compat": {"supportsDeveloperRole": False},
-                "models": [{
-                    "id": model,
-                    "name": f"Kimi {model}",
-                    "reasoning": True,
-                    "input": ["text"],
-                    "contextWindow": 262144,
-                    "maxTokens": 65536,
-                }],
+    return (
+        json.dumps(
+            {
+                "$schema": "https://pi.dev/schemas/models.schema.json",
+                "providers": {
+                    provider: {
+                        "baseUrl": base_url,
+                        "api": api,
+                        "apiKey": f"${BENCH_API_KEY_ENV}",
+                        "compat": {"supportsDeveloperRole": False},
+                        "models": [
+                            {
+                                "id": model,
+                                "name": f"Kimi {model}",
+                                "reasoning": True,
+                                "input": ["text"],
+                                "contextWindow": 262144,
+                                "maxTokens": 65536,
+                            }
+                        ],
+                    },
+                },
             },
-        },
-    }, indent=2) + "\n"
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 def make_kimi_config(provider: str, model: str, base_url: str) -> str:
@@ -303,8 +335,16 @@ default_effort = "high"
 
 class PiRunner:
     def __init__(
-        self, executable: str, model: str, *, thinking: str, provider: str,
-        model_id: str, base_url: str, api_key: str, api: str,
+        self,
+        executable: str,
+        model: str,
+        *,
+        thinking: str,
+        provider: str,
+        model_id: str,
+        base_url: str,
+        api_key: str,
+        api: str,
     ) -> None:
         self.executable = executable
         self.model = model
@@ -316,23 +356,27 @@ class PiRunner:
         self.api = api
         self.current: AgentResult | None = None
 
-    def begin(self, strategy: str) -> AgentResult:
+    def begin(self, _strategy: str) -> AgentResult:
         self.current = AgentResult()
         return self.current
 
     def command(self, task: Task) -> list[str]:
         return [
             self.executable,
-            "--mode", "json",
+            "--mode",
+            "json",
             "--no-session",
             "--no-extensions",
             "--no-mcp",
             "--no-skills",
             "--no-prompt-templates",
             "--no-context-files",
-            "--model", self.model,
-            "--thinking", self.thinking,
-            "--", task.prompt,
+            "--model",
+            self.model,
+            "--thinking",
+            self.thinking,
+            "--",
+            task.prompt,
         ]
 
     async def run(self, task: Task, cwd: Path, strategy: str) -> AgentResult:
@@ -344,7 +388,10 @@ class PiRunner:
                 agent_dir.mkdir()
                 (agent_dir / "models.json").write_text(
                     make_pi_models(
-                        self.provider, self.model_id, self.base_url, self.api,
+                        self.provider,
+                        self.model_id,
+                        self.base_url,
+                        self.api,
                     ),
                     encoding="utf-8",
                 )
@@ -354,7 +401,10 @@ class PiRunner:
                     **{BENCH_API_KEY_ENV: self.api_key},
                 )
                 return_code = await _run_external(
-                    self.command(task), cwd, env, result,
+                    self.command(task),
+                    cwd,
+                    env,
+                    result,
                 )
             parse_pi_json(result, result.raw_output)
             if result.error is not None:
@@ -370,8 +420,14 @@ class PiRunner:
 
 class KimiRunner:
     def __init__(
-        self, executable: str, model: str, *, provider: str, model_id: str,
-        base_url: str, api_key: str,
+        self,
+        executable: str,
+        model: str,
+        *,
+        provider: str,
+        model_id: str,
+        base_url: str,
+        api_key: str,
     ) -> None:
         self.executable = executable
         self.model = model
@@ -381,16 +437,19 @@ class KimiRunner:
         self.api_key = api_key
         self.current: AgentResult | None = None
 
-    def begin(self, strategy: str) -> AgentResult:
+    def begin(self, _strategy: str) -> AgentResult:
         self.current = AgentResult()
         return self.current
 
     def command(self, task: Task) -> list[str]:
         return [
             self.executable,
-            "--model", self.model,
-            "--prompt", task.prompt,
-            "--output-format", "stream-json",
+            "--model",
+            self.model,
+            "--prompt",
+            task.prompt,
+            "--output-format",
+            "stream-json",
         ]
 
     async def run(self, task: Task, cwd: Path, strategy: str) -> AgentResult:
@@ -413,7 +472,9 @@ class KimiRunner:
                 )
                 return_code = await _run_external(
                     [*self.command(task), "--skills-dir", str(skills)],
-                    cwd, env, result,
+                    cwd,
+                    env,
+                    result,
                 )
                 parse_kimi_output(result, result.raw_output, home)
                 if result.error is not None:
@@ -429,7 +490,8 @@ class KimiRunner:
 
 def _wire_usages(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     usages = [
-        obj["usage"] for obj in records
+        obj["usage"]
+        for obj in records
         if obj.get("type") == "usage.record" and isinstance(obj.get("usage"), dict)
     ]
     if usages:
@@ -483,7 +545,8 @@ def parse_kimi_output(result: AgentResult, stdout: str, home: Path) -> None:
             event = obj.get("event")
             if (
                 obj.get("type") == "context.append_loop_event"
-                and isinstance(event, dict) and event.get("type") == "tool.call"
+                and isinstance(event, dict)
+                and event.get("type") == "tool.call"
             ):
                 wire_tools += 1
 
@@ -503,7 +566,11 @@ def _split_model_ref(ref: str) -> tuple[str, str]:
 
 
 def _preflight(
-    agents: list[str], *, agent7_model: str, pi_executable: str, kimi_executable: str,
+    agents: list[str],
+    *,
+    agent7_model: str,
+    pi_executable: str,
+    kimi_executable: str,
 ) -> dict[str, Credential]:
     credentials = resolve_all()
     if "agent7" in agents:
@@ -526,8 +593,12 @@ def _preflight(
 def _cli_version(executable: str) -> str:
     try:
         completed = subprocess.run(
-            [executable, "--version"], text=True, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, timeout=10, check=False,
+            [executable, "--version"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
@@ -551,16 +622,21 @@ async def _amain(args: argparse.Namespace) -> int:
         return 0
 
     credentials = _preflight(
-        agents, agent7_model=args.agent7_model,
-        pi_executable=args.pi_executable, kimi_executable=args.kimi_executable,
+        agents,
+        agent7_model=args.agent7_model,
+        pi_executable=args.pi_executable,
+        kimi_executable=args.kimi_executable,
     )
     bench_api_key = credentials["kimi"].api_key
 
     agent7_delegate: AgentRunner | None = None
     if "agent7" in agents:
         agent7_delegate = AgentRunner(
-            credentials, [], fast_model=args.agent7_model,
-            strong_model=args.agent7_model, max_turns=args.agent7_max_turns,
+            credentials,
+            [],
+            fast_model=args.agent7_model,
+            strong_model=args.agent7_model,
+            max_turns=args.agent7_max_turns,
         )
     runners: dict[str, Any] = {}
     if agent7_delegate is not None:
@@ -568,15 +644,23 @@ async def _amain(args: argparse.Namespace) -> int:
     if "pi" in agents:
         pi_provider, pi_model_id = _split_model_ref(args.pi_model)
         runners["pi"] = PiRunner(
-            args.pi_executable, args.pi_model, thinking=args.pi_thinking,
-            provider=pi_provider, model_id=pi_model_id,
-            base_url=args.bench_base_url, api_key=bench_api_key, api=args.pi_api,
+            args.pi_executable,
+            args.pi_model,
+            thinking=args.pi_thinking,
+            provider=pi_provider,
+            model_id=pi_model_id,
+            base_url=args.bench_base_url,
+            api_key=bench_api_key,
+            api=args.pi_api,
         )
     if "kimi" in agents:
         kimi_provider, kimi_model_id = _split_model_ref(args.kimi_model)
         runners["kimi"] = KimiRunner(
-            args.kimi_executable, args.kimi_model, provider=kimi_provider,
-            model_id=kimi_model_id, base_url=args.bench_base_url,
+            args.kimi_executable,
+            args.kimi_model,
+            provider=kimi_provider,
+            model_id=kimi_model_id,
+            base_url=args.bench_base_url,
             api_key=bench_api_key,
         )
 
@@ -590,7 +674,9 @@ async def _amain(args: argparse.Namespace) -> int:
         "kimi": _cli_version(args.kimi_executable) if "kimi" in agents else None,
     }
     config = {
-        "started_at": utc_now(), "agents": agents, "repeat": args.repeat,
+        "started_at": utc_now(),
+        "agents": agents,
+        "repeat": args.repeat,
         "models": {
             "agent7": args.agent7_model if "agent7" in agents else None,
             "pi": args.pi_model if "pi" in agents else None,
@@ -622,14 +708,17 @@ async def _amain(args: argparse.Namespace) -> int:
             for index, (task, agent, repeat) in enumerate(plan, 1):
                 print(f"[{index}/{len(plan)}] {task.id} {agent} r{repeat}", flush=True)
                 record = await execute_run(
-                    task, agent, repeat, output, runners[agent], timeout=args.timeout,
+                    task,
+                    agent,
+                    repeat,
+                    output,
+                    runners[agent],
+                    timeout=args.timeout,
                 )
                 records.append(record)
                 stream.write(json.dumps(record, ensure_ascii=False) + "\n")
                 stream.flush()
-                tokens = (
-                    f"{record['total_tokens']:,}" if record["usage_observed"] else "n/a"
-                )
+                tokens = f"{record['total_tokens']:,}" if record["usage_observed"] else "n/a"
                 print(
                     f"  {record['status']} {record['agent_seconds']:.1f}s {tokens} tokens",
                     flush=True,
@@ -658,7 +747,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--kimi-model", default=DEFAULT_MODELS["kimi"])
     parser.add_argument("--pi-thinking", default="high")
     parser.add_argument(
-        "--pi-api", choices=("openai-completions", "openai-responses"),
+        "--pi-api",
+        choices=("openai-completions", "openai-responses"),
         default="openai-completions",
     )
     parser.add_argument("--pi-executable", default="pi")

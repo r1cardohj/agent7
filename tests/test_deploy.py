@@ -226,7 +226,9 @@ class StaticTailscaleInstallTests(unittest.TestCase):
         archive_digest = hashlib.sha256(archive_bytes).hexdigest().upper()
 
         def fake_download(
-            url: str, target: str, show_progress: bool | None = None,
+            url: str,
+            target: str,
+            show_progress: bool | None = None,
         ) -> None:
             del url, show_progress
             Path(target).write_text(
@@ -257,7 +259,9 @@ class StaticTailscaleInstallTests(unittest.TestCase):
 
     def test_checksum_mismatch_refuses_installation(self) -> None:
         def fake_download(
-            _url: str, target: str, show_progress: bool | None = None,
+            _url: str,
+            target: str,
+            show_progress: bool | None = None,
         ) -> None:
             del show_progress
             if target.endswith(".sha256"):
@@ -290,7 +294,9 @@ class DownloadTests(unittest.TestCase):
                 redirect_stderr(err),
             ):
                 _download(
-                    "https://example.test/install.sh", str(target), show_progress=True,
+                    "https://example.test/install.sh",
+                    str(target),
+                    show_progress=True,
                 )
             self.assertEqual(target.read_bytes(), b"abcdefghijkl")
 
@@ -307,7 +313,9 @@ class DownloadTests(unittest.TestCase):
                 redirect_stderr(err),
             ):
                 _download(
-                    "https://example.test/install.sh", str(target), show_progress=False,
+                    "https://example.test/install.sh",
+                    str(target),
+                    show_progress=False,
                 )
             self.assertEqual(target.read_bytes(), b"abc")
 
@@ -316,16 +324,20 @@ class DownloadTests(unittest.TestCase):
 
 class DeployMobileSshTests(unittest.TestCase):
     def test_logged_out_tailscale_is_not_treated_as_joined(self) -> None:
-        status = json.dumps({
-            "BackendState": "NeedsLogin",
-            "Self": {"DNSName": "", "TailscaleIPs": []},
-        })
+        status = json.dumps(
+            {
+                "BackendState": "NeedsLogin",
+                "Self": {"DNSName": "", "TailscaleIPs": []},
+            }
+        )
         with (
             patch("agent7.remote._have", return_value=True),
             patch(
                 "agent7.remote._run",
                 return_value=subprocess.CompletedProcess(
-                    ["tailscale"], 0, stdout=status,
+                    ["tailscale"],
+                    0,
+                    stdout=status,
                 ),
             ),
         ):

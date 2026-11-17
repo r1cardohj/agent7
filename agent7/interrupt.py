@@ -16,6 +16,7 @@ from prompt_toolkit.output import DummyOutput
 
 _T = TypeVar("_T")
 
+
 async def run_with_interrupt_keys(work: Awaitable[_T], *, input_obj: Input) -> _T:
     """Run work while an invisible input layer watches for cancellation keys.
 

@@ -106,8 +106,11 @@ class ReplyPrinterStreamingTests(unittest.TestCase):
         self.stream = io.StringIO()
         repl.err = Console(file=self.stream, width=80, color_system=None, force_terminal=False)
         repl.console = Console(
-            file=self.stream, width=80, height=20,
-            color_system="standard", force_terminal=True,
+            file=self.stream,
+            width=80,
+            height=20,
+            color_system="standard",
+            force_terminal=True,
         )
 
     def tearDown(self) -> None:
@@ -146,7 +149,8 @@ class ReplyPrinterStreamingTests(unittest.TestCase):
         live.stop.assert_called_once_with()
         self.assertTrue(live.transient)
         final_markdown = [
-            call.args[0].markup for call in print_.call_args_list
+            call.args[0].markup
+            for call in print_.call_args_list
             if call.args and isinstance(call.args[0], repl.Markdown)
         ]
         self.assertEqual(final_markdown, ["# Hello\n\n**world**"])
@@ -183,8 +187,10 @@ class ReplyPrinterStreamingTests(unittest.TestCase):
     def test_live_viewport_is_bounded_to_the_terminal_height(self) -> None:
         stream = MagicMock()
         stream.render.return_value = "latest frame"
-        with patch("agent7.repl.Live") as live_type, \
-             patch("agent7.repl.MarkdownStream", return_value=stream):
+        with (
+            patch("agent7.repl.Live") as live_type,
+            patch("agent7.repl.MarkdownStream", return_value=stream),
+        ):
             rp = repl.ReplyPrinter()
             rp.on_delta("answer")
             render = live_type.call_args.kwargs["get_renderable"]
@@ -194,17 +200,18 @@ class ReplyPrinterStreamingTests(unittest.TestCase):
         rp._stop_live(discard=True)
 
     def test_live_start_failure_falls_back_to_the_final_answer(self) -> None:
-        with patch("agent7.repl.Live", side_effect=RuntimeError("no live display")):
-            with repl.ReplyPrinter() as rp:
-                rp.on_delta("**fallback**")
+        with (
+            patch("agent7.repl.Live", side_effect=RuntimeError("no live display")),
+            repl.ReplyPrinter() as rp,
+        ):
+            rp.on_delta("**fallback**")
         self.assertIn("fallback", self.stream.getvalue())
         self.assertNotIn("**fallback**", self.stream.getvalue())
 
     def test_non_terminal_output_never_starts_live(self) -> None:
         repl.console = Console(file=self.stream, width=80, force_terminal=False)
-        with patch("agent7.repl.Live") as live_type:
-            with repl.ReplyPrinter() as rp:
-                rp.on_delta("plain answer")
+        with patch("agent7.repl.Live") as live_type, repl.ReplyPrinter() as rp:
+            rp.on_delta("plain answer")
         live_type.assert_not_called()
         self.assertIn("plain answer", self.stream.getvalue())
 
@@ -213,9 +220,7 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
     def setUp(self) -> None:
         self.orig_err = repl.err
         self.stream = io.StringIO()
-        repl.err = Console(
-            file=self.stream, width=20, color_system=None, force_terminal=True
-        )
+        repl.err = Console(file=self.stream, width=20, color_system=None, force_terminal=True)
         self.rp = repl.ReplyPrinter()
 
     def tearDown(self) -> None:
@@ -267,8 +272,10 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
     def test_tool_elapsed_seconds_tick_while_it_is_running(self) -> None:
         async def check() -> None:
             now = [10.0]
-            with patch("agent7.repl.time", SimpleNamespace(monotonic=lambda: now[0])), \
-                 patch("agent7.repl._TOOL_TICK_INTERVAL", 0.005):
+            with (
+                patch("agent7.repl.time", SimpleNamespace(monotonic=lambda: now[0])),
+                patch("agent7.repl._TOOL_TICK_INTERVAL", 0.005),
+            ):
                 self.rp.on_tool_start(1, "bash", {"command": "pwd"})
                 self.assertTrue(self.stream.getvalue().endswith("• bash  pwd  0s"))
 
@@ -287,9 +294,7 @@ class ReplyPrinterThinkingViewportTests(unittest.TestCase):
         self.assertFalse(self.rp._tool_running)
 
     def test_tool_tick_clears_rows_reflowed_by_a_terminal_resize(self) -> None:
-        repl.err = Console(
-            file=self.stream, width=120, color_system=None, force_terminal=True
-        )
+        repl.err = Console(file=self.stream, width=120, color_system=None, force_terminal=True)
         args = {"command": "x" * 80}
         self.rp.on_tool_start(1, "bash", args)
         self.assertNotIn("\033[4F", self.stream.getvalue())

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+from responses_fakes import FakeClient, FakeStream, call_turn, text_turn
 from rich.console import Console
 
 import agent7.cli as cli
@@ -18,7 +19,6 @@ from agent7.agent import DEFAULT_MAX_TURNS, run_agent
 from agent7.cli import Options, resolve_max_turns
 from agent7.session import Session
 from agent7.store import save
-from responses_fakes import FakeClient, FakeStream, call_turn, text_turn
 
 
 class TurnBudgetTests(unittest.TestCase):
@@ -33,8 +33,14 @@ class TurnBudgetTests(unittest.TestCase):
         client = FakeClient(turns)
         answer = asyncio.run(
             run_agent(
-                "go", cwd=self.cwd, client=client, model="test-model", messages=[],
-                on_tool=lambda *a: None, on_compact=lambda n: None, **kwargs,
+                "go",
+                cwd=self.cwd,
+                client=client,
+                model="test-model",
+                messages=[],
+                on_tool=lambda *_a: None,
+                on_compact=lambda _n: None,
+                **kwargs,
             )
         )
         return answer, client
@@ -88,8 +94,14 @@ class TurnBudgetTests(unittest.TestCase):
         client.responses.create = flaky
         answer = asyncio.run(
             run_agent(
-                "go", cwd=self.cwd, client=client, model="test-model", messages=list(big),
-                max_turns=1, on_tool=lambda *a: None, on_compact=lambda n: None,
+                "go",
+                cwd=self.cwd,
+                client=client,
+                model="test-model",
+                messages=list(big),
+                max_turns=1,
+                on_tool=lambda *_a: None,
+                on_compact=lambda _n: None,
             )
         )
 
@@ -100,7 +112,7 @@ class TurnBudgetTests(unittest.TestCase):
         class Overflow(Exception):
             status_code = 400
 
-        def create(**kwargs: Any) -> None:
+        def create(**_kwargs: Any) -> None:
             raise Overflow("maximum context length exceeded")
 
         client = FakeClient([text_turn("done")])
@@ -110,8 +122,14 @@ class TurnBudgetTests(unittest.TestCase):
         with self.assertRaises(Overflow):
             asyncio.run(
                 run_agent(
-                    "go", cwd=self.cwd, client=client, model="test-model", messages=big,
-                    max_turns=5, on_tool=lambda *a: None, on_compact=lambda n: None,
+                    "go",
+                    cwd=self.cwd,
+                    client=client,
+                    model="test-model",
+                    messages=big,
+                    max_turns=5,
+                    on_tool=lambda *_a: None,
+                    on_compact=lambda _n: None,
                 )
             )
 
@@ -153,8 +171,7 @@ class ResolveMaxTurnsTests(unittest.TestCase):
 
     def test_help_mentions_the_default(self) -> None:
         stream = io.StringIO()
-        with self.assertRaises(SystemExit), redirect_stderr(stream), \
-             patch("sys.stdout", stream):
+        with self.assertRaises(SystemExit), redirect_stderr(stream), patch("sys.stdout", stream):
             Options.parse(["--help"])
         self.assertIn(str(DEFAULT_MAX_TURNS), stream.getvalue())
 
@@ -174,7 +191,9 @@ class ResumeBudgetTests(unittest.TestCase):
         os.environ.pop("AGENT7_MAX_TURNS", None)
 
         old = SimpleNamespace(
-            cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
+            cwd=self.cwd,
+            model_ref="deepseek/test",
+            max_turns=30,
             messages=[{"role": "system", "content": "sys"}, {"role": "user", "content": "old"}],
         )
         save(old, created_at="2025-01-01T00:00:00+00:00")
@@ -182,17 +201,23 @@ class ResumeBudgetTests(unittest.TestCase):
     def resumed_max_turns(self, argv: list[str]) -> int:
         seen: list[int] = []
 
-        async def fake_run(session: Session, task: str, **kwargs: Any) -> str:
+        async def fake_run(session: Session, _task: str, **_kwargs: Any) -> str:
             seen.append(session.max_turns)
             return "done"
 
-        provider = SimpleNamespace(id="deepseek", make_client=lambda cred: _FakeClient())
-        with patch.object(cli, "resolve_all", return_value={"deepseek": object()}), \
-             patch.object(cli, "resolve_default", return_value=(provider, SimpleNamespace(source="t"))), \
-             patch.object(cli, "fetch_models", new=_async_empty), \
-             patch.object(cli, "switch_model", new=_async_ok), \
-             patch.object(cli, "run_turn", new=fake_run):
-            asyncio.run(cli.async_main(Options.parse(["--cwd", str(self.cwd), "-r", "continue", *argv])))
+        provider = SimpleNamespace(id="deepseek", make_client=lambda _cred: _FakeClient())
+        with (
+            patch.object(cli, "resolve_all", return_value={"deepseek": object()}),
+            patch.object(
+                cli, "resolve_default", return_value=(provider, SimpleNamespace(source="t"))
+            ),
+            patch.object(cli, "fetch_models", new=_async_empty),
+            patch.object(cli, "switch_model", new=_async_ok),
+            patch.object(cli, "run_turn", new=fake_run),
+        ):
+            asyncio.run(
+                cli.async_main(Options.parse(["--cwd", str(self.cwd), "-r", "continue", *argv]))
+            )
         return seen[0]
 
     def test_stale_snapshot_value_is_ignored(self) -> None:
@@ -207,10 +232,11 @@ class _FakeClient:
         pass
 
 
-async def _async_empty(*args: Any, **kwargs: Any) -> list[str]:
+async def _async_empty(*_args: Any, **_kwargs: Any) -> list[str]:
     return []
 
-async def _async_ok(*args: Any, **kwargs: Any) -> SimpleNamespace:
+
+async def _async_ok(*_args: Any, **_kwargs: Any) -> SimpleNamespace:
     return SimpleNamespace(message="ok")
 
 

@@ -25,8 +25,12 @@ from PIL import Image, ImageOps
 # oversized images are resized/re-encoded instead of being rejected.
 SUPPORTED_MIME = ("image/png", "image/jpeg", "image/webp", "image/gif")
 MIME_SUFFIX = {
-    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".webp": "image/webp", ".gif": "image/gif", ".bmp": "image/bmp",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
 }
 MIME_EXTENSION = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 MAX_IMAGE_DIMENSION = 2000
@@ -38,8 +42,15 @@ CLIPBOARD_TIMEOUT = 10.0
 # capability table first; an unknown model gets the image and the provider's own
 # error, which beats silently dropping context.
 _TEXT_ONLY = (
-    "text-", "embedding", "embed", "whisper", "tts", "rerank",
-    "bge-", "e5-", "moderation",
+    "text-",
+    "embedding",
+    "embed",
+    "whisper",
+    "tts",
+    "rerank",
+    "bge-",
+    "e5-",
+    "moderation",
 )
 
 
@@ -55,6 +66,7 @@ def supports_vision(model: str | None) -> bool:
         return True
     bare = name.rsplit("/", 1)[-1]
     from .routing import MODEL_CAPABILITIES  # local: keeps images.py dependency-free
+
     for capability in MODEL_CAPABILITIES:
         if capability.model.lower() == bare:
             return capability.supports_vision
@@ -114,8 +126,11 @@ def _encode(image: Image.Image, mime_type: str, quality: int = 85) -> bytes:
 
 
 def process_image(
-    data: bytes, mime_type: str, *,
-    max_dimension: int = MAX_IMAGE_DIMENSION, max_bytes: int = MAX_IMAGE_BYTES,
+    data: bytes,
+    mime_type: str,
+    *,
+    max_dimension: int = MAX_IMAGE_DIMENSION,
+    max_bytes: int = MAX_IMAGE_BYTES,
 ) -> tuple[ImageBlock, list[str]] | None:
     """Normalize to a supported format and fit the inline size limits.
 
@@ -128,7 +143,11 @@ def process_image(
         with Image.open(io.BytesIO(data)) as opened:
             image = ImageOps.exif_transpose(opened)
             width, height = image.width, image.height
-            if mime in SUPPORTED_MIME and len(data) <= max_bytes and max(width, height) <= max_dimension:
+            if (
+                mime in SUPPORTED_MIME
+                and len(data) <= max_bytes
+                and max(width, height) <= max_dimension
+            ):
                 # Keep the original bytes: an animated GIF stays animated.
                 return ImageBlock(base64.b64encode(data).decode(), mime), hints
             target = mime if mime in SUPPORTED_MIME else "image/png"
@@ -140,7 +159,9 @@ def process_image(
                     (max(1, round(width * scale)), max(1, round(height * scale))),
                     Image.Resampling.LANCZOS,
                 )
-                hints.append(f"[Image resized from {width}x{height} to {image.width}x{image.height}.]")
+                hints.append(
+                    f"[Image resized from {width}x{height} to {image.width}x{image.height}.]"
+                )
             candidates = [(_encode(image, target), target)]
             if target != "image/gif":
                 candidates.append((_encode(image, "image/jpeg"), "image/jpeg"))
@@ -186,10 +207,11 @@ def read_image(path: Path) -> ToolImageOutput:
 
 # ---------------------------------------------------------------- clipboard
 
+
 def _run(argv: list[str], timeout: float = CLIPBOARD_TIMEOUT) -> bytes | None:
     """stdout of a clipboard helper; None means unavailable or failed."""
     try:
-        done = subprocess.run(argv, capture_output=True, timeout=timeout)
+        done = subprocess.run(argv, check=False, capture_output=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout if done.returncode == 0 and done.stdout else None
@@ -285,7 +307,11 @@ def read_clipboard_image() -> tuple[bytes, str] | None:
             return (data, "image/png") if data else None
         return None
     image = None
-    if os.environ.get("WAYLAND_DISPLAY") or os.environ.get("XDG_SESSION_TYPE") == "wayland" or _is_wsl():
+    if (
+        os.environ.get("WAYLAND_DISPLAY")
+        or os.environ.get("XDG_SESSION_TYPE") == "wayland"
+        or _is_wsl()
+    ):
         image = _wl_paste()
     if image is None:
         image = _xclip()
@@ -322,7 +348,11 @@ def clipboard_text() -> str | None:
     """Plain-text fallback when Ctrl-V finds no image."""
     if sys.platform == "win32":
         exe = _powershell()
-        raw = _run([exe, "-NoProfile", "-NonInteractive", "-Command", "Get-Clipboard -Raw"]) if exe else None
+        raw = (
+            _run([exe, "-NoProfile", "-NonInteractive", "-Command", "Get-Clipboard -Raw"])
+            if exe
+            else None
+        )
     elif sys.platform == "darwin":
         raw = _run(["pbpaste"])
     elif shutil.which("wl-paste") and (

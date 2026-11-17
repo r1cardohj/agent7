@@ -7,6 +7,7 @@ command line and decides what to run; this module draws it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import signal
@@ -21,7 +22,7 @@ from fzp.fuzzy import Match, fuzzy_filter, fuzzy_match
 from fzp.tui import Picker
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application.current import get_app, get_app_session
-from prompt_toolkit.completion import Completer, Completion, CompleteEvent
+from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.enums import DEFAULT_BUFFER, EditingMode
 from prompt_toolkit.filters import has_focus, vi_insert_mode, vi_insert_multiple_mode
@@ -59,6 +60,7 @@ _THINK_LINES = 6
 _THINK_ON, _THINK_OFF = "\033[36;2m", "\033[0m"
 _TOOL_TICK_INTERVAL = 1.0
 _ANSWER_REFRESH_PER_SECOND = 30.0
+
 
 class ReplyPrinter:
     def __init__(self, *, stream_markdown: bool = True) -> None:
@@ -147,7 +149,8 @@ class ReplyPrinter:
                     "".join(self.buf), max_lines=max(1, console.height - 1)
                 ),
                 refresh_per_second=_ANSWER_REFRESH_PER_SECOND,
-                redirect_stdout=False, redirect_stderr=False,
+                redirect_stdout=False,
+                redirect_stderr=False,
                 vertical_overflow="visible",
             )
             self._live.start(refresh=True)
@@ -237,7 +240,7 @@ class ReplyPrinter:
         self._tool_running = False
         self._tool_status = None
 
-    def on_model_start(self, turn: int) -> None:
+    def on_model_start(self, _turn: int) -> None:
         """Mark the otherwise silent gap before a model's first streamed delta."""
         self._close_thinking()
         self._clear_tool()
@@ -290,10 +293,7 @@ class ReplyPrinter:
         self._thinking_height = max(1, min(_THINK_LINES, err.height // 3))
         chunks = ["\n", self._paint(_THINK_HEADER), "\n"]
         if self._thinking_height > 1:
-            chunks.append(
-                "\n" * (self._thinking_height - 1)
-                + f"\033[{self._thinking_height - 1}F"
-            )
+            chunks.append("\n" * (self._thinking_height - 1) + f"\033[{self._thinking_height - 1}F")
         self._write("".join(chunks))
 
     def _paint_thinking_viewport(self) -> None:
@@ -302,11 +302,8 @@ class ReplyPrinter:
         width = max(1, err.width - len(prefix))
         for line in self._thinking_text.split("\n"):
             visual = Text(line)
-            rows.extend(
-                prefix + part.plain if line else ""
-                for part in visual.wrap(err, width)
-            )
-        visible = rows[-self._thinking_height:]
+            rows.extend(prefix + part.plain if line else "" for part in visual.wrap(err, width))
+        visible = rows[-self._thinking_height :]
         self._rewind_thinking()
         chunks = []
         # Padding keeps the cursor at the bottom of the reserved region after
@@ -361,7 +358,11 @@ class ReplyPrinter:
             self._show_counter()
 
     def _draw_running_tool(
-        self, name: str, args: dict, elapsed: int, serial: int,
+        self,
+        name: str,
+        args: dict,
+        elapsed: int,
+        serial: int,
     ) -> None:
         status = err.render_str(
             f"  [dim]•[/dim] [bold]{name:<5}[/bold] "
@@ -390,7 +391,7 @@ class ReplyPrinter:
                 shown = elapsed
                 self._draw_running_tool(name, args, elapsed, serial)
 
-    def on_tool_start(self, turn: int, name: str, args: dict) -> None:
+    def on_tool_start(self, _turn: int, name: str, args: dict) -> None:
         self._close_thinking()
         self._clear_waiting()
         self._clear_counter()
@@ -402,14 +403,13 @@ class ReplyPrinter:
         self._tool_started_at = time.monotonic()
         self._draw_running_tool(name, args, 0, serial)
         if err.is_terminal:
-            try:
-                # The serial check stops stale timers without cross-thread
-                # Task.cancel(): on_preview runs in the tool worker thread.
+            # Synchronous embedding still gets the initial 0s line; the serial
+            # check stops stale timers without cross-thread Task.cancel():
+            # on_preview runs in the tool worker thread.
+            with contextlib.suppress(RuntimeError):
                 asyncio.get_running_loop().create_task(self._tick_tool(name, args, serial))
-            except RuntimeError:
-                pass  # Synchronous embedding still gets the initial 0s line.
 
-    def on_tool(self, turn: int, name: str, args: dict, result: str) -> None:
+    def on_tool(self, _turn: int, name: str, args: dict, result: str) -> None:
         self._close_thinking()
         self._clear_waiting()
         self._clear_tool()
@@ -455,39 +455,58 @@ class ReplyPrinter:
             head.right_crop(1)
         err.print(head)
 
+
 _AT_PATH = re.compile(r"(?<![A-Za-z0-9_.\-/@])@((?:\\ |[^\s@])*)$")
-SKIP_DIRS = frozenset({
-    ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__",
-    ".mypy_cache", ".ruff_cache", ".pytest_cache", ".tox", ".next",
-    ".gradle", ".idea", ".cache",
-})
+SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        ".tox",
+        ".next",
+        ".gradle",
+        ".idea",
+        ".cache",
+    }
+)
 MAX_COMPLETIONS, MAX_SCANNED_ENTRIES = 300, 10_000
 # A matched character is marked by color and weight only, never by a background:
 # the background belongs to the row (see SELECTION_BG), so the hits of the
 # selected row still read as one solid bar instead of green holes in it.
 MATCH_STYLE = "fg:ansibrightgreen bold"
 SELECTION_BG = "bg:#5f5f87"
-PROMPT_STYLE = Style.from_dict({
-    "bottom-toolbar": "noreverse bg:default",
-    # prompt_toolkit paints the completion menu on grey unless told otherwise;
-    # `fg:default bg:default` keeps it on the terminal's own colors.
-    "completion-menu": "fg:default bg:default",
-    "completion-menu.completion": "fg:default bg:default",
-    # The selected row is the only thing that gets a background. `noreverse`
-    # matters: with reverse on, the bright green of a match would turn into a
-    # green block again.
-    "completion-menu.completion.current": f"fg:#ffffff {SELECTION_BG} noreverse bold",
-    "completion-menu.meta.completion": "fg:default bg:default",
-    "completion-menu.meta.completion.current": f"fg:#c6c6d7 {SELECTION_BG}",
-    "scrollbar.background": "bg:default",
-    "scrollbar.button": "bg:default fg:ansibrightblack",
-    "scrollbar.arrow": "bg:default fg:ansibrightblack",
-})
+PROMPT_STYLE = Style.from_dict(
+    {
+        "bottom-toolbar": "noreverse bg:default",
+        # prompt_toolkit paints the completion menu on grey unless told otherwise;
+        # `fg:default bg:default` keeps it on the terminal's own colors.
+        "completion-menu": "fg:default bg:default",
+        "completion-menu.completion": "fg:default bg:default",
+        # The selected row is the only thing that gets a background. `noreverse`
+        # matters: with reverse on, the bright green of a match would turn into a
+        # green block again.
+        "completion-menu.completion.current": f"fg:#ffffff {SELECTION_BG} noreverse bold",
+        "completion-menu.meta.completion": "fg:default bg:default",
+        "completion-menu.meta.completion.current": f"fg:#c6c6d7 {SELECTION_BG}",
+        "scrollbar.background": "bg:default",
+        "scrollbar.button": "bg:default fg:ansibrightblack",
+        "scrollbar.arrow": "bg:default fg:ansibrightblack",
+    }
+)
+
 
 def at_path_prefix(text: str) -> str | None:
     """The path fragment after an '@' that starts the current word ('@' -> '')."""
     m = _AT_PATH.search(text)
     return m.group(1) if m else None
+
 
 def highlight(text: str, positions: tuple[int, ...]) -> list[tuple[str, str]]:
     """Formatted text that colors the characters a fuzzy match landed on."""
@@ -503,6 +522,7 @@ def highlight(text: str, positions: tuple[int, ...]) -> list[tuple[str, str]]:
     if last < len(text):
         parts.append(("", text[last:]))
     return parts
+
 
 def scan_paths(root: Path, *, recursive: bool, show_hidden: bool) -> Iterator[tuple[str, bool]]:
     """Path candidates below root as (path relative to root, is_dir).
@@ -532,6 +552,7 @@ def scan_paths(root: Path, *, recursive: bool, show_hidden: bool) -> Iterator[tu
                         stack.append((f"{prefix}{name}/", Path(entry.path)))
         except OSError:
             continue
+
 
 def path_completions(cwd: Path, text: str) -> list[Completion]:
     """Fuzzy-complete files/dirs as `@path` for the word being typed at the end of text.
@@ -563,12 +584,15 @@ def path_completions(cwd: Path, text: str) -> list[Completion]:
     for path, is_dir, match in entries[:MAX_COMPLETIONS]:
         rel = f"{head}/{path}" if head else path
         display = path + ("/" if is_dir else "")
-        out.append(Completion(
-            (rel + "/" if is_dir else rel).replace(" ", "\\ "),
-            start_position=-len(fragment),
-            display=highlight(display, match.positions),
-        ))
+        out.append(
+            Completion(
+                (rel + "/" if is_dir else rel).replace(" ", "\\ "),
+                start_position=-len(fragment),
+                display=highlight(display, match.positions),
+            )
+        )
     return out
+
 
 def repl_key_bindings() -> KeyBindings:
     """Enter submits; Ctrl-E edits in $EDITOR; Ctrl-V/Alt-V paste from the clipboard."""
@@ -626,7 +650,9 @@ async def _insert_clipboard(buffer) -> None:
         detail = f"image={image}" if image is not None else f"text_chars={len(text or '')}"
         err.print(f"[dim]# paste: {detail}[/dim]")
 
+
 _STATUS_SEP = ("fg:ansibrightblack", " · ")
+
 
 def vi_mode_label() -> tuple[str, str]:
     """The current vi input mode, and the color it is drawn in."""
@@ -637,11 +663,13 @@ def vi_mode_label() -> tuple[str, str]:
         return "NORMAL", "ansiyellow"
     return "REPLACE", "ansired"
 
+
 def context_tone(pct: int | None) -> str:
     """Green while there is room, yellow when it gets tight, red near the limit."""
     if pct is None or pct < 60:
         return "ansigreen"
     return "ansiyellow" if pct < 85 else "ansired"
+
 
 def status_bar(
     state: Session,
@@ -674,6 +702,7 @@ def status_bar(
     gap = max(1, width - used(segments + cwd + right))
     return segments + cwd + [("", " " * gap)] + right
 
+
 class ReplCompleter(Completer):
     """Slash commands and `@path` files, both ranked by fzp's fuzzy score.
 
@@ -685,7 +714,7 @@ class ReplCompleter(Completer):
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def get_completions(self, document: Document, complete_event: CompleteEvent):
+    def get_completions(self, document: Document, _complete_event: CompleteEvent):
         text = document.text_before_cursor
         if not text.startswith("/"):
             yield from path_completions(self.session.cwd, text)
@@ -705,11 +734,15 @@ class ReplCompleter(Completer):
             if getattr(self.session, "credentials", None):
                 refs.append(AUTO_REF)
             for ref, match in fuzzy_filter(prefix, refs):
-                yield Completion(ref, start_position=-len(prefix), display=highlight(ref, match.positions))
+                yield Completion(
+                    ref, start_position=-len(prefix), display=highlight(ref, match.positions)
+                )
         elif cmd in ("login", "logout"):
             names = sorted({n for p in list_providers() for n in (p.id, *p.aliases)})
             for name, match in fuzzy_filter(prefix.lower(), names):
-                yield Completion(name, start_position=-len(prefix), display=highlight(name, match.positions))
+                yield Completion(
+                    name, start_position=-len(prefix), display=highlight(name, match.positions)
+                )
 
     async def get_completions_async(self, document: Document, complete_event: CompleteEvent):
         """Keep directory I/O off prompt_toolkit's event-loop thread."""
@@ -722,6 +755,7 @@ class ReplCompleter(Completer):
         for completion in self.get_completions(document, complete_event):
             yield completion
 
+
 def model_choices(models: list[str], current: str = "") -> list[str]:
     """Menu entries for a model pick: the current model first, then the rest.
 
@@ -730,6 +764,7 @@ def model_choices(models: list[str], current: str = "") -> list[str]:
     """
     refs = [current, *models] if current else list(models)
     return list(dict.fromkeys(ref for ref in refs if ref))
+
 
 async def pick_model(models: list[str], *, current: str = "") -> str | None:
     """Fuzzy-pick a model ref with fzp's Picker; None when the user aborts."""
@@ -822,13 +857,16 @@ def confirm_sessions_delete(
 
 
 NO_TEXT_NOTICE = "no text in the reply — the model stopped without content (retry, or /model)"
-TRUNCATED_NOTICE = "no text in the reply — the model hit the output token limit (retry with a smaller step)"
+TRUNCATED_NOTICE = (
+    "no text in the reply — the model hit the output token limit (retry with a smaller step)"
+)
 STOPPED_PREFIX = "(stopped after "
 TURN_LIMIT_GUIDANCE = (
     "The task may be unfinished; your session is preserved.\n"
-    "Type `continue` in the REPL, or run `agent7 -r \"continue\"`.\n"
-    "To resume with a higher cap: `agent7 --max-turns 500 -r \"continue\"`."
+    'Type `continue` in the REPL, or run `agent7 -r "continue"`.\n'
+    'To resume with a higher cap: `agent7 --max-turns 500 -r "continue"`.'
 )
+
 
 def reply_notice(answer: str, finish_reason: str | None = None) -> str | None:
     """Explain an empty reply or a turn-limit pause, including how to recover."""
@@ -838,7 +876,10 @@ def reply_notice(answer: str, finish_reason: str | None = None) -> str | None:
         return None
     return TRUNCATED_NOTICE if finish_reason == "length" else NO_TEXT_NOTICE
 
-async def run_turn(session: Session, task: str, *, on_saved: Callable[[], None] | None = None) -> str:
+
+async def run_turn(
+    session: Session, task: str, *, on_saved: Callable[[], None] | None = None
+) -> str:
     current = asyncio.current_task()
     previous_sigint = None
     if current and threading.current_thread() is threading.main_thread():
@@ -873,6 +914,7 @@ async def run_turn(session: Session, task: str, *, on_saved: Callable[[], None] 
         if on_saved:
             on_saved()
 
+
 async def _run_agent_once(session: Session, task: str) -> str:
     finish: list[str] = []
     with ReplyPrinter() as rp:
@@ -890,18 +932,27 @@ async def _run_agent_once(session: Session, task: str) -> str:
         if getattr(session, "route", None):
             rp.on_model_start(0)  # also cover the non-streaming scoring request
         answer = await run_agent(
-            task, cwd=session.cwd, client=session.client, model=session.model,
-            max_turns=session.max_turns, messages=session.messages,
-            on_delta=rp.on_delta, on_thinking=rp.on_thinking,
-            on_answer_to_thinking=rp.on_answer_to_thinking, on_tool=rp.on_tool,
+            task,
+            cwd=session.cwd,
+            client=session.client,
+            model=session.model,
+            max_turns=session.max_turns,
+            messages=session.messages,
+            on_delta=rp.on_delta,
+            on_thinking=rp.on_thinking,
+            on_answer_to_thinking=rp.on_answer_to_thinking,
+            on_tool=rp.on_tool,
             on_tool_start=rp.on_tool_start,
-            on_preview=rp.on_preview, on_usage=session.update_usage,
+            on_preview=rp.on_preview,
+            on_usage=session.update_usage,
             on_model_start=rp.on_model_start,
-            context_limit=session.context_limit, prompt_tokens=session.prompt_tokens,
+            context_limit=session.context_limit,
+            prompt_tokens=session.prompt_tokens,
             on_compact=rp.on_compact,
             on_finish=finish.append,
             provider_id=getattr(session, "provider_id", None),
-            route=getattr(session, "route", None), on_route=on_route,
+            route=getattr(session, "route", None),
+            on_route=on_route,
         )
     # A turn-limit pause is a warning, not an invisible or successful final answer.
     if notice := reply_notice(answer, finish[-1] if finish else None):
@@ -909,6 +960,7 @@ async def _run_agent_once(session: Session, task: str) -> str:
         for line in notice.splitlines():
             err.print(f"[{style}]# {line}[/{style}]")
     return answer
+
 
 def print_history(messages: list[dict]) -> None:
     """Replay the conversation text saved in a resumed session."""
@@ -928,6 +980,7 @@ def print_history(messages: list[dict]) -> None:
         console.print(Markdown(content) if role == "assistant" else Text(content))
     console.print()
 
+
 async def repl_loop(state: Session, persist: Callable[[bool], None]) -> None:
     """Read lines until Ctrl-D, running slash commands and agent turns.
 
@@ -938,8 +991,10 @@ async def repl_loop(state: Session, persist: Callable[[bool], None]) -> None:
     if err.is_terminal and not os.environ.get("AGENT7_NO_MASCOT"):
         print_mascot(err)
     quit_hint = "Ctrl-Z to quit" if sys.platform == "win32" else "Ctrl-D to quit"
-    err.print(f"[dim]# REPL  /help · /session · /login · /model · @file · Ctrl/Alt-V image · "
-              f"Ctrl-E editor · {quit_hint}[/dim]")
+    err.print(
+        f"[dim]# REPL  /help · /session · /login · /model · @file · Ctrl/Alt-V image · "
+        f"Ctrl-E editor · {quit_hint}[/dim]"
+    )
     if not state.credentials:
         err.print(f"[dim]# no credentials — {login_hints()}[/dim]")
 
@@ -986,4 +1041,3 @@ async def repl_loop(state: Session, persist: Callable[[bool], None]) -> None:
             err.print("\n[dim]# interrupted[/dim]")
         except Exception as e:  # noqa: BLE001  a failed turn must not kill the REPL
             err.print(f"[red]# error: {type(e).__name__}: {e}[/red]")
-

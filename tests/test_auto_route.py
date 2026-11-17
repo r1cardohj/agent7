@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from responses_fakes import FakeClient, call_turn, text_turn
+
 import agent7.agent as A
 from agent7 import cli
 from agent7.agent import run_agent
@@ -22,7 +24,6 @@ from agent7.routing import (
 )
 from agent7.session import Session
 from agent7.store import load, save
-from responses_fakes import FakeClient, call_turn, text_turn
 
 
 class _Status(Exception):
@@ -38,18 +39,19 @@ def target(provider: str, model: str, script, *, limit: int | None = None) -> Ro
 
 class DefaultAutoRouteTests(unittest.TestCase):
     def test_capability_table_is_the_confirmed_candidate_set(self) -> None:
-        self.assertEqual({cap.ref for cap in MODEL_CAPABILITIES}, {
-            "deepseek/deepseek-flash",
-            "kimi/kimi-for-coding",
-            "kimi/k3.1-pro",
-        })
+        self.assertEqual(
+            {cap.ref for cap in MODEL_CAPABILITIES},
+            {
+                "deepseek/deepseek-flash",
+                "kimi/kimi-for-coding",
+                "kimi/k3.1-pro",
+            },
+        )
         for ref in ("deepseek/deepseek-flash", "kimi/kimi-for-coding"):
             cap = next(cap for cap in MODEL_CAPABILITIES if cap.ref == ref)
             self.assertEqual(cap.strengths, frozenset({"fast", "coding"}))
         kimi = next(cap for cap in MODEL_CAPABILITIES if cap.ref == "kimi/k3.1-pro")
-        coding_kimi = next(
-            cap for cap in MODEL_CAPABILITIES if cap.ref == "kimi/kimi-for-coding"
-        )
+        coding_kimi = next(cap for cap in MODEL_CAPABILITIES if cap.ref == "kimi/kimi-for-coding")
         self.assertEqual(kimi.context_limit, 1_048_576)
         self.assertEqual(coding_kimi.context_limit, 1_048_576)
         self.assertEqual(kimi.strengths, frozenset({"strong"}))
@@ -57,13 +59,13 @@ class DefaultAutoRouteTests(unittest.TestCase):
 
     def test_auto_uses_logged_in_reviewed_models_without_configuration(self) -> None:
         credentials = {
-            pid: Credential("secret", f"https://{pid}.test", "test")
-            for pid in ("deepseek", "kimi")
+            pid: Credential("secret", f"https://{pid}.test", "test") for pid in ("deepseek", "kimi")
         }
         providers = [
             SimpleNamespace(
-                id=pid, resolve=lambda pid=pid: credentials.get(pid),
-                make_client=lambda cred: FakeClient([text_turn("ok")]),
+                id=pid,
+                resolve=lambda pid=pid: credentials.get(pid),
+                make_client=lambda _cred: FakeClient([text_turn("ok")]),
             )
             for pid in ("deepseek", "kimi")
         ]
@@ -71,15 +73,21 @@ class DefaultAutoRouteTests(unittest.TestCase):
             route = build_auto_route(credentials)
 
         self.assertTrue(route.intent_routing)
-        self.assertEqual([target.ref for target in route.targets], [
-            "deepseek/deepseek-flash", "kimi/kimi-for-coding", "kimi/k3.1-pro",
-        ])
+        self.assertEqual(
+            [target.ref for target in route.targets],
+            [
+                "deepseek/deepseek-flash",
+                "kimi/kimi-for-coding",
+                "kimi/k3.1-pro",
+            ],
+        )
 
     def test_current_model_list_filters_candidates(self) -> None:
         credential = Credential("secret", "https://deepseek.test", "test")
         provider = SimpleNamespace(
-            id="deepseek", resolve=lambda: credential,
-            make_client=lambda cred: FakeClient([text_turn("ok")]),
+            id="deepseek",
+            resolve=lambda: credential,
+            make_client=lambda _cred: FakeClient([text_turn("ok")]),
         )
         with patch("agent7.routing.list_providers", return_value=[provider]):
             route = build_auto_route(
@@ -89,9 +97,11 @@ class DefaultAutoRouteTests(unittest.TestCase):
         self.assertEqual([target.ref for target in route.targets], ["deepseek/deepseek-flash"])
 
     def test_no_supported_logged_in_model_is_an_error(self) -> None:
-        with patch("agent7.routing.list_providers", return_value=[]):
-            with self.assertRaisesRegex(ValueError, "no supported models"):
-                build_auto_route({})
+        with (
+            patch("agent7.routing.list_providers", return_value=[]),
+            self.assertRaisesRegex(ValueError, "no supported models"),
+        ):
+            build_auto_route({})
 
 
 class AutoFailoverTests(unittest.TestCase):
@@ -106,11 +116,19 @@ class AutoFailoverTests(unittest.TestCase):
     def run_route(self, route: FailoverRoute, *, seed=None, on_delta=None):
         messages = list(seed or [])
         changes = []
-        answer = asyncio.run(run_agent(
-            "go", cwd=self.cwd, client=route.current.client, model="auto",
-            messages=messages, route=route, on_delta=on_delta,
-            on_route=lambda *args: changes.append(args), on_tool=lambda *args: None,
-        ))
+        answer = asyncio.run(
+            run_agent(
+                "go",
+                cwd=self.cwd,
+                client=route.current.client,
+                model="auto",
+                messages=messages,
+                route=route,
+                on_delta=on_delta,
+                on_route=lambda *args: changes.append(args),
+                on_tool=lambda *_args: None,
+            )
+        )
         return answer, messages, changes
 
     def test_retries_one_target_then_fails_over(self) -> None:
@@ -182,9 +200,14 @@ class AutoFailoverTests(unittest.TestCase):
     def test_tool_continuation_stays_on_the_failover_target(self) -> None:
         (self.cwd / "note.txt").write_text("hello", encoding="utf-8")
         first = target("deepseek", "chat", [_Status(503)])
-        second = target("kimi", "k2", [
-            call_turn(("read", {"path": "note.txt"})), text_turn("done"),
-        ])
+        second = target(
+            "kimi",
+            "k2",
+            [
+                call_turn(("read", {"path": "note.txt"})),
+                text_turn("done"),
+            ],
+        )
         route = FailoverRoute((first, second))
 
         answer, messages, _ = self.run_route(route)
@@ -199,7 +222,11 @@ class AutoFailoverTests(unittest.TestCase):
         old_raw = [{"id": "msg_old", "type": "message", "role": "assistant", "content": []}]
         seed = [
             {"role": "user", "content": "earlier"},
-            {"role": "assistant", "content": "old answer", RAW_ITEMS_KEY: raw_state("deepseek", old_raw)},
+            {
+                "role": "assistant",
+                "content": "old answer",
+                RAW_ITEMS_KEY: raw_state("deepseek", old_raw),
+            },
         ]
         first = target("deepseek", "chat", [_Status(503)])
         second = target("kimi", "k2", [text_turn("ok")])
@@ -217,7 +244,8 @@ class AutoSessionTests(unittest.TestCase):
         async def exercise(root: Path, route: FailoverRoute):
             credential = Credential("secret", "https://deepseek.test", "test")
             provider = SimpleNamespace(
-                id="deepseek", make_client=lambda cred: FakeClient([text_turn("unused")]),
+                id="deepseek",
+                make_client=lambda _cred: FakeClient([text_turn("unused")]),
             )
             seen = []
 
@@ -226,11 +254,13 @@ class AutoSessionTests(unittest.TestCase):
                 kwargs["on_saved"]()
                 return "done"
 
-            with patch.object(cli, "resolve_all", return_value={"deepseek": credential}), \
-                 patch.object(cli, "resolve_default", return_value=(provider, credential)), \
-                 patch.object(cli, "fetch_models", return_value=asyncio.Future()) as fetched, \
-                 patch("agent7.commands.build_auto_route", return_value=route), \
-                 patch.object(cli, "run_turn", new=fake_run):
+            with (
+                patch.object(cli, "resolve_all", return_value={"deepseek": credential}),
+                patch.object(cli, "resolve_default", return_value=(provider, credential)),
+                patch.object(cli, "fetch_models", return_value=asyncio.Future()) as fetched,
+                patch("agent7.commands.build_auto_route", return_value=route),
+                patch.object(cli, "run_turn", new=fake_run),
+            ):
                 fetched.return_value.set_result([])
                 await cli.async_main(cli.Options.parse(["--cwd", str(root), "-m", "auto", "go"]))
             self.assertEqual(seen, [("auto → deepseek/chat", route, "go")])

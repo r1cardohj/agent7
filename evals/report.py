@@ -36,9 +36,15 @@ def _valid(record: dict[str, Any]) -> bool:
 
 
 def _tokens(record: dict[str, Any]) -> int:
-    return sum(int(record.get(key, 0) or 0) for key in (
-        "prompt_tokens", "completion_tokens", "score_prompt_tokens", "score_completion_tokens",
-    ))
+    return sum(
+        int(record.get(key, 0) or 0)
+        for key in (
+            "prompt_tokens",
+            "completion_tokens",
+            "score_prompt_tokens",
+            "score_completion_tokens",
+        )
+    )
 
 
 def _median(records: list[dict[str, Any]], key: str) -> float:
@@ -52,7 +58,11 @@ def _percentile(values: list[float], fraction: float) -> float:
 
 
 def paired_success_delta(
-    records: list[dict[str, Any]], candidate: str, baseline: str, *, samples: int = 2000,
+    records: list[dict[str, Any]],
+    candidate: str,
+    baseline: str,
+    *,
+    samples: int = 2000,
 ) -> dict[str, Any]:
     """Cluster bootstrap by task; repeats within a task are not independent samples."""
     grouped: dict[str, dict[tuple[str, int], dict[str, Any]]] = defaultdict(dict)
@@ -75,10 +85,7 @@ def paired_success_delta(
     if not deltas:
         return {"tasks": 0, "delta_pp": None, "low_pp": None, "high_pp": None}
     rng = random.Random(0)
-    bootstraps = [
-        statistics.mean(rng.choice(deltas) for _ in deltas)
-        for _ in range(samples)
-    ]
+    bootstraps = [statistics.mean(rng.choice(deltas) for _ in deltas) for _ in range(samples)]
     return {
         "tasks": len(deltas),
         "delta_pp": 100 * statistics.mean(deltas),
@@ -89,7 +96,9 @@ def paired_success_delta(
 
 def _strategy_rows(records: list[dict[str, Any]]) -> Iterable[dict[str, Any]]:
     names = list(dict.fromkeys(record["strategy"] for record in records))
-    names.sort(key=lambda name: (STRATEGY_ORDER.index(name) if name in STRATEGY_ORDER else 99, name))
+    names.sort(
+        key=lambda name: (STRATEGY_ORDER.index(name) if name in STRATEGY_ORDER else 99, name)
+    )
     for name in names:
         rows = [record for record in records if record["strategy"] == name]
         valid = [record for record in rows if _valid(record)]
@@ -144,9 +153,16 @@ def render_report(records: list[dict[str, Any]]) -> str:
     for category in categories:
         cells = []
         for strategy in strategies:
-            rows = [record for record in records if record["strategy"] == strategy
-                    and record.get("category") == category and _valid(record)]
-            cells.append(f"{sum(bool(row['success']) for row in rows)}/{len(rows)}" if rows else "n/a")
+            rows = [
+                record
+                for record in records
+                if record["strategy"] == strategy
+                and record.get("category") == category
+                and _valid(record)
+            ]
+            cells.append(
+                f"{sum(bool(row['success']) for row in rows)}/{len(rows)}" if rows else "n/a"
+            )
         lines.append(f"| {category} | " + " | ".join(cells) + " |")
 
     if any(record["strategy"] == "auto-full" for record in records):
@@ -164,8 +180,10 @@ def render_report(records: list[dict[str, Any]]) -> str:
             if baseline == "auto-full":
                 continue
             delta = paired_success_delta(records, "auto-full", baseline)
-            interval = "n/a" if delta["tasks"] == 0 else (
-                f"[{_number(delta['low_pp'])}, {_number(delta['high_pp'])}]"
+            interval = (
+                "n/a"
+                if delta["tasks"] == 0
+                else (f"[{_number(delta['low_pp'])}, {_number(delta['high_pp'])}]")
             )
             lines.append(
                 f"| {baseline} | {delta['tasks']} | {_number(delta['delta_pp'])} | {interval} |"
@@ -177,7 +195,8 @@ def render_report(records: list[dict[str, Any]]) -> str:
         "- Compare `auto-full` with both fixed models and the simpler `auto-tier` ablation.",
         "- Inspect `artifacts/*/verify.txt` and `changes.patch` before trusting outliers.",
         "- A routing-score or intent agreement is not evidence of downstream task quality.",
-        "- Raw tokens are retained so cost can be calculated separately with dated provider prices.",
+        "- Raw tokens are retained so cost can be calculated separately with "
+        "dated provider prices.",
         "",
     ]
     return "\n".join(lines)
@@ -188,22 +207,31 @@ COMPARISON_ORDER = ("agent7", "pi", "kimi")
 
 def _token_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
-        record for record in records
+        record
+        for record in records
         if _valid(record)
         and (
             record.get("usage_observed")
-            or any(int(record.get(key, 0) or 0) for key in (
-                "prompt_tokens", "completion_tokens", "total_tokens",
-            ))
+            or any(
+                int(record.get(key, 0) or 0)
+                for key in (
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "total_tokens",
+                )
+            )
         )
     ]
 
 
 def _comparison_rows(records: list[dict[str, Any]]) -> Iterable[dict[str, Any]]:
     names = list(dict.fromkeys(record["strategy"] for record in records))
-    names.sort(key=lambda name: (
-        COMPARISON_ORDER.index(name) if name in COMPARISON_ORDER else 99, name,
-    ))
+    names.sort(
+        key=lambda name: (
+            COMPARISON_ORDER.index(name) if name in COMPARISON_ORDER else 99,
+            name,
+        )
+    )
     for name in names:
         rows = [record for record in records if record["strategy"] == name]
         valid = [record for record in rows if _valid(record)]
@@ -217,8 +245,11 @@ def _comparison_rows(records: list[dict[str, Any]]) -> Iterable[dict[str, Any]]:
             "completion": 100 * successes / len(valid) if valid else None,
             "token_data": f"{len(usage)}/{len(valid)}",
             "agent_time": _median(
-                valid, "agent_seconds" if valid and "agent_seconds" in valid[0] else "wall_seconds",
-            ) if valid else None,
+                valid,
+                "agent_seconds" if valid and "agent_seconds" in valid[0] else "wall_seconds",
+            )
+            if valid
+            else None,
             "input": _median(usage, "prompt_tokens") if usage else None,
             "output": _median(usage, "completion_tokens") if usage else None,
             "tokens": _median(usage, "total_tokens") if usage else None,
@@ -234,13 +265,13 @@ def _comparison_cell(records: list[dict[str, Any]]) -> str:
     usage = _token_records(valid)
     passed = sum(bool(record["success"]) for record in valid)
     tokens = f"{int(_median(usage, 'total_tokens')):,} tok" if usage else "n/a tok"
-    return (
-        f"{passed}/{len(valid)} · {_number(_median(valid, time_key))}s · {tokens}"
-    )
+    return f"{passed}/{len(valid)} · {_number(_median(valid, time_key))}s · {tokens}"
 
 
 def render_comparison_report(
-    records: list[dict[str, Any]], *, config: dict[str, Any] | None = None,
+    records: list[dict[str, Any]],
+    *,
+    config: dict[str, Any] | None = None,
 ) -> str:
     """Render the head-to-head completion, time, and token comparison."""
     lines = [
@@ -307,8 +338,10 @@ def render_comparison_report(
         cells = []
         for agent in agents:
             rows = [
-                record for record in records
-                if record["strategy"] == agent and record.get("category") == category
+                record
+                for record in records
+                if record["strategy"] == agent
+                and record.get("category") == category
                 and _valid(record)
             ]
             cells.append(
@@ -331,7 +364,8 @@ def render_comparison_report(
         cells = []
         for agent in agents:
             rows = [
-                record for record in records
+                record
+                for record in records
                 if record["task_id"] == task_id and record["strategy"] == agent
             ]
             cells.append(_comparison_cell(rows))
@@ -352,8 +386,10 @@ def render_comparison_report(
             if baseline == "agent7":
                 continue
             delta = paired_success_delta(records, "agent7", baseline)
-            interval = "n/a" if delta["tasks"] == 0 else (
-                f"[{_number(delta['low_pp'])}, {_number(delta['high_pp'])}]"
+            interval = (
+                "n/a"
+                if delta["tasks"] == 0
+                else (f"[{_number(delta['low_pp'])}, {_number(delta['high_pp'])}]")
             )
             lines.append(
                 f"| {baseline} | {delta['tasks']} | {_number(delta['delta_pp'])} | {interval} |"

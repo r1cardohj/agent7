@@ -97,7 +97,11 @@ def _run(
 
 
 def _require(
-    args: list[str], *, root: bool = False, what: str = "", capture: bool = True,
+    args: list[str],
+    *,
+    root: bool = False,
+    what: str = "",
+    capture: bool = True,
 ) -> None:
     proc = _run(args, root=root, capture=capture)
     if proc.returncode != 0:
@@ -258,7 +262,7 @@ def _download(url: str, target: str, *, show_progress: bool | None = None) -> No
                             flush=True,
                         )
                         last_percent = percent
-                elif downloaded and downloaded % (BINARY_UNIT ** 2) < len(chunk):
+                elif downloaded and downloaded % (BINARY_UNIT**2) < len(chunk):
                     print(
                         f"\rDownloading {url}: {_format_bytes(downloaded)}",
                         end="",
@@ -328,21 +332,36 @@ def _install_tailscale() -> None:
 
         _require(
             ["install", "-m", "0755", files["tailscaled"][0], "/usr/sbin/tailscaled"],
-            root=True, what="install tailscaled",
+            root=True,
+            what="install tailscaled",
         )
         _require(
             ["install", "-m", "0755", files["tailscale"][0], "/usr/bin/tailscale"],
-            root=True, what="install tailscale",
+            root=True,
+            what="install tailscale",
         )
         _require(
-            ["install", "-m", "0644", files["tailscaled.service"][0],
-             "/etc/systemd/system/tailscaled.service"],
-            root=True, what="install the Tailscale service",
+            [
+                "install",
+                "-m",
+                "0644",
+                files["tailscaled.service"][0],
+                "/etc/systemd/system/tailscaled.service",
+            ],
+            root=True,
+            what="install the Tailscale service",
         )
         _require(
-            ["install", "-D", "-m", "0644", files["tailscaled.defaults"][0],
-             "/etc/default/tailscaled"],
-            root=True, what="install Tailscale defaults",
+            [
+                "install",
+                "-D",
+                "-m",
+                "0644",
+                files["tailscaled.defaults"][0],
+                "/etc/default/tailscaled",
+            ],
+            root=True,
+            what="install Tailscale defaults",
         )
         _require(["systemctl", "daemon-reload"], root=True, what="reload systemd")
 
@@ -360,10 +379,7 @@ def _join_tailnet(auth_key: str) -> None:
                 "Tailscale is not logged in. Run `agent7 deploy` in a terminal, "
                 "or pass --auth-key for unattended setup"
             )
-        message = (
-            "# Tailscale login required: open the URL shown below, "
-            "then return here"
-        )
+        message = "# Tailscale login required: open the URL shown below, then return here"
         print(message, file=sys.stderr)
         # Keep stdio attached so the login URL and sudo prompt are visible.
         proc = _run(args, root=True, capture=False)
@@ -398,8 +414,12 @@ def _install_openssh_server() -> None:
         raise RemoteError(message)
     _require(["apt-get", "update", "-qq"], root=True, what="apt update", capture=False)
     install = [
-        "env", "DEBIAN_FRONTEND=noninteractive", "apt-get",
-        "install", "-y", "openssh-server",
+        "env",
+        "DEBIAN_FRONTEND=noninteractive",
+        "apt-get",
+        "install",
+        "-y",
+        "openssh-server",
     ]
     _require(install, root=True, what="install openssh-server", capture=False)
 
@@ -442,7 +462,9 @@ def _tailscaled_present() -> bool:
 
 
 def _tailscale_steps(
-    *, check: bool, auth_key: str,
+    *,
+    check: bool,
+    auth_key: str,
 ) -> tuple[list[Step], TailscaleNode | None]:
     steps: list[Step] = []
     if _have("tailscale"):
@@ -459,8 +481,11 @@ def _tailscale_steps(
         elif check:
             steps.append(Step("tailscaled", "needed", "service not running"))
         else:
-            _require(["systemctl", "enable", "--now", "tailscaled.service"], root=True,
-                     what="start tailscaled")
+            _require(
+                ["systemctl", "enable", "--now", "tailscaled.service"],
+                root=True,
+                what="start tailscaled",
+            )
             steps.append(Step("tailscaled", "changed", "service running"))
     elif check:
         steps.append(Step("tailscaled", "needed", "not installed"))
@@ -511,7 +536,10 @@ def _ssh_steps(*, check: bool, sshd: bool) -> list[Step]:
 
 
 def deploy_mobile_ssh(
-    *, check: bool = False, sshd: bool = False, auth_key: str = "",
+    *,
+    check: bool = False,
+    sshd: bool = False,
+    auth_key: str = "",
 ) -> int:
     """Prepare this machine for Herdr Mobile over Tailscale.
 

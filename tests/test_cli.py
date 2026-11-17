@@ -43,8 +43,10 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(run.await_args.args[0], Options(task="fix the bug"))
 
     def test_no_task_opens_the_repl_in_the_given_cwd(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch("agent7.cli.async_main", new=AsyncMock()) as run:
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("agent7.cli.async_main", new=AsyncMock()) as run,
+        ):
             result = self.runner.invoke(main, ["--cwd", tmp])
 
         self.assertEqual(result.exit_code, 0)

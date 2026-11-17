@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from PIL import Image
+from responses_fakes import FakeClient, call_turn, text_turn
 
 from agent7.agent import compact_messages, dispatch_tool, estimate_tokens, run_agent
 from agent7.images import (
@@ -21,7 +22,6 @@ from agent7.images import (
 )
 from agent7.repl import repl_key_bindings
 from agent7.responses import IMAGES_KEY, request_input, tool_output
-from responses_fakes import FakeClient, call_turn, text_turn
 
 
 def png_bytes(width: int = 8, height: int = 8, color: tuple = (255, 0, 0)) -> bytes:
@@ -92,7 +92,9 @@ class ReadImageToolTests(unittest.TestCase):
         self.assertNotIn(result.images[0].data, result.text)
 
     def test_read_omits_the_image_for_a_text_only_model(self) -> None:
-        result = dispatch_tool(self.cwd, "read", {"path": "shot.png"}, model="text-embedding-3-large")
+        result = dispatch_tool(
+            self.cwd, "read", {"path": "shot.png"}, model="text-embedding-3-large"
+        )
 
         self.assertIsInstance(result, str)
         self.assertIn("does not support images", result)
@@ -110,15 +112,23 @@ class ReadImageToolTests(unittest.TestCase):
         client = FakeClient([call_turn(("read", {"path": "shot.png"})), text_turn("done")])
         messages = []
 
-        answer = asyncio.run(run_agent(
-            "look", cwd=self.cwd, client=client, model="kimi-for-coding",
-            messages=messages, on_tool=lambda *a: None,
-        ))
+        answer = asyncio.run(
+            run_agent(
+                "look",
+                cwd=self.cwd,
+                client=client,
+                model="kimi-for-coding",
+                messages=messages,
+                on_tool=lambda *_a: None,
+            )
+        )
 
         self.assertEqual(answer, "done")
         tool_message = next(m for m in messages if m.get("role") == "tool")
         self.assertEqual(len(tool_message[IMAGES_KEY]), 1)
-        outputs = [i for i in client.requests[1]["input"] if i.get("type") == "function_call_output"]
+        outputs = [
+            i for i in client.requests[1]["input"] if i.get("type") == "function_call_output"
+        ]
         parts = outputs[0]["output"]
         self.assertEqual(parts[0], {"type": "input_text", "text": tool_message["content"]})
         self.assertEqual(parts[1]["type"], "input_image")
@@ -128,19 +138,29 @@ class ReadImageToolTests(unittest.TestCase):
         client = FakeClient([call_turn(("read", {"path": "shot.png"})), text_turn("done")])
         messages = []
 
-        asyncio.run(run_agent(
-            "look", cwd=self.cwd, client=client, model="text-embedding-3-large",
-            messages=messages, on_tool=lambda *a: None,
-        ))
+        asyncio.run(
+            run_agent(
+                "look",
+                cwd=self.cwd,
+                client=client,
+                model="text-embedding-3-large",
+                messages=messages,
+                on_tool=lambda *_a: None,
+            )
+        )
 
-        outputs = [i for i in client.requests[1]["input"] if i.get("type") == "function_call_output"]
+        outputs = [
+            i for i in client.requests[1]["input"] if i.get("type") == "function_call_output"
+        ]
         self.assertIsInstance(outputs[0]["output"], str)
 
 
 class ImageHistoryTests(unittest.TestCase):
     def message(self) -> dict:
         return {
-            "role": "tool", "tool_call_id": "call_1", "content": "Read image file",
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": "Read image file",
             IMAGES_KEY: [{"data": "QUJD", "mimeType": "image/png"}],
         }
 
@@ -197,8 +217,11 @@ class KeyBindingTests(unittest.TestCase):
         buffer = SimpleNamespace(text="look at", insert_text=inserted.append)
         image = Path("/tmp/agent7-images/paste-abc.png")
         handler = self.bindings()[("Keys.ControlV",)]
-        with patch("agent7.repl.paste_image_file", return_value=image), patch(
-            "agent7.repl.clipboard_text", side_effect=AssertionError("text must not be pasted")
+        with (
+            patch("agent7.repl.paste_image_file", return_value=image),
+            patch(
+                "agent7.repl.clipboard_text", side_effect=AssertionError("text must not be pasted")
+            ),
         ):
             asyncio.run(handler(SimpleNamespace(current_buffer=buffer)))
         self.assertEqual(inserted, [f" @{image} "])
@@ -207,8 +230,9 @@ class KeyBindingTests(unittest.TestCase):
         inserted: list[str] = []
         buffer = SimpleNamespace(text="", insert_text=inserted.append)
         handler = self.bindings()[("Keys.Escape", "v")]
-        with patch("agent7.repl.paste_image_file", return_value=None), patch(
-            "agent7.repl.clipboard_text", return_value="plain text"
+        with (
+            patch("agent7.repl.paste_image_file", return_value=None),
+            patch("agent7.repl.clipboard_text", return_value="plain text"),
         ):
             asyncio.run(handler(SimpleNamespace(current_buffer=buffer)))
         self.assertEqual(inserted, ["plain text"])
@@ -234,11 +258,14 @@ class WslClipboardTests(unittest.TestCase):
     def test_powershell_ok_with_crlf_is_accepted(self) -> None:
         """Write-Output ends in \r\n; comparing raw bytes to b"ok" always failed."""
         from agent7.images import _powershell_image
-        with patch("agent7.images._powershell", return_value="powershell.exe"), \
-             patch("agent7.images.shutil.which", return_value="/usr/bin/wslpath"), \
-             patch("agent7.images._run", side_effect=[b"C:\\Temp\\x.png", b"ok\r\n"]), \
-             patch("agent7.images.Path.read_bytes", return_value=b"PNGDATA"), \
-             patch("agent7.images.Path.unlink"):
+
+        with (
+            patch("agent7.images._powershell", return_value="powershell.exe"),
+            patch("agent7.images.shutil.which", return_value="/usr/bin/wslpath"),
+            patch("agent7.images._run", side_effect=[b"C:\\Temp\\x.png", b"ok\r\n"]),
+            patch("agent7.images.Path.read_bytes", return_value=b"PNGDATA"),
+            patch("agent7.images.Path.unlink"),
+        ):
             self.assertEqual(_powershell_image(), (b"PNGDATA", "image/png"))
 
 
@@ -255,8 +282,11 @@ class PasteKeyIntegrationTests(unittest.TestCase):
         async def run() -> str:
             with create_pipe_input() as inp:
                 session = PromptSession(
-                    input=inp, output=DummyOutput(), history=InMemoryHistory(),
-                    editing_mode=EditingMode.VI, multiline=True,
+                    input=inp,
+                    output=DummyOutput(),
+                    history=InMemoryHistory(),
+                    editing_mode=EditingMode.VI,
+                    multiline=True,
                     key_bindings=repl_key_bindings(),
                 )
                 task = asyncio.ensure_future(session.prompt_async("> "))
@@ -272,8 +302,10 @@ class PasteKeyIntegrationTests(unittest.TestCase):
 
     def test_ctrl_v_and_alt_v_insert_the_image_path(self) -> None:
         image = Path("/tmp/agent7-images/fake.png")
-        with patch("agent7.repl.paste_image_file", return_value=image), \
-             patch("agent7.repl.clipboard_text", return_value=None):
+        with (
+            patch("agent7.repl.paste_image_file", return_value=image),
+            patch("agent7.repl.clipboard_text", return_value=None),
+        ):
             self.assertEqual(self.drive("\x16"), f"@{image} ")  # Ctrl-V
             self.assertEqual(self.drive("\x1bv"), f"@{image} ")  # Alt-V = ESC v
 

@@ -7,6 +7,7 @@ here, while `agent7.repl` owns the terminal (prompt, completion, printing).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import sys
@@ -62,6 +63,7 @@ PICK_SESSION = ""
 PICK_DELETE = ""
 RESUME_ID = re.compile(r"(?:sess-[0-9a-f]{32}|legacy-[0-9a-f]{16})")
 
+
 def _resume_args(task: str, value: str | None) -> tuple[str, bool | str]:
     if value is None:
         return task, False
@@ -70,6 +72,7 @@ def _resume_args(task: str, value: str | None) -> tuple[str, bool | str]:
     if RESUME_ID.fullmatch(value):
         return task, value
     return " ".join(part for part in (value, task) if part), True
+
 
 @dataclass(frozen=True)
 class Options:
@@ -99,28 +102,30 @@ class Options:
         )
         return cls(task=task, resume=resume_value, **params)
 
+
 def _positive_int(_ctx: click.Context, _param: click.Parameter, value: int | None) -> int | None:
     if value is not None and value < 1:
         raise click.BadParameter(f"must be at least 1, got {value}")
     return value
 
+
 def _load_dotenv(path: Path = Path(".env")) -> None:
     if not path.is_file():
         return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, val = line.partition("=")
         os.environ.setdefault(key.strip(), val.strip().strip("'").strip('"'))
 
+
 def _force_utf8_stdio() -> None:
     for stream in (sys.stdin, sys.stdout, sys.stderr):
-        try:
+        with contextlib.suppress(Exception):
             stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
-        except Exception:
-            pass
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
 
 class Agent7CLI(click.Command):
     """Top-level command with the reserved native `deploy` operation.
@@ -168,30 +173,69 @@ class Agent7CLI(click.Command):
 )
 @click.version_option(__version__, "--version", prog_name=PROG, message=f"{PROG} %(version)s")
 @click.argument("task", nargs=-1)
-@click.option("--cwd", type=click.Path(path_type=Path, file_okay=False),
-              help="working directory (default: the current one)")
-@click.option("--max-turns", type=int, callback=_positive_int, default=None, metavar="N",
-              help=f"model rounds per task (default {DEFAULT_MAX_TURNS}, or $AGENT7_MAX_TURNS)")
-@click.option("-m", "--model", "model", is_flag=False, flag_value=PICK_MODEL, default=None,
-              metavar="REF",
-              help="model for this run, e.g. deepseek-flash; a bare -m picks one from a menu "
-                   "(one-shot tasks otherwise default to auto)")
-@click.option("-r", "--resume", is_flag=False, flag_value=PICK_SESSION, default=None,
-              metavar="SESSION_ID",
-              help="resume a session by ID; bare -r picks one from a menu")
-@click.option("--delete", is_flag=False, flag_value=PICK_DELETE, default=None,
-              metavar="SESSION_ID",
-              help="move session(s) to trash; bare --delete multi-picks from a menu")
-def main(task: tuple[str, ...], cwd: Path | None, max_turns: int | None, resume: str | None,
-         delete: str | None, model: str | None) -> None:
+@click.option(
+    "--cwd",
+    type=click.Path(path_type=Path, file_okay=False),
+    help="working directory (default: the current one)",
+)
+@click.option(
+    "--max-turns",
+    type=int,
+    callback=_positive_int,
+    default=None,
+    metavar="N",
+    help=f"model rounds per task (default {DEFAULT_MAX_TURNS}, or $AGENT7_MAX_TURNS)",
+)
+@click.option(
+    "-m",
+    "--model",
+    "model",
+    is_flag=False,
+    flag_value=PICK_MODEL,
+    default=None,
+    metavar="REF",
+    help="model for this run, e.g. deepseek-flash; a bare -m picks one from a menu "
+    "(one-shot tasks otherwise default to auto)",
+)
+@click.option(
+    "-r",
+    "--resume",
+    is_flag=False,
+    flag_value=PICK_SESSION,
+    default=None,
+    metavar="SESSION_ID",
+    help="resume a session by ID; bare -r picks one from a menu",
+)
+@click.option(
+    "--delete",
+    is_flag=False,
+    flag_value=PICK_DELETE,
+    default=None,
+    metavar="SESSION_ID",
+    help="move session(s) to trash; bare --delete multi-picks from a menu",
+)
+def main(
+    task: tuple[str, ...],
+    cwd: Path | None,
+    max_turns: int | None,
+    resume: str | None,
+    delete: str | None,
+    model: str | None,
+) -> None:
     _force_utf8_stdio()
     _load_dotenv()
     if task and task[0] == "deploy":
         _run_deploy(list(task[1:]))
         return
     task_text, resume_value = _resume_args(" ".join(task).strip(), resume)
-    options = Options(task=task_text, cwd=cwd, max_turns=max_turns, resume=resume_value,
-                      delete=delete, model=model)
+    options = Options(
+        task=task_text,
+        cwd=cwd,
+        max_turns=max_turns,
+        resume=resume_value,
+        delete=delete,
+        model=model,
+    )
     try:
         asyncio.run(async_main(options))
     except KeyboardInterrupt:
@@ -200,17 +244,26 @@ def main(task: tuple[str, ...], cwd: Path | None, max_turns: int | None, resume:
 
 
 @click.command(name="deploy")
-@click.option("--check", "check_only", is_flag=True,
-              help="verify remote access without changing the system")
-@click.option("--stop", is_flag=True,
-              help="stop tailscaled without removing its binaries or login state")
-@click.option("--sshd", is_flag=True,
-              help="use the system OpenSSH server instead of Tailscale SSH")
-@click.option("--auth-key", "auth_key", default=None, metavar="KEY",
-              envvar="TAILSCALE_AUTHKEY",
-              help="Tailscale auth key for unattended login (default: $TAILSCALE_AUTHKEY)")
+@click.option(
+    "--check", "check_only", is_flag=True, help="verify remote access without changing the system"
+)
+@click.option(
+    "--stop", is_flag=True, help="stop tailscaled without removing its binaries or login state"
+)
+@click.option("--sshd", is_flag=True, help="use the system OpenSSH server instead of Tailscale SSH")
+@click.option(
+    "--auth-key",
+    "auth_key",
+    default=None,
+    metavar="KEY",
+    envvar="TAILSCALE_AUTHKEY",
+    help="Tailscale auth key for unattended login (default: $TAILSCALE_AUTHKEY)",
+)
 def deploy_command(
-    check_only: bool, stop: bool, sshd: bool, auth_key: str | None,
+    check_only: bool,
+    stop: bool,
+    sshd: bool,
+    auth_key: str | None,
 ) -> None:
     """Prepare this machine for Herdr Mobile over Tailscale + SSH."""
     from .remote import RemoteError, deploy_mobile_ssh, stop_tailscale
@@ -235,6 +288,7 @@ def _run_deploy(argv: list[str]) -> None:
     with ctx:
         deploy_command.invoke(ctx)
 
+
 def resolve_max_turns(options: Options) -> int:
     """CLI > $AGENT7_MAX_TURNS > default.
 
@@ -253,22 +307,27 @@ def resolve_max_turns(options: Options) -> int:
         err.print(f"[dim]# ignoring bad AGENT7_MAX_TURNS={raw!r}[/dim]")
     return DEFAULT_MAX_TURNS
 
+
 def can_pick_models() -> bool:
     """fzp's Picker needs a terminal on both ends; a pipe cannot choose."""
-    return bool(
-        sys.stdin and sys.stdin.isatty() and sys.stderr and sys.stderr.isatty()
-    )
+    return bool(sys.stdin and sys.stdin.isatty() and sys.stderr and sys.stderr.isatty())
+
 
 def model_menu(session: Session, ids: list[str]) -> list[str]:
     """The refs a bare `-m` offers: models, provider defaults, and built-in auto."""
-    refs = list(ids) if ids else [
-        f"{p.id}/{p.default_model}"
-        for p in list_providers()
-        if p.default_model and p.id in session.credentials
-    ]
+    refs = (
+        list(ids)
+        if ids
+        else [
+            f"{p.id}/{p.default_model}"
+            for p in list_providers()
+            if p.default_model and p.id in session.credentials
+        ]
+    )
     if session.credentials:
         refs.append(AUTO_REF)
     return refs
+
 
 async def choose_model(session: Session, ids: list[str], *, current: str = "") -> str:
     """Pick this run's model from a fuzzy menu; exits instead of guessing."""
@@ -282,14 +341,17 @@ async def choose_model(session: Session, ids: list[str], *, current: str = "") -
         raise SystemExit(1)
     return picked
 
+
 async def delete_requested_session(options: Options, cwd: Path) -> None:
     """Pick/confirm one or more snapshots and soft-delete them before startup."""
     session_ids = [] if options.delete == PICK_DELETE else [options.delete]
     try:
         if options.delete == PICK_DELETE:
             if not can_pick_models():
-                raise SystemExit("a bare --delete shows a session menu, which needs a terminal; "
-                                 "use agent7 --delete SESSION_ID instead")
+                raise SystemExit(
+                    "a bare --delete shows a session menu, which needs a terminal; "
+                    "use agent7 --delete SESSION_ID instead"
+                )
             snapshots = list_sessions(cwd)
             if not snapshots:
                 raise SystemExit(f"no sessions for workspace: {cwd}")
@@ -306,9 +368,7 @@ async def delete_requested_session(options: Options, cwd: Path) -> None:
             )
             err.print(f"[dim]# delete cancelled — kept {kept}[/dim]")
             return
-        trashed = [
-            (snapshot, delete_session(cwd, snapshot["id"])) for snapshot in snapshots
-        ]
+        trashed = [(snapshot, delete_session(cwd, snapshot["id"])) for snapshot in snapshots]
     except ValueError as e:
         raise SystemExit(str(e)) from None
     for snapshot, trash_path in trashed:
@@ -316,6 +376,7 @@ async def delete_requested_session(options: Options, cwd: Path) -> None:
             f"[dim]# deleted {snapshot.get('name') or 'New session'} "
             f"({snapshot.get('id', '?')}) → {trash_path}[/dim]"
         )
+
 
 async def async_main(options: Options) -> None:
     """Run one task, or open the REPL, for an already-parsed command line."""
@@ -332,8 +393,10 @@ async def async_main(options: Options) -> None:
     try:
         if choose_resume:
             if not can_pick_models():
-                raise SystemExit("a bare -r shows a session menu, which needs a terminal; "
-                                 "use agent7 -r SESSION_ID instead")
+                raise SystemExit(
+                    "a bare -r shows a session menu, which needs a terminal; "
+                    "use agent7 -r SESSION_ID instead"
+                )
             snapshots = list_sessions(cwd)
             if not snapshots:
                 raise SystemExit(f"no sessions for workspace: {cwd}")
@@ -359,21 +422,23 @@ async def async_main(options: Options) -> None:
     workspace_model = env_model or (saved.get("model_ref", "") if saved else "")
     saved_provider, sep, _ = workspace_model.partition("/")
     reuse_saved_model = (
-        saved is not None and options.model is None
-        and (workspace_model == AUTO_REF
-             or bool(sep) and get_provider(saved_provider) is not None)
+        saved is not None
+        and options.model is None
+        and (workspace_model == AUTO_REF or bool(sep) and get_provider(saved_provider) is not None)
         and not env_model
     )
     # A one-shot with no explicit choice starts on auto: the task itself is the
     # only hint about which model fits. `-m` and $AGENT7_MODEL still win, and
     # the saved model remains a fallback when auto has no usable candidates.
     implicit_auto = bool(task) and options.model is None and not env_model
-    model = AUTO_REF if implicit_auto else (
-        workspace_model if options.model is None else options.model
+    model = (
+        AUTO_REF if implicit_auto else (workspace_model if options.model is None else options.model)
     )
     if pick and not can_pick_models():
-        err.print("[red]# a bare -m shows a menu, which needs a terminal — "
-                  "name the model instead: agent7 -m deepseek-flash[/red]")
+        err.print(
+            "[red]# a bare -m shows a menu, which needs a terminal — "
+            "name the model instead: agent7 -m deepseek-flash[/red]"
+        )
         raise SystemExit(1)
 
     all_creds = resolve_all()
@@ -389,21 +454,31 @@ async def async_main(options: Options) -> None:
         client = make_client("missing", list_providers()[0].default_base)
         if task:
             keys = ", ".join(k for p in list_providers() for k in p.env_keys)
-            print(f"No credentials. Set {keys},\n"
-                  "or run `uv run agent7` and `/login`.", file=sys.stderr)
+            print(
+                f"No credentials. Set {keys},\nor run `uv run agent7` and `/login`.",
+                file=sys.stderr,
+            )
             sys.exit(1)
         prov, cred = None, None
     # Herdr-managed background runs are an optional optimization; ordinary bash
     # remains the fallback in every other environment.
     system = SYSTEM + background_tasks_instructions()
     state = Session(
-        model=model or "pending", cwd=cwd, client=client, max_turns=max_turns,
-        messages=resume_messages(snapshot, system) if snapshot else [{"role": "system", "content": system}],
+        model=model or "pending",
+        cwd=cwd,
+        client=client,
+        max_turns=max_turns,
+        messages=resume_messages(snapshot, system)
+        if snapshot
+        else [{"role": "system", "content": system}],
         id=snapshot["id"] if snapshot else new_session_id(),
-        name=snapshot.get("name", "") if snapshot else "", created_at=created_at,
+        name=snapshot.get("name", "") if snapshot else "",
+        created_at=created_at,
         persisted=snapshot is not None,
-        provider_id=prov.id if prov else None, cred_source=cred.source if cred else None,
-        credential=cred, credentials=dict(all_creds),
+        provider_id=prov.id if prov else None,
+        cred_source=cred.source if cred else None,
+        credential=cred,
+        credentials=dict(all_creds),
     )
     # A one-shot becomes a real session only once it runs: a run that never
     # starts (bad -m, menu cancelled) must not create a session snapshot.
@@ -443,7 +518,7 @@ async def async_main(options: Options) -> None:
                 # An implicit one-shot auto is only a default: try the saved
                 # model, then the first fetched model, before falling back to
                 # the active provider's default model.
-                fallbacks = ([workspace_model, *ids[:1]] if implicit_auto else ids[:1])
+                fallbacks = [workspace_model, *ids[:1]] if implicit_auto else ids[:1]
                 for fallback in fallbacks:
                     if fallback and fallback != AUTO_REF:
                         result = await switch_model(state, fallback)
@@ -461,11 +536,15 @@ async def async_main(options: Options) -> None:
                 state.set_model(default_model_for(state.provider_id))
         started = True
         emit_lifecycle(state, "session_started")
-        err.print(f"[dim]# agent7 v{__version__}  model={state.display_model}  "
-                  f"providers=\\[{','.join(state.credentials) or 'none'}]  "
-                  f"shell={SHELL.name}  cwd={state.cwd}[/dim]")
+        err.print(
+            f"[dim]# agent7 v{__version__}  model={state.display_model}  "
+            f"providers=\\[{','.join(state.credentials) or 'none'}]  "
+            f"shell={SHELL.name}  cwd={state.cwd}[/dim]"
+        )
         action = "resumed" if snapshot else "new"
-        err.print(f"[dim]# {action} session  name={state.name or 'New session'}  id={state.id}[/dim]")
+        err.print(
+            f"[dim]# {action} session  name={state.name or 'New session'}  id={state.id}[/dim]"
+        )
         if snapshot:
             print_history(snapshot["messages"])
         if task:

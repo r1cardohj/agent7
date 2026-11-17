@@ -23,24 +23,31 @@ from .routing import AUTO_REF, build_auto_route
 from .session import Session, fmt_limit, format_usage, resolve_context_limit
 from .store import delete_session, list_sessions, load, resume_messages
 
+
 @dataclass
 class CommandResult:
     message: str = ""
 
+
 SlashHandler = Callable[[Session, list[str]], CommandResult | Awaitable[CommandResult]]
 _COMMANDS: dict[str, tuple[str, SlashHandler]] = {}
+
 
 def command(name: str, *, help: str) -> Callable[[SlashHandler], SlashHandler]:
     def deco(fn: SlashHandler) -> SlashHandler:
         _COMMANDS[name.lower().lstrip("/")] = (help, fn)
         return fn
+
     return deco
+
 
 def list_commands() -> list[tuple[str, str]]:
     return sorted((n, h) for n, (h, _) in _COMMANDS.items())
 
+
 def known_names() -> list[str]:
     return sorted(_COMMANDS)
+
 
 MODEL_LIST_TIMEOUT = 5.0
 MODEL_LIST_JOIN_TIMEOUT = 12.0
@@ -82,7 +89,9 @@ class ModelsFetch:
         self.error: BaseException | None = None
         self._done = threading.Event()
         self._thread = threading.Thread(
-            target=self._run, name="agent7-model-discovery", daemon=True,
+            target=self._run,
+            name="agent7-model-discovery",
+            daemon=True,
         )
 
     @property
@@ -144,6 +153,7 @@ async def fetch_models(session: Session, *, refresh: bool = False) -> list[str]:
         return session.models_cache
     raise RuntimeError("model list unavailable")
 
+
 def resolve_model_ref(session: Session, name: str) -> tuple[str, str, str] | str:
     available, raw = session.models_cache or [], name.strip()
     lower = {m.lower(): m for m in available}
@@ -167,11 +177,13 @@ def resolve_model_ref(session: Session, name: str) -> tuple[str, str, str] | str
         return session.provider_id, raw, f"{session.provider_id}/{raw}"
     return f"unknown model {raw!r} — try /model"
 
+
 async def switch_model(session: Session, name: str) -> CommandResult:
     if name.strip().lower() == AUTO_REF:
         try:
             route = build_auto_route(
-                session.credentials, models=session.models_cache,
+                session.credentials,
+                models=session.models_cache,
                 context_limit=resolve_context_limit,
             )
         except ValueError as e:
@@ -188,14 +200,21 @@ async def switch_model(session: Session, name: str) -> CommandResult:
         return CommandResult(message=f"unknown provider {provider_id!r}")
     cred = session.credentials.get(provider_id) or p.resolve()
     if cred is None:
-        return CommandResult(message=f"no credentials for {provider_id} — /login {p.preferred_login}")
+        return CommandResult(
+            message=f"no credentials for {provider_id} — /login {p.preferred_login}"
+        )
     session.remember(provider_id, cred)
-    if session.route is not None or session.provider_id != provider_id or session.credential is not cred:
+    if (
+        session.route is not None
+        or session.provider_id != provider_id
+        or session.credential is not cred
+    ):
         await session.apply(p, cred)
     old = session.model_ref or session.model
     session.set_model(model_id, ref=ref)
     limit = f"  context={fmt_limit(session.context_limit)}" if session.context_limit else ""
     return CommandResult(message=f"model: {old} → {ref}{limit}")
+
 
 async def dispatch(session: Session, line: str) -> CommandResult | None:
     raw = line.strip()
@@ -210,6 +229,7 @@ async def dispatch(session: Session, line: str) -> CommandResult | None:
         return CommandResult(message=f"unknown command /{name.lower()}  (see /help)")
     result = entry[1](session, rest.split() if rest.strip() else [])
     return await result if asyncio.iscoroutine(result) else result
+
 
 async def _activate(session: Session, prefer: str | None = None) -> CommandResult:
     keep_auto = session.model_ref == AUTO_REF
@@ -248,12 +268,14 @@ async def _activate(session: Session, prefer: str | None = None) -> CommandResul
         )
     )
 
+
 @command("help", help="list slash commands")
-def cmd_help(session: Session, args: list[str]) -> CommandResult:
+def cmd_help(session: Session, _args: list[str]) -> CommandResult:
     lines = ["commands:"] + [f"  /{n:<12} {h}" for n, h in list_commands()]
     lines.append(f"current: model={session.display_model}  cwd={session.cwd}")
     lines.append("tip: @, /cmd and /model args are fuzzy-matched (try @mn, /mdl)")
     return CommandResult(message="\n".join(lines))
+
 
 @command("model", help="list/switch models  (/model | /model <ref> | /model refresh)")
 async def cmd_model(session: Session, args: list[str]) -> CommandResult:
@@ -273,8 +295,9 @@ async def cmd_model(session: Session, args: list[str]) -> CommandResult:
         return CommandResult(message="\n".join(lines))
     return await switch_model(session, args[1] if refresh else args[0])
 
+
 @command("status", help="show session status")
-def cmd_status(session: Session, args: list[str]) -> CommandResult:
+def cmd_status(session: Session, _args: list[str]) -> CommandResult:
     n = max(0, len(session.messages) - 1)
     identity = ""
     if session_id := getattr(session, "id", ""):
@@ -289,13 +312,16 @@ def cmd_status(session: Session, args: list[str]) -> CommandResult:
         route_info = f"\nscorer={selection.scorer_ref}\nscores={scores or 'unavailable'}"
         if selection.error:
             route_info += f"  error={selection.error}"
-    return CommandResult(message=(
-        f"model={session.display_model}\n{identity}"
-        f"provider={session.provider_id}  source={session.cred_source}\n"
-        f"providers=\\[{', '.join(session.credentials) or '?'}]\n"
-        f"cwd={session.cwd}\nmessages={n}  max_turns={session.max_turns}\n"
-        f"{format_usage(session)}\nbase_url={session.client.base_url}{route_info}"
-    ))
+    return CommandResult(
+        message=(
+            f"model={session.display_model}\n{identity}"
+            f"provider={session.provider_id}  source={session.cred_source}\n"
+            f"providers=\\[{', '.join(session.credentials) or '?'}]\n"
+            f"cwd={session.cwd}\nmessages={n}  max_turns={session.max_turns}\n"
+            f"{format_usage(session)}\nbase_url={session.client.base_url}{route_info}"
+        )
+    )
+
 
 async def _delete_session(session: Session, args: list[str]) -> CommandResult:
     from .repl import confirm_sessions_delete, pick_sessions
@@ -305,8 +331,7 @@ async def _delete_session(session: Session, args: list[str]) -> CommandResult:
         session_ids = list(args)
     else:
         snapshots = [
-            snapshot for snapshot in list_sessions(session.cwd)
-            if snapshot.get("id") != current
+            snapshot for snapshot in list_sessions(session.cwd) if snapshot.get("id") != current
         ]
         if not snapshots:
             return CommandResult(message="no other saved sessions in this workspace")
@@ -329,8 +354,7 @@ async def _delete_session(session: Session, args: list[str]) -> CommandResult:
             )
             return CommandResult(message=f"delete: cancelled — kept {kept}")
         trashed = [
-            (snapshot, delete_session(session.cwd, snapshot["id"]))
-            for snapshot in snapshots
+            (snapshot, delete_session(session.cwd, snapshot["id"])) for snapshot in snapshots
         ]
     except ValueError as e:
         return CommandResult(message=str(e))
@@ -363,7 +387,10 @@ async def cmd_session(session: Session, args: list[str]) -> CommandResult:
         session_id = picked
     if session_id == current:
         return CommandResult(
-            message=f"session: already on {getattr(session, 'name', '') or 'New session'} ({session_id})"
+            message=(
+                f"session: already on {getattr(session, 'name', '') or 'New session'}"
+                f" ({session_id})"
+            )
         )
     try:
         snapshot = load(session.cwd, session_id)
@@ -373,7 +400,9 @@ async def cmd_session(session: Session, args: list[str]) -> CommandResult:
     saved_model = snapshot.get("model_ref")
     if saved_model and saved_model != (session.model_ref or session.model):
         result = await switch_model(session, saved_model)
-        if result.message.startswith(("unknown", "ambiguous", "auto:", "bad model", "no credentials")):
+        if result.message.startswith(
+            ("unknown", "ambiguous", "auto:", "bad model", "no credentials")
+        ):
             return CommandResult(message=f"session not switched: {result.message}")
 
     old = getattr(session, "name", "") or current
@@ -418,20 +447,24 @@ async def cmd_login(session: Session, args: list[str]) -> CommandResult:
     result = await _activate(session, target.id)
     return CommandResult(message=f"logged in {target.id}\n{result.message}")
 
+
 @command("compact", help="shrink old tool/assistant text in history")
-def cmd_compact(session: Session, args: list[str]) -> CommandResult:
+def cmd_compact(session: Session, _args: list[str]) -> CommandResult:
     new_msgs, n = compact_messages(session.messages)
     session.messages[:] = new_msgs
     if not n:
         return CommandResult(message="compact: nothing to shrink (history short or already small)")
     return CommandResult(message=f"compact: shrunk {n} message(s); recent turns kept intact")
 
+
 @command("logout", help="clear saved key  (/logout deepseek | /logout kimi)")
 def cmd_logout(session: Session, args: list[str]) -> CommandResult:
     if not args:
         keys = [p.id for p in list_providers() if p.id in load_auth()]
         return CommandResult(
-            message="nothing stored" if not keys else "usage: /logout <provider>\nstored: " + ", ".join(keys)
+            message="nothing stored"
+            if not keys
+            else "usage: /logout <provider>\nstored: " + ", ".join(keys)
         )
     p = get_provider(args[0])
     if not p:

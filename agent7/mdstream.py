@@ -74,9 +74,9 @@ class MarkdownStream:
             self._stable = None
         split = _stable_prefix_len(text)
         if split > self._consumed:
-            self._consume(text[self._consumed:split])
+            self._consume(text[self._consumed : split])
             self._consumed = split
-        tail = text[self._consumed:]
+        tail = text[self._consumed :]
         parts: list[RenderableType] = []
         if self._stable is not None:
             parts.append(self._stable)
@@ -94,7 +94,7 @@ class MarkdownStream:
         # needs the opposite: follow the latest text without letting intermediate
         # frames scroll into the terminal history.
         flat: list[Segment] = []
-        for line in lines[-max(1, max_lines):]:
+        for line in lines[-max(1, max_lines) :]:
             if flat:
                 flat.append(Segment.line())
             flat.extend(line)

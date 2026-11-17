@@ -81,7 +81,7 @@ def session_name(messages: list[dict[str, Any]], *, limit: int = 60) -> str:
             continue
         name = " ".join(content.split())
         if name:
-            return name if len(name) <= limit else name[:limit - 1].rstrip() + "…"
+            return name if len(name) <= limit else name[: limit - 1].rstrip() + "…"
     return ""
 
 
@@ -226,15 +226,18 @@ def resume_messages(snapshot: dict[str, Any], system: str) -> list[dict[str, Any
         calls = out[i].get("tool_calls") if out[i].get("role") == "assistant" else None
         if not isinstance(calls, list):
             continue
-        answered = {m.get("tool_call_id") for m in out[i + 1:] if m.get("role") == "tool"}
+        answered = {m.get("tool_call_id") for m in out[i + 1 :] if m.get("role") == "tool"}
         missing = []
         for call in calls:
             call_id = call.get("id") if isinstance(call, dict) else None
             if isinstance(call_id, str) and call_id and call_id not in answered:
-                missing.append({
-                    "role": "tool", "tool_call_id": call_id,
-                    "content": "error: session interrupted before tool completion",
-                })
+                missing.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": "error: session interrupted before tool completion",
+                    }
+                )
         end = i + 1
         while end < len(out) and out[end].get("role") == "tool":
             end += 1

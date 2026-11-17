@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from responses_fakes import FakeClient, call_turn, text_turn, usage_turn
+
 import agent7.agent as A
 from agent7.agent import estimate_tokens, run_agent
-from responses_fakes import FakeClient, FakeStream, call_turn, text_turn, usage_turn
 
 
 class _Status(Exception):
@@ -31,11 +32,15 @@ class RetryTests(unittest.TestCase):
 
     def run_agent(self, script: list[Any], **kwargs: Any) -> tuple[str, FakeClient]:
         client = FakeClient(script)
-        kwargs.setdefault("on_tool", lambda *a: None)
+        kwargs.setdefault("on_tool", lambda *_a: None)
         answer = asyncio.run(
             run_agent(
-                "go", cwd=self.cwd, client=client, model="test-model",
-                messages=[], **kwargs,
+                "go",
+                cwd=self.cwd,
+                client=client,
+                model="test-model",
+                messages=[],
+                **kwargs,
             )
         )
         return answer, client
@@ -107,15 +112,18 @@ class RetryTests(unittest.TestCase):
             "an assistant message with 'tool_calls' must be followed by tool messages; "
             "tool_call_ids did not have response messages: read:0",
         )
-        answer, client = self.run_agent([
-            call_turn(("read", {"path": "missing.py"})), error, text_turn("done"),
-        ])
+        answer, client = self.run_agent(
+            [
+                call_turn(("read", {"path": "missing.py"})),
+                error,
+                text_turn("done"),
+            ]
+        )
 
         self.assertEqual(answer, "done")
         self.assertEqual(client.calls, 3)
         replayed_calls = [
-            item for item in client.requests[-1]["input"]
-            if item.get("type") == "function_call"
+            item for item in client.requests[-1]["input"] if item.get("type") == "function_call"
         ]
         self.assertEqual(len(replayed_calls), 1)
         self.assertEqual(replayed_calls[0]["call_id"], "call_0")
@@ -150,11 +158,16 @@ class CompactionFallbackTests(unittest.TestCase):
     ) -> tuple[str, list[int]]:
         client = FakeClient(script)
         compacted: list[int] = []
-        kwargs.setdefault("on_tool", lambda *a: None)
+        kwargs.setdefault("on_tool", lambda *_a: None)
         answer = asyncio.run(
             run_agent(
-                "go", cwd=self.cwd, client=client, model="test-model",
-                messages=list(seed or []), on_compact=compacted.append, **kwargs,
+                "go",
+                cwd=self.cwd,
+                client=client,
+                model="test-model",
+                messages=list(seed or []),
+                on_compact=compacted.append,
+                **kwargs,
             )
         )
         return answer, compacted
@@ -185,8 +198,13 @@ class CompactionFallbackTests(unittest.TestCase):
         with patch.object(A, "compact_messages", side_effect=spy):
             asyncio.run(
                 run_agent(
-                    "go", cwd=self.cwd, client=client, model="test-model",
-                    messages=[], context_limit=1, on_tool=lambda *a: None,
+                    "go",
+                    cwd=self.cwd,
+                    client=client,
+                    model="test-model",
+                    messages=[],
+                    context_limit=1,
+                    on_tool=lambda *_a: None,
                 )
             )
 
@@ -195,9 +213,7 @@ class CompactionFallbackTests(unittest.TestCase):
     def test_context_overflow_compacts_and_retries_the_turn(self) -> None:
         overflow = _Status(400, "This model's maximum context length is 8192 tokens")
 
-        answer, compacted = self.run_agent(
-            [overflow, text_turn("done")], seed=self.history(3)
-        )
+        answer, compacted = self.run_agent([overflow, text_turn("done")], seed=self.history(3))
 
         self.assertEqual(answer, "done")
         self.assertEqual(compacted, [3])
@@ -207,10 +223,17 @@ class EstimateTokensTests(unittest.TestCase):
     def test_counts_content_and_tool_arguments(self) -> None:
         messages = [
             {"role": "user", "content": "x" * 400},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "c", "type": "function",
-                 "function": {"name": "read", "arguments": '{"path": "' + 'y' * 400 + '"}'}}
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "c",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": '{"path": "' + "y" * 400 + '"}'},
+                    }
+                ],
+            },
         ]
 
         self.assertGreaterEqual(estimate_tokens(messages), 200)

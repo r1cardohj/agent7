@@ -11,14 +11,21 @@ def ns(**kwargs: Any) -> Any:
     return SimpleNamespace(**kwargs)
 
 
-def response(output: list[dict[str, Any]], *, status: str = "completed",
-             usage: dict[str, int] | None = None, reason: str | None = None) -> Any:
+def response(
+    output: list[dict[str, Any]],
+    *,
+    status: str = "completed",
+    usage: dict[str, int] | None = None,
+    reason: str | None = None,
+) -> Any:
     counts = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
     counts.update(usage or {})
     return ns(
-        output=output, status=status,
+        output=output,
+        status=status,
         incomplete_details=ns(reason=reason) if reason else None,
-        usage=ns(**counts), error=None,
+        usage=ns(**counts),
+        error=None,
     )
 
 
@@ -26,18 +33,27 @@ def completed(output: list[dict[str, Any]], **kwargs: Any) -> Any:
     return ns(type="response.completed", response=response(output, **kwargs))
 
 
-def text_turn(content: str = "", *, finish_reason: str | None = None,
-              reasoning: str | None = None) -> list[Any]:
+def text_turn(
+    content: str = "", *, finish_reason: str | None = None, reasoning: str | None = None
+) -> list[Any]:
     output: list[dict[str, Any]] = []
     events: list[Any] = []
     if reasoning:
-        item = {"id": "rs_1", "type": "reasoning", "summary": [], "content": [
-            {"type": "reasoning_text", "text": reasoning},
-        ]}
+        item = {
+            "id": "rs_1",
+            "type": "reasoning",
+            "summary": [],
+            "content": [
+                {"type": "reasoning_text", "text": reasoning},
+            ],
+        }
         output.append(item)
         events.append(ns(type="response.reasoning_text.delta", delta=reasoning))
     message = {
-        "id": "msg_1", "type": "message", "role": "assistant", "status": "completed",
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "status": "completed",
         "content": [{"type": "output_text", "text": content, "annotations": []}],
     }
     output.append(message)
@@ -50,23 +66,35 @@ def text_turn(content: str = "", *, finish_reason: str | None = None,
     return events
 
 
-def call_turn(calls: list[tuple[str, dict[str, Any]]] | tuple[str, dict[str, Any]],
-              *, reasoning: str | None = None) -> list[Any]:
+def call_turn(
+    calls: list[tuple[str, dict[str, Any]]] | tuple[str, dict[str, Any]],
+    *,
+    reasoning: str | None = None,
+) -> list[Any]:
     if isinstance(calls, tuple):
         calls = [calls]
     output: list[dict[str, Any]] = []
     events: list[Any] = []
     if reasoning:
-        item = {"id": "rs_1", "type": "reasoning", "summary": [], "content": [
-            {"type": "reasoning_text", "text": reasoning},
-        ]}
+        item = {
+            "id": "rs_1",
+            "type": "reasoning",
+            "summary": [],
+            "content": [
+                {"type": "reasoning_text", "text": reasoning},
+            ],
+        }
         output.append(item)
         events.append(ns(type="response.reasoning_text.delta", delta=reasoning))
         events.append(ns(type="response.output_item.done", item=ns(**item)))
     for index, (name, arguments) in enumerate(calls):
         item = {
-            "id": f"fc_{index}", "type": "function_call", "call_id": f"call_{index}",
-            "name": name, "arguments": json.dumps(arguments), "status": "completed",
+            "id": f"fc_{index}",
+            "type": "function_call",
+            "call_id": f"call_{index}",
+            "name": name,
+            "arguments": json.dumps(arguments),
+            "status": "completed",
         }
         output.append(item)
         events.append(ns(type="response.output_item.done", item=ns(**item)))
@@ -76,7 +104,10 @@ def call_turn(calls: list[tuple[str, dict[str, Any]]] | tuple[str, dict[str, Any
 
 def usage_turn(content: str = "ok", usage: dict[str, int] | None = None) -> list[Any]:
     message = {
-        "id": "msg_1", "type": "message", "role": "assistant", "status": "completed",
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "status": "completed",
         "content": [{"type": "output_text", "text": content, "annotations": []}],
     }
     return [
@@ -96,6 +127,7 @@ class FakeStream:
                 yield event
             if self.fail:
                 raise self.fail
+
         return gen()
 
     async def close(self) -> None:

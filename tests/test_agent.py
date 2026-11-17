@@ -1,3 +1,4 @@
+import contextlib
 import os
 import select
 import shlex
@@ -56,9 +57,11 @@ class WriteToolTests(unittest.TestCase):
         path = self.cwd / "keep.txt"
         path.write_text("original\n")
 
-        with patch("agent7.agent.os.fsync", side_effect=OSError("disk full")):
-            with self.assertRaises(OSError):
-                tool_write(self.cwd, "keep.txt", "half a rewrite")
+        with (
+            patch("agent7.agent.os.fsync", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
+            tool_write(self.cwd, "keep.txt", "half a rewrite")
 
         self.assertEqual(path.read_text(), "original\n")
         self.assertEqual([p.name for p in self.cwd.iterdir()], ["keep.txt"])
@@ -133,9 +136,7 @@ class EditToolTests(unittest.TestCase):
         self.assertEqual(path.read_text(), "same\nsame\n")
 
     def test_requires_existing_file(self) -> None:
-        result = tool_edit(
-            self.cwd, "missing.txt", [{"old_string": "old", "new_string": "new"}]
-        )
+        result = tool_edit(self.cwd, "missing.txt", [{"old_string": "old", "new_string": "new"}])
 
         self.assertTrue(result.startswith("error: not a file:"))
         self.assertFalse((self.cwd / "missing.txt").exists())
@@ -144,9 +145,7 @@ class EditToolTests(unittest.TestCase):
         path = self.cwd / "hello.txt"
         path.write_text("content\n")
 
-        result = tool_edit(
-            self.cwd, "hello.txt", [{"old_string": "", "new_string": "new"}]
-        )
+        result = tool_edit(self.cwd, "hello.txt", [{"old_string": "", "new_string": "new"}])
 
         self.assertIn("old_string must be a non-empty string", result)
         self.assertEqual(path.read_text(), "content\n")
@@ -249,9 +248,7 @@ class ReadToolTests(unittest.TestCase):
     def test_binary_file_is_reported(self) -> None:
         (self.cwd / "blob.bin").write_bytes(b"\xff\xfe\x00binary")
 
-        self.assertTrue(
-            dispatch_tool(self.cwd, "read", {"path": "blob.bin"}).startswith("error:")
-        )
+        self.assertTrue(dispatch_tool(self.cwd, "read", {"path": "blob.bin"}).startswith("error:"))
 
     def test_large_file_is_streamed_not_buffered(self) -> None:
         path = self.cwd / "big.log"
@@ -319,7 +316,7 @@ class BashTimeoutTests(unittest.TestCase):
             command = (
                 "sleep 30 & child=$!; "
                 f"printf '%s\\n' \"$child\" > {shlex.quote(str(pidfile))}; "
-                "wait \"$child\""
+                'wait "$child"'
             )
             pid = None
             real_wait = subprocess.Popen.wait
@@ -337,7 +334,9 @@ class BashTimeoutTests(unittest.TestCase):
                 started = time.monotonic()
                 with patch("agent7.agent.subprocess.Popen.wait", new=wait_after_ready):
                     result = dispatch_tool(
-                        Path(tmp), "bash", {"command": command, "timeout": 1},
+                        Path(tmp),
+                        "bash",
+                        {"command": command, "timeout": 1},
                     )
                 self.assertLess(time.monotonic() - started, 8)
                 self.assertIn("timeout after 1s", result)
@@ -345,10 +344,8 @@ class BashTimeoutTests(unittest.TestCase):
                 self.assertTrue(self._wait_for_exit(pid, 2), "timed-out child is still running")
             finally:
                 if pid is not None and self._process_running(pid):
-                    try:
+                    with contextlib.suppress(ProcessLookupError):
                         os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
 
 
 class OutputBudgetTests(unittest.TestCase):
@@ -388,7 +385,9 @@ class OutputBudgetTests(unittest.TestCase):
         self.assertLess(peak, 4_000_000)
 
     def test_grep_tool_is_gone(self) -> None:
-        self.assertEqual(dispatch_tool(self.cwd, "grep", {"pattern": "x"}), "error: unknown tool grep")
+        self.assertEqual(
+            dispatch_tool(self.cwd, "grep", {"pattern": "x"}), "error: unknown tool grep"
+        )
 
 
 if __name__ == "__main__":

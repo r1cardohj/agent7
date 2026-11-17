@@ -14,6 +14,10 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from responses_fakes import FakeClient, text_turn
+
+from agent7.providers import Credential
+from agent7.routing import MODEL_CAPABILITIES
 from evals.report import paired_success_delta, render_report
 from evals.run import (
     EVAL_ROOT,
@@ -27,19 +31,20 @@ from evals.run import (
     main,
 )
 from evals.verify import VERIFIERS
-from agent7.providers import Credential
-from agent7.routing import MODEL_CAPABILITIES
-from responses_fakes import FakeClient, text_turn
 
 
 class FakeRunner:
     def __init__(self, mode="pass") -> None:
         self.mode = mode
 
-    async def run(self, task, cwd, strategy):
+    async def run(self, _task, cwd, _strategy):
         result = AgentResult(
-            answer="fake answer", selected_model="fake/model", initial_model="fake/model",
-            prompt_tokens=10, completion_tokens=5, total_tokens=15,
+            answer="fake answer",
+            selected_model="fake/model",
+            initial_model="fake/model",
+            prompt_tokens=10,
+            completion_tokens=5,
+            total_tokens=15,
         )
         if self.mode == "pass":
             path = cwd / "app" / "text.py"
@@ -60,8 +65,12 @@ def capability_target(ref):
     capability = next(cap for cap in MODEL_CAPABILITIES if cap.ref == ref)
     credential = Credential("secret", "https://example.test", "test")
     return RouteTarget(
-        capability.provider_id, capability.model, credential,
-        FakeClient([text_turn("unused")]), capability.context_limit, capability,
+        capability.provider_id,
+        capability.model,
+        credential,
+        FakeClient([text_turn("unused")]),
+        capability.context_limit,
+        capability,
     )
 
 
@@ -69,13 +78,26 @@ class TaskManifestTests(unittest.TestCase):
     def test_shipped_tasks_form_the_documented_plan(self) -> None:
         tasks = load_tasks()
         self.assertEqual(len(tasks), 12)
-        self.assertEqual(Counter(task.category for task in tasks), {
-            "quick": 3, "coding": 3, "debugging": 3, "reasoning": 3,
-        })
+        self.assertEqual(
+            Counter(task.category for task in tasks),
+            {
+                "quick": 3,
+                "coding": 3,
+                "debugging": 3,
+                "reasoning": 3,
+            },
+        )
         self.assertEqual({task.id for task in tasks}, set(VERIFIERS))
-        self.assertEqual(len(build_plan(
-            tasks, ["fixed-fast", "fixed-strong", "auto-tier", "auto-full"], 2,
-        )), 96)
+        self.assertEqual(
+            len(
+                build_plan(
+                    tasks,
+                    ["fixed-fast", "fixed-strong", "auto-tier", "auto-full"],
+                    2,
+                )
+            ),
+            96,
+        )
 
     def test_dry_run_needs_no_credentials(self) -> None:
         output = io.StringIO()
@@ -91,9 +113,14 @@ class TaskManifestTests(unittest.TestCase):
                 shutil.copytree(EVAL_ROOT / "repos" / task.repo, cwd)
                 shutil.copy2(EVAL_ROOT / "verify.py", cwd / "_agent7_eval_verify.py")
                 completed = subprocess.run(
-                    [sys.executable, "_agent7_eval_verify.py"], cwd=cwd,
+                    [sys.executable, "_agent7_eval_verify.py"],
+                    check=False,
+                    cwd=cwd,
                     env=dict(os.environ, AGENT7_EVAL_TASK=task.id, PYTHONDONTWRITEBYTECODE="1"),
-                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=5,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    timeout=5,
                 )
                 self.assertNotEqual(completed.returncode, 0, completed.stdout)
 
@@ -104,7 +131,7 @@ class RouteAblationTests(unittest.TestCase):
         base = FailoverRoute(tuple(capability_target(ref) for ref in refs), intent_routing=True)
         route = ObservedRoute(base, tier_only=tier_only)
 
-        async def fake_score(*args, **kwargs):
+        async def fake_score(*_args, **_kwargs):
             return "debugging", {
                 "deepseek/deepseek-flash": 10,
                 "kimi/kimi-for-coding": 90,
@@ -134,9 +161,15 @@ class ExecutionTests(unittest.TestCase):
         self.task = next(task for task in load_tasks() if task.id == "quick-greeting")
 
     def execute(self, mode: str):
-        return asyncio.run(execute_run(
-            self.task, "fixed-fast", 1, self.output, FakeRunner(mode),
-        ))
+        return asyncio.run(
+            execute_run(
+                self.task,
+                "fixed-fast",
+                1,
+                self.output,
+                FakeRunner(mode),
+            )
+        )
 
     def test_fake_agent_passes_hidden_verification_and_saves_artifacts(self) -> None:
         record = self.execute("pass")
@@ -166,18 +199,27 @@ class ExecutionTests(unittest.TestCase):
 
     def test_cancelled_agent_is_a_valid_failure_and_keeps_partial_artifacts(self) -> None:
         class SlowRunner:
-            def begin(self, strategy):
+            def begin(self, _strategy):
                 self.result = AgentResult(
-                    selected_model="late/model", intent="coding", prompt_tokens=99,
+                    selected_model="late/model",
+                    intent="coding",
+                    prompt_tokens=99,
                 )
                 return self.result
 
-            async def run(self, task, cwd, strategy):
+            async def run(self, _task, _cwd, _strategy):
                 await asyncio.sleep(30)
 
-        record = asyncio.run(execute_run(
-            self.task, "fixed-fast", 1, self.output, SlowRunner(), timeout=0.05,
-        ))
+        record = asyncio.run(
+            execute_run(
+                self.task,
+                "fixed-fast",
+                1,
+                self.output,
+                SlowRunner(),
+                timeout=0.05,
+            )
+        )
         self.assertEqual(record["status"], "timeout")
         self.assertTrue(record["valid"])
         self.assertEqual(record["selected_model"], "late/model")
@@ -192,11 +234,11 @@ class ExecutionTests(unittest.TestCase):
                 self.cancelled = False
                 self.current = None
 
-            def begin(self, strategy):
+            def begin(self, _strategy):
                 self.current = AgentResult(selected_model="cancelled/model", prompt_tokens=7)
                 return self.current
 
-            async def run(self, task, cwd, strategy):
+            async def run(self, _task, _cwd, _strategy):
                 try:
                     await asyncio.sleep(30)
                 except asyncio.CancelledError:
@@ -205,9 +247,15 @@ class ExecutionTests(unittest.TestCase):
 
         async def exercise():
             runner = CancellableRunner()
-            running = asyncio.create_task(execute_run(
-                self.task, "auto-full", 1, self.output, runner,
-            ))
+            running = asyncio.create_task(
+                execute_run(
+                    self.task,
+                    "auto-full",
+                    1,
+                    self.output,
+                    runner,
+                )
+            )
             await asyncio.sleep(0.05)
             running.cancel()
             with self.assertRaises(asyncio.CancelledError):
@@ -226,10 +274,19 @@ class ReportTests(unittest.TestCase):
     @staticmethod
     def record(task: str, strategy: str, status: str, success: bool) -> dict:
         return {
-            "task_id": task, "category": "coding", "strategy": strategy, "repeat": 1,
-            "status": status, "success": success, "wall_seconds": 10,
-            "score_seconds": 1, "prompt_tokens": 100, "completion_tokens": 20,
-            "score_prompt_tokens": 5, "score_completion_tokens": 2, "failovers": 0,
+            "task_id": task,
+            "category": "coding",
+            "strategy": strategy,
+            "repeat": 1,
+            "status": status,
+            "success": success,
+            "wall_seconds": 10,
+            "score_seconds": 1,
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "score_prompt_tokens": 5,
+            "score_completion_tokens": 2,
+            "failovers": 0,
         }
 
     def test_report_counts_invalid_runs_and_bootstraps_paired_tasks(self) -> None:

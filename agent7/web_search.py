@@ -86,9 +86,7 @@ def _endpoint(base_url: str) -> str:
     return base + SEARCH_PATH
 
 
-def _credentials(
-    api_key: str | None, base_url: str | None
-) -> tuple[str, str]:
+def _credentials(api_key: str | None, base_url: str | None) -> tuple[str, str]:
     if api_key or base_url:
         if not api_key:
             raise ValueError("api_key is required when base_url is set")
@@ -97,8 +95,7 @@ def _credentials(
     credential = provider.resolve() if provider else None
     if credential is None:
         raise ValueError(
-            "no DeepSeek API key for web search — run `/login deepseek` "
-            "or export DEEPSEEK_API_KEY"
+            "no DeepSeek API key for web search — run `/login deepseek` or export DEEPSEEK_API_KEY"
         )
     return credential.api_key, credential.base_url
 
@@ -177,7 +174,10 @@ def _format_result(index: int, result: dict[str, Any], *, with_content: bool) ->
     if body := _clean(result.get("summary")) or _clean(result.get("snippet")):
         if len(body) > MAX_SUMMARY_CHARS:
             cut = len(body) - MAX_SUMMARY_CHARS
-            body = body[:MAX_SUMMARY_CHARS] + f"\n...[summary truncated {cut} chars; fetch the URL for the rest]"
+            body = (
+                body[:MAX_SUMMARY_CHARS]
+                + f"\n...[summary truncated {cut} chars; fetch the URL for the rest]"
+            )
         lines.append(_indent(body))
     if with_content and (content := _clean(result.get("content"))):
         if len(content) > MAX_CONTENT_CHARS:
@@ -250,7 +250,7 @@ def search(
 
 
 def tool_search(
-    cwd: Path,
+    _cwd: Path,
     query: str,
     count: int | None = None,
     *,

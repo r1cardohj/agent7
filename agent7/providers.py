@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ def make_client(api_key: str, base_url: str) -> Agent7Client:
 def make_sync_client(api_key: str, base_url: str, *, timeout: float) -> Agent7SyncClient:
     return Agent7SyncClient(api_key=api_key, base_url=base_url, timeout=timeout)
 
+
 def _auth_path() -> Path:
     home = os.environ.get("AGENT7_HOME", "").strip()
     if home:
@@ -44,7 +46,9 @@ def _auth_path() -> Path:
     root = Path(xdg).expanduser() / "agent7" if xdg else Path.home() / ".config" / "agent7"
     return root / "auth.json"
 
+
 agent7_auth_path = _auth_path
+
 
 def load_auth() -> dict[str, Any]:
     path = _auth_path()
@@ -56,27 +60,26 @@ def load_auth() -> dict[str, Any]:
         return {}
     return data if isinstance(data, dict) else {}
 
+
 def _save(data: dict[str, Any]) -> Path:
     path = _auth_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(tmp, 0o600)
-    except OSError:
-        pass
     tmp.replace(path)
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(path, 0o600)
-    except OSError:
-        pass
     return path
+
 
 @dataclass
 class Credential:
     api_key: str
     base_url: str
     source: str
+
 
 @dataclass
 class ApiKeyProvider:
@@ -101,11 +104,17 @@ class ApiKeyProvider:
         if isinstance(entry, dict) and entry.get("type") != "oauth":
             key = entry.get("key")
             if isinstance(key, str) and key.strip():
-                bu = entry.get("baseUrl") if isinstance(entry.get("baseUrl"), str) else self.default_base
+                bu = (
+                    entry.get("baseUrl")
+                    if isinstance(entry.get("baseUrl"), str)
+                    else self.default_base
+                )
                 return Credential(key.strip(), bu, "agent7")
         return None
 
-    async def login(self, *, args: list[str], prompt_secret: Any, on_status: Any | None = None) -> Credential:
+    async def login(
+        self, *, _args: list[str], prompt_secret: Any, _on_status: Any | None = None
+    ) -> Credential:
         key = (prompt_secret(self.prompt) or "").strip()
         if not key:
             raise ValueError("cancelled — empty key")
@@ -146,11 +155,24 @@ class ApiKeyProvider:
     def make_client(self, cred: Credential) -> Agent7Client:
         return make_client(cred.api_key, cred.base_url)
 
+
 _BUILTINS = [
-    ApiKeyProvider("deepseek", ("ds",), ("DEEPSEEK_API_KEY",),
-                   "https://api.deepseek.com", "DeepSeek API key", "deepseek-chat"),
-    ApiKeyProvider("kimi", (), ("KIMI_API_KEY",),
-                   "https://api.kimi.com/coding/v1", "Kimi Code API key", "kimi-for-coding"),
+    ApiKeyProvider(
+        "deepseek",
+        ("ds",),
+        ("DEEPSEEK_API_KEY",),
+        "https://api.deepseek.com",
+        "DeepSeek API key",
+        "deepseek-chat",
+    ),
+    ApiKeyProvider(
+        "kimi",
+        (),
+        ("KIMI_API_KEY",),
+        "https://api.kimi.com/coding/v1",
+        "Kimi Code API key",
+        "kimi-for-coding",
+    ),
 ]
 _REGISTRY: dict[str, ApiKeyProvider] = {}
 for _p in _BUILTINS:
@@ -158,19 +180,24 @@ for _p in _BUILTINS:
     for _a in _p.aliases:
         _REGISTRY[_a] = _p
 
+
 def get_provider(name: str) -> ApiKeyProvider | None:
     return _REGISTRY.get(name.lower().replace("_", "-"))
+
 
 def default_model_for(provider_id: str | None) -> str:
     """Fallback model when a provider's /models list is unavailable."""
     p = get_provider(provider_id or "")
     return p.default_model if p and p.default_model else _BUILTINS[0].default_model
 
+
 def list_providers() -> list[ApiKeyProvider]:
     return list(_BUILTINS)
 
+
 def resolve_all() -> dict[str, Credential]:
     return {p.id: c for p in _BUILTINS if (c := p.resolve())}
+
 
 def resolve_default() -> tuple[ApiKeyProvider, Credential] | None:
     active = load_auth().get("active")
@@ -183,14 +210,18 @@ def resolve_default() -> tuple[ApiKeyProvider, Credential] | None:
             return p, c
     return None
 
+
 def login_hints() -> str:
     return " | ".join(f"/login {p.preferred_login}" for p in _BUILTINS)
+
 
 def describe_found() -> list[tuple[str, str]]:
     active = load_auth().get("active")
     return [
         (f"{'*' if active == p.id else ' '} {p.id}", c.source)
-        for p in _BUILTINS if (c := p.resolve())
+        for p in _BUILTINS
+        if (c := p.resolve())
     ]
+
 
 Provider = ApiKeyProvider

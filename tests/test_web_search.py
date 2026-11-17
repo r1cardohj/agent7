@@ -17,8 +17,8 @@ from agent7.web_search import (
     MAX_QUERY_CHARS,
     MAX_RESULTS_CHARS,
     MAX_SUMMARY_CHARS,
-    _HttpError,
     _endpoint,
+    _HttpError,
     search,
     skill_path,
 )
@@ -93,7 +93,7 @@ class SearchRequestTests(unittest.TestCase):
     def test_default_count_is_used_when_omitted(self) -> None:
         seen: dict = {}
 
-        def post(url: str, payload: dict, api_key: str, timeout: float) -> dict:
+        def post(_url: str, payload: dict, _api_key: str, _timeout: float) -> dict:
             seen.update(payload)
             return _body(_result())
 
@@ -134,7 +134,7 @@ class SearchRequestTests(unittest.TestCase):
     def test_ori_question_is_forwarded_and_capped(self) -> None:
         seen: dict = {}
 
-        def post(url: str, payload: dict, api_key: str, timeout: float) -> dict:
+        def post(_url: str, payload: dict, _api_key: str, _timeout: float) -> dict:
             seen.update(payload)
             return _body(_result())
 
@@ -146,7 +146,7 @@ class SearchRequestTests(unittest.TestCase):
     def test_blank_ori_question_is_dropped(self) -> None:
         seen: dict = {}
 
-        def post(url: str, payload: dict, api_key: str, timeout: float) -> dict:
+        def post(_url: str, payload: dict, _api_key: str, _timeout: float) -> dict:
             seen.update(payload)
             return _body(_result())
 
@@ -182,9 +182,7 @@ class SearchRequestTests(unittest.TestCase):
     def test_query_and_count_are_validated_before_any_request(self) -> None:
         with _with_key(), patch("agent7.web_search._post") as post:
             self.assertIn("non-empty", search("   "))
-            self.assertIn(
-                f"at most {MAX_QUERY_CHARS}", search("q" * (MAX_QUERY_CHARS + 1))
-            )
+            self.assertIn(f"at most {MAX_QUERY_CHARS}", search("q" * (MAX_QUERY_CHARS + 1)))
             self.assertIn("between 1 and 50", search("q", count=0))
             self.assertIn("between 1 and 50", search("q", count=51))
             self.assertIn("must be an integer", search("q", count="many"))
@@ -195,14 +193,17 @@ class SearchRequestTests(unittest.TestCase):
         failures = [_HttpError(429, "Too Many Requests")]
         calls = {"n": 0}
 
-        def post(url: str, payload: dict, api_key: str, timeout: float) -> dict:
+        def post(_url: str, _payload: dict, _api_key: str, _timeout: float) -> dict:
             calls["n"] += 1
             if failures:
                 raise failures.pop()
             return _body(_result())
 
-        with _with_key(), patch("agent7.web_search._post", side_effect=post), \
-             patch("agent7.web_search.time.sleep") as sleep:
+        with (
+            _with_key(),
+            patch("agent7.web_search._post", side_effect=post),
+            patch("agent7.web_search.time.sleep") as sleep,
+        ):
             text = search("q")
 
         self.assertEqual(calls["n"], 2)  # one retry, then success
@@ -210,9 +211,11 @@ class SearchRequestTests(unittest.TestCase):
         self.assertIn("DeepSeek V4", text)
 
     def test_exhausted_retries_report_the_rate_limit(self) -> None:
-        with _with_key(), \
-             patch("agent7.web_search._post", side_effect=_HttpError(503, "upstream")), \
-             patch("agent7.web_search.time.sleep"):
+        with (
+            _with_key(),
+            patch("agent7.web_search._post", side_effect=_HttpError(503, "upstream")),
+            patch("agent7.web_search.time.sleep"),
+        ):
             text = search("q")
 
         self.assertIn("503", text)
@@ -221,12 +224,15 @@ class SearchRequestTests(unittest.TestCase):
     def test_payment_required_is_not_retried(self) -> None:
         calls = {"n": 0}
 
-        def post(url: str, payload: dict, api_key: str, timeout: float) -> dict:
+        def post(_url: str, _payload: dict, _api_key: str, _timeout: float) -> dict:
             calls["n"] += 1
             raise _HttpError(402, "Insufficient Balance")
 
-        with _with_key(), patch("agent7.web_search._post", side_effect=post), \
-             patch("agent7.web_search.time.sleep") as sleep:
+        with (
+            _with_key(),
+            patch("agent7.web_search._post", side_effect=post),
+            patch("agent7.web_search.time.sleep") as sleep,
+        ):
             text = search("q")
 
         self.assertEqual(calls["n"], 1)
@@ -235,8 +241,10 @@ class SearchRequestTests(unittest.TestCase):
         self.assertIn("top up", text)
 
     def test_missing_key_explains_how_to_log_in(self) -> None:
-        with patch("agent7.web_search.get_provider", return_value=_StubProvider(None)), \
-             patch("agent7.web_search._post") as post:
+        with (
+            patch("agent7.web_search.get_provider", return_value=_StubProvider(None)),
+            patch("agent7.web_search._post") as post,
+        ):
             text = search("q")
 
         post.assert_not_called()
@@ -266,9 +274,12 @@ class HttpPostTests(unittest.TestCase):
         self.assertIn("'count' must be between 1 and 50", text)
 
     def test_transport_failures_are_retried_once_then_reported(self) -> None:
-        with patch(
-            "urllib.request.urlopen", side_effect=urllib.error.URLError("dns failure")
-        ) as open_url, patch("agent7.web_search.time.sleep"):
+        with (
+            patch(
+                "urllib.request.urlopen", side_effect=urllib.error.URLError("dns failure")
+            ) as open_url,
+            patch("agent7.web_search.time.sleep"),
+        ):
             text = search("q", api_key="sk-test", base_url="https://api.deepseek.com")
 
         self.assertEqual(open_url.call_count, 3)  # one attempt plus two retries
@@ -329,7 +340,7 @@ class SearchToolWiringTests(unittest.TestCase):
     def test_dispatch_forwards_the_user_question(self) -> None:
         seen: dict = {}
 
-        def post(url: str, payload: dict, api_key: str, timeout: float) -> dict:
+        def post(_url: str, payload: dict, _api_key: str, _timeout: float) -> dict:
             seen.update(payload)
             return _body(_result())
 

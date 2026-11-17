@@ -56,10 +56,12 @@ RETRY_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 FAILOVER_STATUS = frozenset({401, 403, 404})
 OVERFLOW_STATUS = frozenset({400, 413, 422})
 
+
 class Interrupted(Exception):
     def __init__(self, partial: str = "") -> None:
         self.partial = partial
         super().__init__(partial)
+
 
 @dataclass(frozen=True)
 class Shell:
@@ -68,16 +70,19 @@ class Shell:
     name: str  # bash | powershell | cmd
     argv: tuple[str, ...]  # prefix; the command string is appended as one arg
 
+
 _SHELL_HINTS = {
     "bash": "rg, grep, find, ls (POSIX)",
     "powershell": "rg if available, Get-ChildItem, Select-String (PowerShell)",
     "cmd": "dir, findstr; rg if on PATH (cmd.exe)",
 }
 
+
 def _is_wsl_bash_stub(path: str) -> bool:
     # Windows ships System32\bash.exe as a WSL launcher — skip it for local Git Bash.
     norm = path.replace("/", "\\").lower()
     return norm.endswith("\\system32\\bash.exe") or norm.endswith("\\sysnative\\bash.exe")
+
 
 def _git_bash_path() -> str | None:
     found = shutil.which("bash")
@@ -96,6 +101,7 @@ def _git_bash_path() -> str | None:
             if cand.is_file():
                 return str(cand)
     return None
+
 
 def resolve_shell(*, platform: str | None = None) -> Shell:
     """Pick a shell from sys.platform (overridable via AGENT7_SHELL=bash|powershell|cmd|/path)."""
@@ -122,6 +128,7 @@ def resolve_shell(*, platform: str | None = None) -> Shell:
     bash = shutil.which("bash") or "/bin/bash"
     return Shell("bash", (bash, "-lc"))
 
+
 def _shell_for_name(name: str, platform: str) -> Shell:
     if name == "bash":
         if platform == "win32":
@@ -135,10 +142,13 @@ def _shell_for_name(name: str, platform: str) -> Shell:
     comspec = os.environ.get("COMSPEC", "cmd.exe")
     return Shell("cmd", (comspec, "/c"))
 
+
 def make_system(shell: Shell | None = None) -> str:
     sh = shell or resolve_shell()
     hint = _SHELL_HINTS.get(sh.name, sh.name)
-    os_name = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
+    os_name = (
+        "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
+    )
     return (
         "You are a coding agent. Tools: read, write, edit, bash, fetch, search. "
         "Explore before editing; read pages ~200 lines (offset/limit). "
@@ -163,8 +173,10 @@ def make_system(shell: Shell | None = None) -> str:
         "unless the user asks otherwise. Finish with a short summary."
     )
 
+
 SHELL = resolve_shell()
 SYSTEM = make_system(SHELL)
+
 
 def _fn(name: str, desc: str, props: dict, required: list[str]) -> dict:
     return {
@@ -176,6 +188,7 @@ def _fn(name: str, desc: str, props: dict, required: list[str]) -> dict:
         },
     }
 
+
 _EDIT_ITEM = {
     "type": "object",
     "properties": {
@@ -186,18 +199,35 @@ _EDIT_ITEM = {
 }
 
 TOOLS: list[dict[str, Any]] = [
-    _fn("read", "Read text file (numbered). Default 200 lines; page with offset/limit. "
+    _fn(
+        "read",
+        "Read text file (numbered). Default 200 lines; page with offset/limit. "
         "Also reads images (png/jpg/jpeg/gif/webp/bmp), which are returned as image attachments.",
         {"path": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}},
-        ["path"]),
-    _fn("write", "Create or overwrite a whole file.",
-        {"path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"]),
-    _fn("edit", "Precise edits. One call may include multiple edits[] against the original file; no overlaps.",
+        ["path"],
+    ),
+    _fn(
+        "write",
+        "Create or overwrite a whole file.",
+        {"path": {"type": "string"}, "content": {"type": "string"}},
+        ["path", "content"],
+    ),
+    _fn(
+        "edit",
+        "Precise edits. One call may include multiple edits[] against the original "
+        "file; no overlaps.",
         {"path": {"type": "string"}, "edits": {"type": "array", "items": _EDIT_ITEM}},
-        ["path", "edits"]),
-    _fn("bash", "Run a shell command in cwd (host shell). Output capped ~12k chars.",
-        {"command": {"type": "string"}, "timeout": {"type": "integer"}}, ["command"]),
-    _fn("fetch", "Fetch an http/https web page and extract readable Markdown text with metadata.",
+        ["path", "edits"],
+    ),
+    _fn(
+        "bash",
+        "Run a shell command in cwd (host shell). Output capped ~12k chars.",
+        {"command": {"type": "string"}, "timeout": {"type": "integer"}},
+        ["command"],
+    ),
+    _fn(
+        "fetch",
+        "Fetch an http/https web page and extract readable Markdown text with metadata.",
         {
             "url": {"type": "string"},
             "max_chars": {
@@ -205,15 +235,16 @@ TOOLS: list[dict[str, Any]] = [
                 "minimum": 1,
                 "maximum": web_fetch.MAX_FETCH_CHARS,
                 "description": (
-                    f"Maximum returned characters; defaults to "
-                    f"{web_fetch.DEFAULT_FETCH_CHARS}."
+                    f"Maximum returned characters; defaults to {web_fetch.DEFAULT_FETCH_CHARS}."
                 ),
             },
         },
-        ["url"]),
-    _fn("search",
+        ["url"],
+    ),
+    _fn(
+        "search",
         "Search the web (DeepSeek Search API) for ranked pages with summaries. "
-        "The query takes site:, -site:, \"...\", lang:, after: and before: operators. "
+        'The query takes site:, -site:, "...", lang:, after: and before: operators. '
         f"Read {web_search.skill_path()} before the first search of a task for "
         "query syntax and result triage.",
         {
@@ -233,15 +264,19 @@ TOOLS: list[dict[str, Any]] = [
                 ),
             },
         },
-        ["query"]),
+        ["query"],
+    ),
 ]
+
 
 def _truncate(s: str, limit: int, *, tag: str = "truncated") -> str:
     return s if len(s) <= limit else s[:limit] + f"\n...[{tag} {len(s) - limit} chars]"
 
+
 def _resolve(cwd: Path, path: str) -> Path:
     p = Path(path.removeprefix("@").replace("\\ ", " ")).expanduser()  # `@path` from the REPL
     return p if p.is_absolute() else cwd / p
+
 
 def _write_atomic(fp: Path, text: str) -> None:
     """Temp file + os.replace: a Ctrl-C mid-write can never truncate the file."""
@@ -260,6 +295,7 @@ def _write_atomic(fp: Path, text: str) -> None:
     finally:
         tmp.unlink(missing_ok=True)
 
+
 def _count_lines(fp: Path) -> int:
     """Total line count at C speed (bytes.count) so a 100 MB log stays fast."""
     total, tail = 0, b"\n"
@@ -269,9 +305,14 @@ def _count_lines(fp: Path) -> int:
             tail = chunk[-1:]
     return total if tail == b"\n" or total == 0 else total + 1
 
+
 def tool_read(
-    cwd: Path, path: str, offset: int | None = None, limit: int | None = None,
-    *, vision: bool = True,
+    cwd: Path,
+    path: str,
+    offset: int | None = None,
+    limit: int | None = None,
+    *,
+    vision: bool = True,
 ) -> str | ToolImageOutput:
     fp = _resolve(cwd, path)
     if not fp.is_file():
@@ -315,6 +356,7 @@ def tool_read(
         body = f"{body}\n{hint}]"
     return body
 
+
 def _write_stats(fp: Path, before: str, after: str, *, kind: str = "write") -> str:
     a, b = before.splitlines(), after.splitlines()
     add = delete = 0
@@ -327,6 +369,7 @@ def _write_stats(fp: Path, before: str, after: str, *, kind: str = "write") -> s
             delete += i2 - i1
             add += j2 - j1
     return f"{kind}  {fp}  +{add} -{delete}"
+
 
 def tool_write(
     cwd: Path,
@@ -346,6 +389,7 @@ def tool_write(
         on_preview(_write_stats(fp, before, after, kind="write"))
     _write_atomic(fp, after)
     return f"wrote {len(after.encode('utf-8'))} bytes to {fp}"
+
 
 def tool_edit(
     cwd: Path,
@@ -377,7 +421,7 @@ def tool_edit(
         start = before.index(old)
         spans.append((start, start + len(old), new, i))
     ordered = sorted(spans, key=lambda s: s[0])
-    for a, b in zip(ordered, ordered[1:]):
+    for a, b in zip(ordered, ordered[1:], strict=False):
         if a[1] > b[0]:
             return (
                 f"error: edits[{a[3]}] and edits[{b[3]}] overlap; "
@@ -394,13 +438,16 @@ def tool_edit(
     n = len(edits)
     return f"edited {n} span{'s' if n != 1 else ''} in {fp}"
 
+
 _BASH_HEAD_BYTES = MAX_BASH_CHARS * 4  # one char is at most 4 bytes in UTF-8
+
 
 def _head(f: Any) -> str:
     """First ~MAX_BASH_CHARS chars of a temp file; the rest never enters memory."""
     f.flush()
     f.seek(0)
     return f.read(_BASH_HEAD_BYTES).decode("utf-8", "replace")
+
 
 def _process_group_options() -> dict[str, Any]:
     if os.name == "posix":
@@ -412,20 +459,18 @@ def _process_group_options() -> dict[str, Any]:
 
 def _kill_process_tree(proc: subprocess.Popen) -> None:
     if os.name == "posix":
-        try:
+        with suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         return
     if sys.platform == "win32":
-        try:
+        with suppress(FileNotFoundError, subprocess.TimeoutExpired):
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=5, check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
     if proc.poll() is None:
         proc.kill()
 
@@ -442,7 +487,11 @@ def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
     with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
         try:
             proc = subprocess.Popen(
-                argv, cwd=cwd, stdout=out_f, stderr=err_f, env=env,
+                argv,
+                cwd=cwd,
+                stdout=out_f,
+                stderr=err_f,
+                env=env,
                 **_process_group_options(),
             )
         except FileNotFoundError:
@@ -462,14 +511,20 @@ def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
             parts.append("stderr:\n" + stderr)
     return _truncate("\n".join(parts), MAX_BASH_CHARS)
 
+
 HANDLERS = {
-    "read": tool_read, "write": tool_write, "edit": tool_edit, "bash": tool_bash,
-    "fetch": web_fetch.tool_fetch, "search": web_search.tool_search,
+    "read": tool_read,
+    "write": tool_write,
+    "edit": tool_edit,
+    "bash": tool_bash,
+    "fetch": web_fetch.tool_fetch,
+    "search": web_search.tool_search,
 }
 _PREVIEW_TOOLS = frozenset({"write", "edit"})
 # Tools that get the user's own wording alongside the model's query, so a search
 # keeps the intent behind a short or over-compressed query string.
 _CONTEXT_TOOLS = frozenset({"search"})
+
 
 def _last_user_question(messages: list[dict[str, Any]]) -> str | None:
     """The user's own words for the current task, used to sharpen search intent."""
@@ -478,6 +533,7 @@ def _last_user_question(messages: list[dict[str, Any]]) -> str | None:
         if message.get("role") == "user" and isinstance(content, str) and content.strip():
             return content
     return None
+
 
 def dispatch_tool(
     cwd: Path,
@@ -504,9 +560,11 @@ def dispatch_tool(
     except Exception as e:  # noqa: BLE001
         return f"error: {type(e).__name__}: {e}"
 
+
 def _trunc(s: str, n: int = 88) -> str:
     s = " ".join(s.split())
     return s if len(s) <= n else s[: n - 1] + "…"
+
 
 def tool_summary(name: str, args: dict[str, Any]) -> str:
     if name == "bash":
@@ -529,12 +587,14 @@ def tool_summary(name: str, args: dict[str, Any]) -> str:
         return f"{args.get('path', '')}  ({n} edit{'s' if n != 1 else ''})"
     return _trunc(json.dumps(args, ensure_ascii=False))
 
+
 def should_compact(
     prompt_tokens: int | None, context_limit: int | None, *, threshold: float = COMPACT_THRESHOLD
 ) -> bool:
     if prompt_tokens is None or context_limit is None or context_limit <= 0:
         return False
     return prompt_tokens >= int(context_limit * threshold)
+
 
 def compact_messages(
     messages: list[dict[str, Any]],
@@ -555,7 +615,8 @@ def compact_messages(
     old_tool_before = keep_from or len(rest)
     if keep_from == 0 and tool_idxs:
         old_tool_before = (
-            len(rest) if keep_tool_results <= 0
+            len(rest)
+            if keep_tool_results <= 0
             else tool_idxs[max(0, len(tool_idxs) - keep_tool_results)]
         )
     out, changed = list(head), 0
@@ -567,24 +628,32 @@ def compact_messages(
                 # Old screenshots are the bulkiest history there is; keep the note.
                 updated = {
                     **updated,
-                    "content": (content if isinstance(content, str) else "") + "\n[image omitted: compacted]",
+                    "content": (content if isinstance(content, str) else "")
+                    + "\n[image omitted: compacted]",
                 }
                 updated.pop(IMAGES_KEY, None)
                 content = updated["content"]
             if isinstance(content, str) and len(content) > tool_max_chars:
-                updated = {**updated, "content": _truncate(content, tool_max_chars, tag="compacted")}
+                updated = {
+                    **updated,
+                    "content": _truncate(content, tool_max_chars, tag="compacted"),
+                }
             if updated is not m:
                 changed += 1
             out.append(updated)
         elif (
-            role == "assistant" and i < keep_from and isinstance(content, str)
-            and len(content) > assistant_max_chars and not m.get("tool_calls")
+            role == "assistant"
+            and i < keep_from
+            and isinstance(content, str)
+            and len(content) > assistant_max_chars
+            and not m.get("tool_calls")
         ):
             out.append({**m, "content": _truncate(content, assistant_max_chars, tag="compacted")})
             changed += 1
         else:
             out.append(m)
     return out, changed
+
 
 async def _emit(cb: Callable[..., Any] | None, *args: Any) -> None:
     if cb and asyncio.iscoroutine(maybe := cb(*args)):
@@ -598,10 +667,17 @@ class _Retryable(Exception):
         self.cause = cause
         super().__init__(str(cause))
 
-_RETRY_ERRORS = frozenset({
-    "APIConnectionError", "APITimeoutError", "RateLimitError",
-    "InternalServerError", "ServiceUnavailableError", "BadGatewayError",
-})
+
+_RETRY_ERRORS = frozenset(
+    {
+        "APIConnectionError",
+        "APITimeoutError",
+        "RateLimitError",
+        "InternalServerError",
+        "ServiceUnavailableError",
+        "BadGatewayError",
+    }
+)
 # Connection and timeout errors have no usable HTTP status; they are transient.
 _TRANSIENT_ERRORS = _RETRY_ERRORS | {"APIConnectionError", "APITimeoutError"}
 
@@ -632,10 +708,18 @@ def _is_context_overflow(exc: BaseException) -> bool:
     if getattr(exc, "status_code", None) not in OVERFLOW_STATUS:
         return False
     text = f"{exc} {getattr(exc, 'body', '')}".lower()
-    return any(k in text for k in (
-        "context_length", "context length", "maximum context", "too many tokens",
-        "prompt is too long", "input is too long",
-    ))
+    return any(
+        k in text
+        for k in (
+            "context_length",
+            "context length",
+            "maximum context",
+            "too many tokens",
+            "prompt is too long",
+            "input is too long",
+        )
+    )
+
 
 def _is_tool_history_error(exc: BaseException) -> bool:
     """Some compatible Responses backends reject valid raw tool-call replay."""
@@ -643,8 +727,7 @@ def _is_tool_history_error(exc: BaseException) -> bool:
         return False
     text = f"{exc} {getattr(exc, 'body', '')}".lower()
     return "tool_call" in text and (
-        "must be followed by tool messages" in text
-        or "did not have response messages" in text
+        "must be followed by tool messages" in text or "did not have response messages" in text
     )
 
 
@@ -662,7 +745,8 @@ def _without_orphan_tool_results(messages: list[dict[str, Any]]) -> None:
         for call in message.get("tool_calls") or []
     }
     messages[:] = [
-        message for message in messages
+        message
+        for message in messages
         if message.get("role") != "tool" or message.get("tool_call_id") in calls
     ]
 
@@ -677,20 +761,28 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
             chars += len(str((call.get("function") or {}).get("arguments") or ""))
     return chars // 4 + images * IMAGE_TOKEN_ESTIMATE + 1
 
+
 async def _open_stream(client: AsyncOpenAI, kwargs: dict[str, Any]) -> Any:
     try:
         return await client.responses.create(**kwargs)
     except (asyncio.CancelledError, KeyboardInterrupt) as e:
         raise Interrupted() from e
 
+
 def _consume_close_result(task: asyncio.Task) -> None:
     """Retrieve a detached close task's exception after an interrupted cleanup."""
     if not task.cancelled():
         task.exception()
 
+
 async def _stream_once(
-    client: AsyncOpenAI, kwargs: dict[str, Any], *, on_delta, on_thinking,
-    on_answer_to_thinking, on_finish,
+    client: AsyncOpenAI,
+    kwargs: dict[str, Any],
+    *,
+    on_delta,
+    on_thinking,
+    on_answer_to_thinking,
+    on_finish,
 ) -> ResponseTurn:
     try:
         stream = await _open_stream(client, kwargs)
@@ -719,13 +811,17 @@ async def _stream_once(
                         emitted = True
                         parts.append(text)
                         await _emit(on_thinking if saw_tools else on_delta, text)
-                elif item.get("type") == "reasoning" and not emitted:
+                elif (
+                    item.get("type") == "reasoning"
+                    and not emitted
+                    and (text := reasoning_text(item))
+                ):
                     # Delta-less compatible endpoints still expose useful summaries.
-                    if text := reasoning_text(item):
-                        emitted = True
-                        await _emit(on_thinking, text)
+                    emitted = True
+                    await _emit(on_thinking, text)
             elif kind in (
-                "response.reasoning_text.delta", "response.reasoning_summary_text.delta",
+                "response.reasoning_text.delta",
+                "response.reasoning_summary_text.delta",
             ):
                 if text := getattr(event, "delta", ""):
                     emitted = True
@@ -737,7 +833,9 @@ async def _stream_once(
                     await _emit(on_thinking if saw_tools else on_delta, text)
             elif kind in ("response.completed", "response.incomplete"):
                 response = event.response
-                final_output = [plain_item(item) for item in getattr(response, "output", None) or []]
+                final_output = [
+                    plain_item(item) for item in getattr(response, "output", None) or []
+                ]
                 if final_output:
                     output = final_output
                     if not parts and (text := output_text(output)):
@@ -749,7 +847,9 @@ async def _stream_once(
             elif kind == "response.failed":
                 response = event.response
                 error = getattr(response, "error", None)
-                raise RuntimeError(getattr(error, "message", None) or "Responses API request failed")
+                raise RuntimeError(
+                    getattr(error, "message", None) or "Responses API request failed"
+                )
             elif kind == "response.error":
                 error = getattr(event, "error", None)
                 raise RuntimeError(getattr(error, "message", None) or "Responses API stream failed")
@@ -782,16 +882,24 @@ async def _stream_once(
                         # Preserve the original interrupt over cleanup cancellation.
     finish = response_status(response)[0] if response is not None else None
     return ResponseTurn(
-        text="".join(parts), output=output, usage=response_usage(response),
+        text="".join(parts),
+        output=output,
+        usage=response_usage(response),
         finish_reason=finish,
     )
 
+
 def _completion_kwargs(
-    model: str, messages: list[dict[str, Any]], provider_id: str | None,
+    model: str,
+    messages: list[dict[str, Any]],
+    provider_id: str | None,
 ) -> dict[str, Any]:
     inputs, instructions = request_input(messages, provider_id, vision=supports_vision(model))
     kwargs: dict[str, Any] = {
-        "model": model, "input": inputs, "tools": response_tools(TOOLS), "stream": True,
+        "model": model,
+        "input": inputs,
+        "tools": response_tools(TOOLS),
+        "stream": True,
     }
     if instructions is not None:
         kwargs["instructions"] = instructions
@@ -802,16 +910,26 @@ def _completion_kwargs(
         kwargs["reasoning"] = {"effort": "none"}
     return kwargs
 
+
 async def _stream_with_retries(
-    client: AsyncOpenAI, kwargs: dict[str, Any], *, on_delta, on_thinking,
-    on_answer_to_thinking, on_finish,
+    client: AsyncOpenAI,
+    kwargs: dict[str, Any],
+    *,
+    on_delta,
+    on_thinking,
+    on_answer_to_thinking,
+    on_finish,
 ) -> ResponseTurn:
     """Retry one target, preserving _Retryable's no-output replay guarantee."""
     for attempt in range(len(RETRY_SLEEPS) + 1):
         try:
             return await _stream_once(
-                client, kwargs, on_delta=on_delta, on_thinking=on_thinking,
-                on_answer_to_thinking=on_answer_to_thinking, on_finish=on_finish,
+                client,
+                kwargs,
+                on_delta=on_delta,
+                on_thinking=on_thinking,
+                on_answer_to_thinking=on_answer_to_thinking,
+                on_finish=on_finish,
             )
         except _Retryable as e:
             if attempt == len(RETRY_SLEEPS) or not _retryable(e.cause):
@@ -819,32 +937,52 @@ async def _stream_with_retries(
             await asyncio.sleep(RETRY_SLEEPS[attempt])
     raise AssertionError("unreachable")  # pragma: no cover
 
+
 async def _stream_completion(
-    client: AsyncOpenAI, *, model: str, messages: list[dict[str, Any]],
-    on_delta, on_thinking, on_answer_to_thinking, on_finish=None,
+    client: AsyncOpenAI,
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    on_delta,
+    on_thinking,
+    on_answer_to_thinking,
+    on_finish=None,
     provider_id: str | None = None,
 ) -> ResponseTurn:
     try:
         return await _stream_with_retries(
-            client, _completion_kwargs(model, messages, provider_id),
-            on_delta=on_delta, on_thinking=on_thinking,
-            on_answer_to_thinking=on_answer_to_thinking, on_finish=on_finish,
+            client,
+            _completion_kwargs(model, messages, provider_id),
+            on_delta=on_delta,
+            on_thinking=on_thinking,
+            on_answer_to_thinking=on_answer_to_thinking,
+            on_finish=on_finish,
         )
     except _Retryable as e:
         raise e.cause from None
 
+
 async def _stream_failover(
-    route: FailoverRoute, *, messages: list[dict[str, Any]],
-    on_delta, on_thinking, on_answer_to_thinking, on_finish, on_route,
+    route: FailoverRoute,
+    *,
+    messages: list[dict[str, Any]],
+    on_delta,
+    on_thinking,
+    on_answer_to_thinking,
+    on_finish,
+    on_route,
 ) -> tuple[ResponseTurn, RouteTarget]:
     """Replay a silent failed request on the next target, never a partial stream."""
     while True:
         target = route.current
         try:
             turn = await _stream_with_retries(
-                target.client, _completion_kwargs(target.model, messages, target.provider_id),
-                on_delta=on_delta, on_thinking=on_thinking,
-                on_answer_to_thinking=on_answer_to_thinking, on_finish=on_finish,
+                target.client,
+                _completion_kwargs(target.model, messages, target.provider_id),
+                on_delta=on_delta,
+                on_thinking=on_thinking,
+                on_answer_to_thinking=on_answer_to_thinking,
+                on_finish=on_finish,
             )
         except _Retryable as e:
             # _stream_once only wraps failures before any text/reasoning was
@@ -857,8 +995,10 @@ async def _stream_failover(
         else:
             return turn, target
 
+
 def _answer_pending(
-    messages: list[dict[str, Any]], calls: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
+    calls: list[dict[str, Any]],
     note: str = "error: interrupted",
 ) -> None:
     """Answer every tool call that will never run, so the history stays replayable."""
@@ -868,12 +1008,30 @@ def _answer_pending(
         if isinstance(call_id, str) and call_id and call_id not in answered:
             messages.append({"role": "tool", "tool_call_id": call_id, "content": note})
 
+
 async def run_agent(
-    task: str, *, cwd: Path, client: AsyncOpenAI, model: str, max_turns: int = DEFAULT_MAX_TURNS,
-    messages: list[dict[str, Any]], on_delta=None, on_thinking=None, on_answer_to_thinking=None,
-    on_tool=None, on_tool_start=None, on_preview=None, on_usage=None, context_limit: int | None = None,
-    prompt_tokens: int | None = None, on_compact=None, on_finish=None, on_model_start=None,
-    provider_id: str | None = None, route: FailoverRoute | None = None, on_route=None,
+    task: str,
+    *,
+    cwd: Path,
+    client: AsyncOpenAI,
+    model: str,
+    max_turns: int = DEFAULT_MAX_TURNS,
+    messages: list[dict[str, Any]],
+    on_delta=None,
+    on_thinking=None,
+    on_answer_to_thinking=None,
+    on_tool=None,
+    on_tool_start=None,
+    on_preview=None,
+    on_usage=None,
+    context_limit: int | None = None,
+    prompt_tokens: int | None = None,
+    on_compact=None,
+    on_finish=None,
+    on_model_start=None,
+    provider_id: str | None = None,
+    route: FailoverRoute | None = None,
+    on_route=None,
 ) -> str:
     cwd = cwd.resolve()
     messages.append({"role": "user", "content": task})
@@ -901,15 +1059,24 @@ async def run_agent(
                 target: RouteTarget | None = None
                 if route is not None:
                     turn, target = await _stream_failover(
-                        route, messages=messages, on_delta=on_delta,
-                        on_thinking=on_thinking, on_answer_to_thinking=on_answer_to_thinking,
-                        on_finish=on_finish, on_route=on_route,
+                        route,
+                        messages=messages,
+                        on_delta=on_delta,
+                        on_thinking=on_thinking,
+                        on_answer_to_thinking=on_answer_to_thinking,
+                        on_finish=on_finish,
+                        on_route=on_route,
                     )
                 else:
                     turn = await _stream_completion(
-                        client, model=model, messages=messages, on_delta=on_delta,
-                        on_thinking=on_thinking, on_answer_to_thinking=on_answer_to_thinking,
-                        on_finish=on_finish, provider_id=provider_id,
+                        client,
+                        model=model,
+                        messages=messages,
+                        on_delta=on_delta,
+                        on_thinking=on_thinking,
+                        on_answer_to_thinking=on_answer_to_thinking,
+                        on_finish=on_finish,
+                        provider_id=provider_id,
                     )
                 answered_by = target.provider_id if target else provider_id
                 answered_model = target.model if target else model
@@ -936,9 +1103,7 @@ async def run_agent(
                 squeezed: list[dict[str, Any]] = []
                 n = 0
                 if retries <= OVERFLOW_RETRIES and _is_context_overflow(e):
-                    squeezed, n = compact_messages(
-                        messages, keep_user_turns=1, keep_tool_results=1
-                    )
+                    squeezed, n = compact_messages(messages, keep_user_turns=1, keep_tool_results=1)
                 if not n:
                     raise
                 discard_raw_output(squeezed)
@@ -953,7 +1118,8 @@ async def run_agent(
                 await _emit(on_usage, usage)
                 last_prompt = usage.get("prompt_tokens", last_prompt)
             assistant: dict[str, Any] = {
-                "role": "assistant", "content": content,
+                "role": "assistant",
+                "content": content,
                 RAW_ITEMS_KEY: raw_state(answered_by, turn.output),
             }
             if tool_calls:
@@ -972,8 +1138,13 @@ async def run_agent(
                     await _emit(on_tool_start, turns, name, args)
                     try:
                         result = await asyncio.to_thread(
-                            dispatch_tool, cwd, name, args,
-                            on_preview=on_preview, user_question=question, model=answered_model,
+                            dispatch_tool,
+                            cwd,
+                            name,
+                            args,
+                            on_preview=on_preview,
+                            user_question=question,
+                            model=answered_model,
                         )
                     except (asyncio.CancelledError, KeyboardInterrupt) as e:
                         # Every tool_call needs a tool message, or the next request is a 400.
@@ -986,9 +1157,15 @@ async def run_agent(
                 if on_tool:
                     await _emit(on_tool, turns, name, args, text)
                 else:
-                    print(f"  [{turns}] {name} {tool_summary(name, args)}", file=sys.stderr, flush=True)
+                    print(
+                        f"  [{turns}] {name} {tool_summary(name, args)}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 tool_message: dict[str, Any] = {
-                    "role": "tool", "tool_call_id": tc["id"], "content": text,
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": text,
                 }
                 if blocks:
                     # Base64 stays in this private field, exactly like pi's image

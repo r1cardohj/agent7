@@ -6,8 +6,9 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from agent7.agent import run_agent
 from responses_fakes import FakeClient, call_turn, text_turn
+
+from agent7.agent import run_agent
 
 
 class RunAgentPreviewTests(unittest.TestCase):
@@ -23,7 +24,7 @@ class RunAgentPreviewTests(unittest.TestCase):
     def _run(self, turns, **kwargs):
         client = FakeClient(turns)
         messages: list[dict[str, Any]] = []
-        kwargs.setdefault("on_tool", lambda *a: None)  # keep stderr quiet
+        kwargs.setdefault("on_tool", lambda *_a: None)  # keep stderr quiet
         answer = asyncio.run(
             run_agent(
                 "change it",
@@ -40,10 +41,15 @@ class RunAgentPreviewTests(unittest.TestCase):
         previews: list[str] = []
         seen_tools: list[tuple[int, str, dict[str, Any], str]] = []
         turns = [
-            call_turn(("edit", {
-                "path": "app.py",
-                "edits": [{"old_string": "'old'", "new_string": "'new'"}],
-            })),
+            call_turn(
+                (
+                    "edit",
+                    {
+                        "path": "app.py",
+                        "edits": [{"old_string": "'old'", "new_string": "'new'"}],
+                    },
+                )
+            ),
             text_turn("done"),
         ]
 
@@ -68,8 +74,8 @@ class RunAgentPreviewTests(unittest.TestCase):
 
         self._run(
             turns,
-            on_tool_start=lambda turn, name, args: events.append(("start", turn, name)),
-            on_tool=lambda turn, name, args, result: events.append(("finish", turn, name)),
+            on_tool_start=lambda turn, name, _args: events.append(("start", turn, name)),
+            on_tool=lambda turn, name, _args, _result: events.append(("finish", turn, name)),
         )
 
         self.assertEqual(events, [("start", 1, "bash"), ("finish", 1, "bash")])
@@ -77,17 +83,22 @@ class RunAgentPreviewTests(unittest.TestCase):
     def test_each_model_round_including_the_one_after_edit_has_a_start_event(self) -> None:
         events: list[object] = []
         turns = [
-            call_turn(("edit", {
-                "path": "app.py",
-                "edits": [{"old_string": "'old'", "new_string": "'new'"}],
-            })),
+            call_turn(
+                (
+                    "edit",
+                    {
+                        "path": "app.py",
+                        "edits": [{"old_string": "'old'", "new_string": "'new'"}],
+                    },
+                )
+            ),
             text_turn("done"),
         ]
 
         self._run(
             turns,
             on_model_start=lambda turn: events.append(("model", turn)),
-            on_preview=lambda stats: events.append("edit finished"),
+            on_preview=lambda _stats: events.append("edit finished"),
         )
 
         self.assertEqual(events, [("model", 1), "edit finished", ("model", 2)])
@@ -106,10 +117,15 @@ class RunAgentPreviewTests(unittest.TestCase):
     def test_tool_error_does_not_preview(self) -> None:
         previews: list[str] = []
         turns = [
-            call_turn(("edit", {
-                "path": "app.py",
-                "edits": [{"old_string": "missing", "new_string": "x"}],
-            })),
+            call_turn(
+                (
+                    "edit",
+                    {
+                        "path": "app.py",
+                        "edits": [{"old_string": "missing", "new_string": "x"}],
+                    },
+                )
+            ),
             text_turn("gave up"),
         ]
 

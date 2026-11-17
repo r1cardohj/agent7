@@ -41,19 +41,17 @@ class HerdrBackgroundTaskTests(unittest.TestCase):
 
         self.assertFalse(background_tasks_available({}, which=found))
         self.assertFalse(background_tasks_available({"HC_TERMINAL_ID": "t7"}, which=missing))
-        self.assertFalse(background_tasks_available(
-            {"HC_TERMINAL_ID": "t7", "AGENT7_NO_HERDR": "1"}, which=found
-        ))
+        self.assertFalse(
+            background_tasks_available(
+                {"HC_TERMINAL_ID": "t7", "AGENT7_NO_HERDR": "1"}, which=found
+            )
+        )
         self.assertTrue(background_tasks_available({"HC_TERMINAL_ID": "t7"}, which=found))
 
     def test_instructions_are_empty_without_the_herdr_cli(self) -> None:
         env = {"HC_TERMINAL_ID": "t7"}
-        self.assertEqual(
-            background_tasks_instructions(env, which=lambda _: None), ""
-        )
-        self.assertEqual(
-            background_tasks_instructions({}, which=lambda _: "/usr/bin/hc"), ""
-        )
+        self.assertEqual(background_tasks_instructions(env, which=lambda _: None), "")
+        self.assertEqual(background_tasks_instructions({}, which=lambda _: "/usr/bin/hc"), "")
 
     def test_instructions_point_to_the_packaged_skill(self) -> None:
         prompt = background_tasks_instructions(
@@ -131,9 +129,7 @@ class HerdrTests(unittest.TestCase):
 
     def test_redirected_output_does_not_receive_escape_sequences(self) -> None:
         stream = io.StringIO()
-        HerdrReporter(env={"HC_TERMINAL_ID": "t7"}, stream=stream)(
-            make_event("turn_started")
-        )
+        HerdrReporter(env={"HC_TERMINAL_ID": "t7"}, stream=stream)(make_event("turn_started"))
         self.assertEqual(stream.getvalue(), "")
 
     def test_lifecycle_maps_to_osc_7501(self) -> None:

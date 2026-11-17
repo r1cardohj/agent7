@@ -1,9 +1,10 @@
+# ruff: noqa: E501
 """Regenerate the README mascot using only the Python standard library."""
 
-from pathlib import Path
 import struct
 import sys
 import zlib
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -31,9 +32,9 @@ def make_svg() -> str:
                 x = end
         paths.append(f'    <path fill="{color}" d="{"".join(runs)}"/>')
     art = "\n".join(paths)
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{SIZE}" height="{SIZE}" viewBox="0 0 {SIZE} {SIZE}" role="img" aria-labelledby="title desc">
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{SIZE}" height="{SIZE}" viewBox="0 0 {SIZE} {SIZE}" role="img" aria-labelledby="title desc">  # noqa: E501
   <title id="title">Seven, the agent7 pixel mascot</title>
-  <desc id="desc">A lavender pixel robot with mint-green eyes, a seven-shaped antenna, and a glowing number seven on its chest.</desc>
+  <desc id="desc">A lavender pixel robot with mint-green eyes, a seven-shaped antenna, and a glowing number seven on its chest.</desc>  # noqa: E501
   <rect width="{SIZE}" height="{SIZE}" fill="{BACKGROUND}"/>
   <g shape-rendering="crispEdges" transform="translate({MARGIN} {MARGIN}) scale({SCALE})">
 {art}
@@ -58,9 +59,12 @@ def make_png() -> bytes:
         pixels.extend(rgba(BACKGROUND) * MARGIN)
         scanlines.extend((b"\x00" + pixels) * SCALE)
     header = struct.pack(">IIBBBBB", SIZE, SIZE, 8, 6, 0, 0, 0)
-    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(
-        b"IDAT", zlib.compress(bytes(scanlines), 9)
-    ) + chunk(b"IEND", b"")
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(bytes(scanlines), 9))
+        + chunk(b"IEND", b"")
+    )
 
 
 def main() -> None:

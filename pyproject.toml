@@ -48,6 +48,47 @@ Issues = "https://github.com/r1cardohj/agent7/issues"
 [project.scripts]
 agent7 = "agent7.cli:main"
 
+[tool.ruff]
+line-length = 100
+extend-exclude = ["evals/repos"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    "W",
+    # Pyflakes
+    "F",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # flake8-unused-arguments
+    "ARG",
+    # pylint (errors & warnings)
+    "PLE",
+    "PLW",
+    "PLC",
+    # isort
+    "I",
+]
+ignore = [
+    # naming conventions live in code review, not the linter
+    "N",
+    # magic numbers: introducing constants for every literal is noisy here
+    "PLR2004",
+    # complexity limits: legacy shapes, enforced informally
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    # lazy (function-level) imports are used intentionally
+    "PLC0415",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

@@ -24,6 +24,7 @@ LifecycleKind = Literal[
     "session_ended",
 ]
 
+
 @dataclass(frozen=True)
 class LifecycleEvent:
     kind: LifecycleKind
@@ -33,7 +34,9 @@ class LifecycleEvent:
     model: str
     reason: str = ""
 
+
 LifecycleListener = Callable[[LifecycleEvent], None]
+
 
 class LifecycleHooks:
     """Ordered, synchronous observers with fault isolation."""
@@ -61,6 +64,7 @@ class LifecycleHooks:
             # interrupt a model request or leave tool calls unanswered.
             with suppress(Exception):
                 listener(event)
+
 
 def emit_lifecycle(session: Any, kind: LifecycleKind, *, reason: str = "") -> None:
     """Emit through a Session, tolerating Session-like objects used by embedders."""

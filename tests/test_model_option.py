@@ -96,11 +96,18 @@ class ModelOptionRunTests(unittest.TestCase):
         return list(root.glob("*.json")) if root.exists() else []
 
     def save_snapshot(self, model_ref: str = "kimi/kimi-for-coding") -> None:
-        save(SimpleNamespace(
-            cwd=self.cwd, model_ref=model_ref, max_turns=30,
-            messages=[{"role": "system", "content": SYSTEM},
-                      {"role": "user", "content": "old"}],
-        ), created_at="2025-01-01T00:00:00+00:00")
+        save(
+            SimpleNamespace(
+                cwd=self.cwd,
+                model_ref=model_ref,
+                max_turns=30,
+                messages=[
+                    {"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": "old"},
+                ],
+            ),
+            created_at="2025-01-01T00:00:00+00:00",
+        )
 
     def run_cli(
         self,
@@ -119,31 +126,42 @@ class ModelOptionRunTests(unittest.TestCase):
             os.environ["AGENT7_MODEL"] = env_model
         credential = SimpleNamespace(source="test")
         provider = SimpleNamespace(
-            id="deepseek", make_client=lambda cred: SimpleNamespace(close=AsyncMock())
+            id="deepseek", make_client=lambda _cred: SimpleNamespace(close=AsyncMock())
         )
         if switch_messages is None:
             switch = AsyncMock(return_value=SimpleNamespace(message=switch_message))
         else:
-            switch = AsyncMock(side_effect=lambda _session, ref: SimpleNamespace(
-                message=switch_messages.get(ref, "ok")))
+            switch = AsyncMock(
+                side_effect=lambda _session, ref: SimpleNamespace(
+                    message=switch_messages.get(ref, "ok")
+                )
+            )
         run_turn = AsyncMock(return_value="done")
         picker = AsyncMock(return_value=pick)
         fetch = AsyncMock(return_value=list(models))
         prefetch = Mock()
         stream = io.StringIO()
-        self.last = SimpleNamespace(switch=switch, run=run_turn, picker=picker,
-                                    fetch=fetch, prefetch=prefetch, output=stream)
-        with patch.object(cli, "resolve_all",
-                          return_value={pid: credential for pid in providers}), \
-             patch.object(cli, "resolve_default",
-                          return_value=(provider, credential) if providers else None), \
-             patch.object(cli, "fetch_models", new=fetch), \
-             patch.object(cli, "prefetch_models", new=prefetch), \
-             patch.object(cli, "switch_model", new=switch), \
-             patch.object(cli, "run_turn", new=run_turn), \
-             patch.object(cli, "pick_model", new=picker), \
-             patch.object(cli, "can_pick_models", return_value=can_pick), \
-             patch.object(cli, "err", new=Console(file=stream, width=120, color_system=None)):
+        self.last = SimpleNamespace(
+            switch=switch,
+            run=run_turn,
+            picker=picker,
+            fetch=fetch,
+            prefetch=prefetch,
+            output=stream,
+        )
+        with (
+            patch.object(cli, "resolve_all", return_value={pid: credential for pid in providers}),
+            patch.object(
+                cli, "resolve_default", return_value=(provider, credential) if providers else None
+            ),
+            patch.object(cli, "fetch_models", new=fetch),
+            patch.object(cli, "prefetch_models", new=prefetch),
+            patch.object(cli, "switch_model", new=switch),
+            patch.object(cli, "run_turn", new=run_turn),
+            patch.object(cli, "pick_model", new=picker),
+            patch.object(cli, "can_pick_models", return_value=can_pick),
+            patch.object(cli, "err", new=Console(file=stream, width=120, color_system=None)),
+        ):
             try:
                 asyncio.run(cli.async_main(Options.parse(["--cwd", str(self.cwd), *argv])))
             finally:
@@ -154,7 +172,8 @@ class ModelOptionRunTests(unittest.TestCase):
         self.assertIn("providers=[deepseek]", self.last.output)
 
         session = SimpleNamespace(
-            display_model="auto", model_ref="auto",
+            display_model="auto",
+            model_ref="auto",
             credentials={"deepseek": object(), "kimi": object()},
         )
         with patch("agent7.commands.fetch_models", new=AsyncMock(return_value=[])):
@@ -189,8 +208,7 @@ class ModelOptionRunTests(unittest.TestCase):
 
     def test_an_unknown_explicit_model_stops_the_run(self) -> None:
         with self.assertRaises(SystemExit) as raised:
-            self.run_cli(["-m", "nope", "go"],
-                         switch_message="unknown model 'nope' — try /model")
+            self.run_cli(["-m", "nope", "go"], switch_message="unknown model 'nope' — try /model")
 
         self.assertEqual(raised.exception.code, 1)
         self.last.run.assert_not_awaited()
@@ -199,8 +217,7 @@ class ModelOptionRunTests(unittest.TestCase):
         self.assertIn("unknown model", self.last.output)
 
     def test_an_unknown_environment_model_still_falls_back(self) -> None:
-        self.run_cli(["go"], env_model="nope",
-                     switch_message="unknown model 'nope' — try /model")
+        self.run_cli(["go"], env_model="nope", switch_message="unknown model 'nope' — try /model")
 
         self.assertEqual(
             [c.args[1] for c in self.last.switch.await_args_list],
@@ -241,8 +258,7 @@ class ModelOptionRunTests(unittest.TestCase):
         self.assertEqual(self.last.switch.await_args.args[1], "deepseek-flash")
 
     def test_an_unavailable_auto_falls_back_to_a_listed_model(self) -> None:
-        self.run_cli(["go"],
-                     switch_messages={"auto": "auto: no supported models with credentials"})
+        self.run_cli(["go"], switch_messages={"auto": "auto: no supported models with credentials"})
 
         self.assertEqual(
             [call.args[1] for call in self.last.switch.await_args_list],
@@ -253,8 +269,7 @@ class ModelOptionRunTests(unittest.TestCase):
     def test_an_unavailable_auto_falls_back_to_the_workspace_model(self) -> None:
         self.save_snapshot()
 
-        self.run_cli(["go"],
-                     switch_messages={"auto": "auto: no supported models with credentials"})
+        self.run_cli(["go"], switch_messages={"auto": "auto: no supported models with credentials"})
 
         self.assertEqual(
             [call.args[1] for call in self.last.switch.await_args_list],
@@ -265,8 +280,11 @@ class ModelOptionRunTests(unittest.TestCase):
     def test_an_unavailable_auto_with_nothing_to_fall_back_to_uses_the_provider_default(
         self,
     ) -> None:
-        self.run_cli(["go"], models=(),
-                     switch_messages={"auto": "auto: no supported models with credentials"})
+        self.run_cli(
+            ["go"],
+            models=(),
+            switch_messages={"auto": "auto: no supported models with credentials"},
+        )
 
         self.last.run.assert_awaited_once()
         self.assertEqual(self.last.run.await_args.args[0].model, "deepseek-chat")
@@ -304,8 +322,12 @@ class ModelOptionRunTests(unittest.TestCase):
         self.save_snapshot(model_ref="xai/grok-4.7")
 
         with patch.object(cli, "repl_loop", new=AsyncMock()):
-            self.run_cli([], models=("deepseek/deepseek-chat",),
-                         providers=("deepseek",), switch_message="unknown provider 'xai'")
+            self.run_cli(
+                [],
+                models=("deepseek/deepseek-chat",),
+                providers=("deepseek",),
+                switch_message="unknown provider 'xai'",
+            )
 
         self.last.fetch.assert_awaited_once()
         self.assertEqual(
@@ -318,8 +340,10 @@ class ModelOptionRunTests(unittest.TestCase):
     def test_a_bare_dash_m_uses_the_picked_model(self) -> None:
         self.run_cli(["-m", "--", "go"], pick="deepseek/deepseek-flash")
 
-        self.assertEqual(self.last.picker.await_args.args[0],
-                         ["deepseek/deepseek-chat", "deepseek/deepseek-flash", "auto"])
+        self.assertEqual(
+            self.last.picker.await_args.args[0],
+            ["deepseek/deepseek-chat", "deepseek/deepseek-flash", "auto"],
+        )
         self.assertEqual(self.last.switch.await_args.args[1], "deepseek/deepseek-flash")
         self.assertEqual(self.last.run.await_args.args[1], "go")
 
@@ -328,12 +352,12 @@ class ModelOptionRunTests(unittest.TestCase):
 
         self.run_cli(["-m", "--", "go"], pick="deepseek/deepseek-flash")
 
-        self.assertEqual(self.last.picker.await_args.kwargs["current"],
-                         "kimi/kimi-for-coding")
+        self.assertEqual(self.last.picker.await_args.kwargs["current"], "kimi/kimi-for-coding")
 
     def test_the_menu_falls_back_to_provider_defaults(self) -> None:
-        self.run_cli(["-m", "--", "go"], models=(), providers=("deepseek",),
-                     pick="deepseek/deepseek-chat")
+        self.run_cli(
+            ["-m", "--", "go"], models=(), providers=("deepseek",), pick="deepseek/deepseek-chat"
+        )
 
         self.assertEqual(self.last.picker.await_args.args[0], ["deepseek/deepseek-chat", "auto"])
 
@@ -383,16 +407,21 @@ class ChosenModelSessionTests(unittest.TestCase):
             cwd = root / "work"
             cwd.mkdir()
             credential = SimpleNamespace(source="test", base_url="http://x")
-            provider = SimpleNamespace(id="deepseek", make_client=lambda cred: SimpleNamespace(
-                close=AsyncMock()))
-            with patch.dict(os.environ, {"XDG_STATE_HOME": str(root / "state")}), \
-                 patch.object(cli, "resolve_all", return_value={"deepseek": credential}), \
-                 patch.object(cli, "resolve_default", return_value=(provider, credential)), \
-                 patch.object(cli, "fetch_models",
-                              new=AsyncMock(return_value=["deepseek/deepseek-chat"])), \
-                 patch.object(cli, "run_turn", new=AsyncMock(return_value="done")):
-                asyncio.run(cli.async_main(
-                    Options.parse(["--cwd", str(cwd), "-m", "deepseek-flash", "go"])))
+            provider = SimpleNamespace(
+                id="deepseek", make_client=lambda _cred: SimpleNamespace(close=AsyncMock())
+            )
+            with (
+                patch.dict(os.environ, {"XDG_STATE_HOME": str(root / "state")}),
+                patch.object(cli, "resolve_all", return_value={"deepseek": credential}),
+                patch.object(cli, "resolve_default", return_value=(provider, credential)),
+                patch.object(
+                    cli, "fetch_models", new=AsyncMock(return_value=["deepseek/deepseek-chat"])
+                ),
+                patch.object(cli, "run_turn", new=AsyncMock(return_value="done")),
+            ):
+                asyncio.run(
+                    cli.async_main(Options.parse(["--cwd", str(cwd), "-m", "deepseek-flash", "go"]))
+                )
                 model_ref = load(cwd)["model_ref"]
 
             self.assertEqual(model_ref, "deepseek/deepseek-flash")

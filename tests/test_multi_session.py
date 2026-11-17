@@ -26,7 +26,9 @@ from agent7.store import list_sessions, load, new_session_id, save, trash_sessio
 
 def snapshot_state(cwd: Path, text: str) -> SimpleNamespace:
     return SimpleNamespace(
-        cwd=cwd, model_ref="deepseek/test", max_turns=30,
+        cwd=cwd,
+        model_ref="deepseek/test",
+        max_turns=30,
         messages=[
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": text},
@@ -58,9 +60,7 @@ class SessionPickerTests(unittest.TestCase):
         ]
         items, ids = session_choices(snapshots)
         with patch("agent7.repl.Picker") as picker:
-            picker.return_value.pick_async = AsyncMock(
-                return_value=[items[0], items[1]]
-            )
+            picker.return_value.pick_async = AsyncMock(return_value=[items[0], items[1]])
             picked = asyncio.run(pick_sessions(snapshots))
         picker.assert_called_once_with(items, multi=True)
         self.assertEqual(picked, ["sess-a", "sess-b"])
@@ -111,7 +111,7 @@ class SessionPickerTests(unittest.TestCase):
         stream = io.StringIO()
         output = Console(file=stream, width=120, color_system=None)
 
-        def reader(prompt: str) -> str:
+        def reader(_prompt: str) -> str:
             return "y"
 
         snapshots = [
@@ -130,13 +130,19 @@ class SessionPickerTests(unittest.TestCase):
     def test_delete_cancelled_by_the_prompt_is_explicit(self) -> None:
         target = {"id": "sess-b", "name": "second", "cwd": "/tmp/work"}
         state = Session(
-            model="test", cwd=Path("/tmp/work"), client=None,
-            id="sess-a", name="first", persisted=True,
+            model="test",
+            cwd=Path("/tmp/work"),
+            client=None,
+            id="sess-a",
+            name="first",
+            persisted=True,
         )
-        with patch("agent7.commands.list_sessions", return_value=[target]), \
-             patch("agent7.commands.load", return_value=target), \
-             patch("agent7.repl.pick_sessions", new=AsyncMock(return_value=["sess-b"])), \
-             patch("agent7.repl.confirm_sessions_delete", return_value=False):
+        with (
+            patch("agent7.commands.list_sessions", return_value=[target]),
+            patch("agent7.commands.load", return_value=target),
+            patch("agent7.repl.pick_sessions", new=AsyncMock(return_value=["sess-b"])),
+            patch("agent7.repl.confirm_sessions_delete", return_value=False),
+        ):
             result = asyncio.run(dispatch(state, "/session rm"))
         self.assertEqual(result.message, "delete: cancelled — kept second (sess-b)")
 
@@ -160,13 +166,22 @@ class SessionSwitchTests(unittest.TestCase):
         save(first, created_at="2025-01-01T00:00:00+00:00")
         save(second, created_at="2025-01-02T00:00:00+00:00")
         state = Session(
-            model="test", model_ref="deepseek/test", cwd=self.cwd, client=None,
-            messages=list(first.messages), id=first.id, name=first.name,
-            created_at=first.created_at, persisted=True, prompt_tokens=999,
+            model="test",
+            model_ref="deepseek/test",
+            cwd=self.cwd,
+            client=None,
+            messages=list(first.messages),
+            id=first.id,
+            name=first.name,
+            created_at=first.created_at,
+            persisted=True,
+            prompt_tokens=999,
         )
 
-        with patch("agent7.repl.pick_session", new=AsyncMock(return_value=second.id)), \
-             patch("agent7.repl.print_history") as history:
+        with (
+            patch("agent7.repl.pick_session", new=AsyncMock(return_value=second.id)),
+            patch("agent7.repl.print_history") as history,
+        ):
             result = asyncio.run(dispatch(state, "/session"))
 
         self.assertIsNotNone(result)
@@ -188,12 +203,19 @@ class SessionSwitchTests(unittest.TestCase):
         save(active, created_at="2025-01-01T00:00:00+00:00")
         save(target, created_at="2025-01-02T00:00:00+00:00")
         state = Session(
-            model="test", model_ref="deepseek/test", cwd=self.cwd, client=None,
-            messages=list(active.messages), id=active.id, persisted=True,
+            model="test",
+            model_ref="deepseek/test",
+            cwd=self.cwd,
+            client=None,
+            messages=list(active.messages),
+            id=active.id,
+            persisted=True,
         )
 
-        with patch("agent7.repl.pick_sessions", new=AsyncMock(return_value=[target.id])) as picker, \
-             patch("agent7.repl.confirm_sessions_delete", return_value=True) as confirm:
+        with (
+            patch("agent7.repl.pick_sessions", new=AsyncMock(return_value=[target.id])) as picker,
+            patch("agent7.repl.confirm_sessions_delete", return_value=True) as confirm,
+        ):
             result = asyncio.run(dispatch(state, "/session delete"))
 
         self.assertEqual([data["id"] for data in picker.await_args.args[0]], [target.id])
@@ -211,20 +233,25 @@ class SessionSwitchTests(unittest.TestCase):
         save(first, created_at="2025-01-02T00:00:00+00:00")
         save(second, created_at="2025-01-03T00:00:00+00:00")
         state = Session(
-            model="test", model_ref="deepseek/test", cwd=self.cwd, client=None,
-            messages=list(active.messages), id=active.id, persisted=True,
+            model="test",
+            model_ref="deepseek/test",
+            cwd=self.cwd,
+            client=None,
+            messages=list(active.messages),
+            id=active.id,
+            persisted=True,
         )
 
-        with patch("agent7.repl.pick_sessions", new=AsyncMock()) as picker, \
-             patch("agent7.repl.confirm_sessions_delete", return_value=True):
+        with (
+            patch("agent7.repl.pick_sessions", new=AsyncMock()) as picker,
+            patch("agent7.repl.confirm_sessions_delete", return_value=True),
+        ):
             result = asyncio.run(dispatch(state, f"/session delete {first.id} {second.id}"))
 
         picker.assert_not_awaited()
         self.assertIn("deleted delete one", result.message)
         self.assertIn("deleted delete two", result.message)
-        self.assertEqual(
-            [data["id"] for data in list_sessions(self.cwd)], [active.id]
-        )
+        self.assertEqual([data["id"] for data in list_sessions(self.cwd)], [active.id])
         self.assertTrue((trash_session_dir() / f"{first.id}.json").is_file())
         self.assertTrue((trash_session_dir() / f"{second.id}.json").is_file())
 
@@ -232,11 +259,18 @@ class SessionSwitchTests(unittest.TestCase):
         active = snapshot_state(self.cwd, "active task")
         save(active, created_at="2025-01-01T00:00:00+00:00")
         state = Session(
-            model="test", model_ref="deepseek/test", cwd=self.cwd, client=None,
-            messages=list(active.messages), id=active.id, persisted=True,
+            model="test",
+            model_ref="deepseek/test",
+            cwd=self.cwd,
+            client=None,
+            messages=list(active.messages),
+            id=active.id,
+            persisted=True,
         )
-        with patch("agent7.repl.pick_sessions", new=AsyncMock()) as picker, \
-             patch("agent7.repl.confirm_sessions_delete") as confirm:
+        with (
+            patch("agent7.repl.pick_sessions", new=AsyncMock()) as picker,
+            patch("agent7.repl.confirm_sessions_delete") as confirm,
+        ):
             result = asyncio.run(dispatch(state, f"/session delete {active.id}"))
         picker.assert_not_awaited()
         confirm.assert_not_called()
@@ -248,11 +282,18 @@ class SessionSwitchTests(unittest.TestCase):
         save(first, created_at="2025-01-01T00:00:00+00:00")
         save(second, created_at="2025-01-02T00:00:00+00:00")
         state = Session(
-            model="test", model_ref="deepseek/test", cwd=self.cwd, client=None,
-            messages=list(first.messages), id=first.id, persisted=True,
+            model="test",
+            model_ref="deepseek/test",
+            cwd=self.cwd,
+            client=None,
+            messages=list(first.messages),
+            id=first.id,
+            persisted=True,
         )
-        with patch("agent7.repl.pick_session", new=AsyncMock()) as picker, \
-             patch("agent7.repl.print_history"):
+        with (
+            patch("agent7.repl.pick_session", new=AsyncMock()) as picker,
+            patch("agent7.repl.print_history"),
+        ):
             result = asyncio.run(dispatch(state, f"/session {second.id}"))
         picker.assert_not_awaited()
         self.assertIn("second", result.message)
@@ -270,14 +311,14 @@ class ResumeCliTests(unittest.TestCase):
         self.saved = snapshot_state(self.cwd, "readable session name")
         save(self.saved, created_at="2025-01-01T00:00:00+00:00")
         self.client = SimpleNamespace(close=AsyncMock())
-        self.provider = SimpleNamespace(id="deepseek", make_client=lambda cred: self.client)
+        self.provider = SimpleNamespace(id="deepseek", make_client=lambda _cred: self.client)
         self.credential = SimpleNamespace(source="test")
 
     def tearDown(self) -> None:
         self.env.stop()
         self.tmp.cleanup()
 
-    def patches(self, picker=None, run=None, prompt=None, output=None):
+    def patches(self, picker=None, run=None, _prompt=None, _output=None):
         """Common startup doubles; each test adds only its UI double."""
         return [
             patch("agent7.cli.resolve_all", return_value={"deepseek": self.credential}),
@@ -285,7 +326,9 @@ class ResumeCliTests(unittest.TestCase):
             patch("agent7.cli.fetch_models", new=AsyncMock(return_value=[])),
             patch("agent7.cli.prefetch_models"),
             patch("agent7.cli.can_pick_models", return_value=True),
-            patch("agent7.cli.switch_model", new=AsyncMock(return_value=SimpleNamespace(message="ok"))),
+            patch(
+                "agent7.cli.switch_model", new=AsyncMock(return_value=SimpleNamespace(message="ok"))
+            ),
             patch("agent7.cli.pick_session", new=picker or AsyncMock()),
             patch("agent7.cli.run_turn", new=run or AsyncMock(return_value="done")),
             patch("agent7.cli.print_history"),
@@ -311,9 +354,19 @@ class ResumeCliTests(unittest.TestCase):
         for item in patches:
             item.start()
         try:
-            asyncio.run(async_main(Options.parse([
-                "--cwd", str(self.cwd), "-r", self.saved.id, "continue",
-            ])))
+            asyncio.run(
+                async_main(
+                    Options.parse(
+                        [
+                            "--cwd",
+                            str(self.cwd),
+                            "-r",
+                            self.saved.id,
+                            "continue",
+                        ]
+                    )
+                )
+            )
         finally:
             for item in reversed(patches):
                 item.stop()
@@ -341,17 +394,28 @@ class ResumeCliTests(unittest.TestCase):
         patches = self.patches()
         prompt = MagicMock()
         prompt.prompt_async.side_effect = EOFError
-        patches.extend([
-            patch("agent7.cli.err", new=output),
-            patch("agent7.repl.err", new=output),
-            patch("agent7.repl.PromptSession", return_value=prompt),
-        ])
+        patches.extend(
+            [
+                patch("agent7.cli.err", new=output),
+                patch("agent7.repl.err", new=output),
+                patch("agent7.repl.PromptSession", return_value=prompt),
+            ]
+        )
         for item in patches:
             item.start()
         try:
-            asyncio.run(async_main(Options.parse([
-                "--cwd", str(self.cwd), "-r", self.saved.id,
-            ])))
+            asyncio.run(
+                async_main(
+                    Options.parse(
+                        [
+                            "--cwd",
+                            str(self.cwd),
+                            "-r",
+                            self.saved.id,
+                        ]
+                    )
+                )
+            )
         finally:
             for item in reversed(patches):
                 item.stop()
@@ -377,10 +441,12 @@ class DeleteCliTests(unittest.TestCase):
     def test_bare_delete_uses_picker_confirmation_and_trash(self) -> None:
         stream = io.StringIO()
         picker = AsyncMock(return_value=[self.saved.id])
-        with patch("agent7.cli.can_pick_models", return_value=True), \
-             patch("agent7.cli.pick_sessions", new=picker), \
-             patch("agent7.cli.confirm_sessions_delete", return_value=True), \
-             patch("agent7.cli.err", new=Console(file=stream, width=120, color_system=None)):
+        with (
+            patch("agent7.cli.can_pick_models", return_value=True),
+            patch("agent7.cli.pick_sessions", new=picker),
+            patch("agent7.cli.confirm_sessions_delete", return_value=True),
+            patch("agent7.cli.err", new=Console(file=stream, width=120, color_system=None)),
+        ):
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd), "--delete"])))
 
         picker.assert_awaited_once()
@@ -395,10 +461,12 @@ class DeleteCliTests(unittest.TestCase):
         other = snapshot_state(self.cwd, "delete me too")
         save(other, created_at="2025-01-02T00:00:00+00:00")
         picker = AsyncMock(return_value=[self.saved.id, other.id])
-        with patch("agent7.cli.can_pick_models", return_value=True), \
-             patch("agent7.cli.pick_sessions", new=picker), \
-             patch("agent7.cli.confirm_sessions_delete", return_value=True), \
-             patch("agent7.cli.err", new=Console(file=stream, width=120, color_system=None)):
+        with (
+            patch("agent7.cli.can_pick_models", return_value=True),
+            patch("agent7.cli.pick_sessions", new=picker),
+            patch("agent7.cli.confirm_sessions_delete", return_value=True),
+            patch("agent7.cli.err", new=Console(file=stream, width=120, color_system=None)),
+        ):
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd), "--delete"])))
 
         self.assertEqual(list_sessions(self.cwd), [])
@@ -413,10 +481,12 @@ class DeleteCliTests(unittest.TestCase):
         other = snapshot_state(self.cwd, "kept one")
         save(other, created_at="2025-01-02T00:00:00+00:00")
         picker = AsyncMock(return_value=[self.saved.id, other.id])
-        with patch("agent7.cli.can_pick_models", return_value=True), \
-             patch("agent7.cli.pick_sessions", new=picker), \
-             patch("agent7.cli.confirm_sessions_delete", return_value=False), \
-             patch("agent7.cli.err", new=Console(file=stream, width=120, color_system=None)):
+        with (
+            patch("agent7.cli.can_pick_models", return_value=True),
+            patch("agent7.cli.pick_sessions", new=picker),
+            patch("agent7.cli.confirm_sessions_delete", return_value=False),
+            patch("agent7.cli.err", new=Console(file=stream, width=120, color_system=None)),
+        ):
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd), "--delete"])))
 
         self.assertEqual(
@@ -429,9 +499,18 @@ class DeleteCliTests(unittest.TestCase):
     def test_direct_delete_can_be_cancelled_without_moving_the_file(self) -> None:
         path = save(self.saved, created_at=self.saved.created_at)
         with patch("agent7.cli.confirm_sessions_delete", return_value=False):
-            asyncio.run(async_main(Options.parse([
-                "--cwd", str(self.cwd), "--delete", self.saved.id,
-            ])))
+            asyncio.run(
+                async_main(
+                    Options.parse(
+                        [
+                            "--cwd",
+                            str(self.cwd),
+                            "--delete",
+                            self.saved.id,
+                        ]
+                    )
+                )
+            )
         self.assertTrue(path.is_file())
         self.assertFalse(trash_session_dir().exists())
 

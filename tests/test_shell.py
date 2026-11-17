@@ -26,8 +26,13 @@ class ResolveShellTests(unittest.TestCase):
     def test_win32_falls_back_to_powershell_or_cmd(self) -> None:
         with patch.dict(os.environ, {"COMSPEC": "C:\\Windows\\System32\\cmd.exe"}, clear=False):
             os.environ.pop("AGENT7_SHELL", None)
-            with patch("agent7.agent._git_bash_path", return_value=None), \
-                 patch("agent7.agent.shutil.which", side_effect=lambda n: "C:\\pwsh.exe" if n == "pwsh" else None):
+            with (
+                patch("agent7.agent._git_bash_path", return_value=None),
+                patch(
+                    "agent7.agent.shutil.which",
+                    side_effect=lambda n: "C:\\pwsh.exe" if n == "pwsh" else None,
+                ),
+            ):
                 sh = resolve_shell(platform="win32")
         self.assertEqual(sh.name, "powershell")
         self.assertIn("-Command", sh.argv)
@@ -35,8 +40,10 @@ class ResolveShellTests(unittest.TestCase):
     def test_win32_cmd_when_nothing_else(self) -> None:
         with patch.dict(os.environ, {"COMSPEC": "C:\\Windows\\System32\\cmd.exe"}, clear=False):
             os.environ.pop("AGENT7_SHELL", None)
-            with patch("agent7.agent._git_bash_path", return_value=None), \
-                 patch("agent7.agent.shutil.which", return_value=None):
+            with (
+                patch("agent7.agent._git_bash_path", return_value=None),
+                patch("agent7.agent.shutil.which", return_value=None),
+            ):
                 sh = resolve_shell(platform="win32")
         self.assertEqual(sh.name, "cmd")
         self.assertEqual(sh.argv[-1], "/c")
@@ -63,8 +70,7 @@ class ResolveShellTests(unittest.TestCase):
     def test_system_prompt_adds_agent7_commit_coauthor(self) -> None:
         text = make_system(resolve_shell(platform="linux"))
         self.assertIn(
-            "Co-authored-by: agent7-bot "
-            "<160873036+agent7-bot@users.noreply.github.com>",
+            "Co-authored-by: agent7-bot <160873036+agent7-bot@users.noreply.github.com>",
             text,
         )
         self.assertIn("add a blank line followed by", text)

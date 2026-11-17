@@ -14,6 +14,7 @@ from typing import Any
 RAW_ITEMS_KEY = "_responses"
 IMAGES_KEY = "_images"  # tool-result image blocks: [{"data": base64, "mimeType": ...}]
 
+
 @dataclass
 class ResponseTurn:
     """One completed model round, independent of the provider SDK's types."""
@@ -27,6 +28,7 @@ class ResponseTurn:
     def calls(self) -> list[dict[str, Any]]:
         return [item for item in self.output if item.get("type") == "function_call"]
 
+
 def plain_item(value: Any) -> dict[str, Any]:
     """Convert an SDK output item/event to a JSON-safe dict, dropping nulls."""
     if isinstance(value, dict):
@@ -39,6 +41,7 @@ def plain_item(value: Any) -> dict[str, Any]:
         data = dict(value)
     return {k: plain_value(v) for k, v in data.items() if v is not None}
 
+
 def plain_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: plain_value(v) for k, v in value.items() if v is not None}
@@ -47,6 +50,7 @@ def plain_value(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return plain_value(value.model_dump())
     return value
+
 
 def raw_output(message: dict[str, Any], provider_id: str | None) -> list[dict[str, Any]] | None:
     """Return raw items only on the provider that produced them."""
@@ -60,7 +64,10 @@ def raw_output(message: dict[str, Any], provider_id: str | None) -> list[dict[st
 
 
 def request_input(
-    messages: list[dict[str, Any]], provider_id: str | None = None, *, vision: bool = True,
+    messages: list[dict[str, Any]],
+    provider_id: str | None = None,
+    *,
+    vision: bool = True,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Project chat-shaped history to Responses input and optional instructions.
 
@@ -82,12 +89,15 @@ def request_input(
             for call in message.get("tool_calls") or []:
                 out.append(legacy_function_call(call))
         elif role == "tool":
-            out.append({
-                "type": "function_call_output",
-                "call_id": message.get("tool_call_id", ""),
-                "output": tool_output(message, vision=vision),
-            })
+            out.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": message.get("tool_call_id", ""),
+                    "output": tool_output(message, vision=vision),
+                }
+            )
     return out, instructions
+
 
 def tool_output(message: dict[str, Any], *, vision: bool = True) -> str | list[dict[str, Any]]:
     """Tool text plus inline images, as Responses function_call_output content.
@@ -108,6 +118,7 @@ def tool_output(message: dict[str, Any], *, vision: bool = True) -> str | list[d
             parts.append({"type": "input_image", "image_url": f"data:{mime};base64,{data}"})
     return parts if len(parts) > 1 else text
 
+
 def legacy_function_call(call: dict[str, Any]) -> dict[str, Any]:
     """Read a version-1 snapshot without inventing unavailable reasoning state."""
     function = call.get("function") or {}
@@ -117,6 +128,7 @@ def legacy_function_call(call: dict[str, Any]) -> dict[str, Any]:
         "name": function.get("name", ""),
         "arguments": function.get("arguments") or "{}",
     }
+
 
 def portable_history(messages: list[dict[str, Any]], provider_id: str | None) -> bool:
     """Whether history contains assistant output without this provider's raw items.
@@ -141,13 +153,16 @@ def response_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     converted = []
     for tool in tools:
         function = tool.get("function") or {}
-        converted.append({
-            "type": "function",
-            "name": function.get("name", ""),
-            "description": function.get("description", ""),
-            "parameters": function.get("parameters") or {"type": "object", "properties": {}},
-        })
+        converted.append(
+            {
+                "type": "function",
+                "name": function.get("name", ""),
+                "description": function.get("description", ""),
+                "parameters": function.get("parameters") or {"type": "object", "properties": {}},
+            }
+        )
     return converted
+
 
 def _first_int(get: Any, *keys: str) -> int | None:
     for key in keys:
@@ -155,6 +170,7 @@ def _first_int(get: Any, *keys: str) -> int | None:
         if value is not None:
             return int(value)
     return None
+
 
 def response_usage(response: Any) -> dict[str, int] | None:
     """Map Responses or Chat Completions usage onto the UI's token names.
@@ -167,8 +183,10 @@ def response_usage(response: Any) -> dict[str, int] | None:
         usage = response.get("usage")
     if usage is None:
         return None
-    get = usage.get if isinstance(usage, dict) else (
-        lambda key, default=None: getattr(usage, key, default)
+    get = (
+        usage.get
+        if isinstance(usage, dict)
+        else (lambda key, default=None: getattr(usage, key, default))
     )
     prompt = _first_int(get, "input_tokens", "prompt_tokens")
     completion = _first_int(get, "output_tokens", "completion_tokens")
@@ -186,6 +204,7 @@ def response_usage(response: Any) -> dict[str, int] | None:
     }
     return out or None
 
+
 def response_status(response: Any) -> tuple[str | None, str | None]:
     """Return (UI finish reason, incomplete reason).
 
@@ -193,12 +212,16 @@ def response_status(response: Any) -> tuple[str | None, str | None]:
     report Chat Completions finish_reason. Known cases become stop/length so
     the truncation notice does not depend on which name arrived.
     """
-    get = response.get if isinstance(response, dict) else (
-        lambda key, default=None: getattr(response, key, default)
+    get = (
+        response.get
+        if isinstance(response, dict)
+        else (lambda key, default=None: getattr(response, key, default))
     )
     status = get("status")
     details = get("incomplete_details") or {}
-    reason = details.get("reason") if isinstance(details, dict) else getattr(details, "reason", None)
+    reason = (
+        details.get("reason") if isinstance(details, dict) else getattr(details, "reason", None)
+    )
     finish = get("finish_reason")
     if reason == "max_output_tokens" or finish == "length":
         return "length", reason
@@ -207,6 +230,7 @@ def response_status(response: Any) -> tuple[str | None, str | None]:
     if isinstance(finish, str) and finish:
         return finish, reason
     return status if isinstance(status, str) else None, reason
+
 
 def output_text(items: list[dict[str, Any]]) -> str:
     """Fallback for providers that send output items without text deltas."""
@@ -219,10 +243,12 @@ def output_text(items: list[dict[str, Any]]) -> str:
                 parts.append(part["text"])
     return "".join(parts)
 
+
 def reasoning_text(item: dict[str, Any]) -> str:
     parts = [part.get("text", "") for part in item.get("content") or []]
     parts += [part.get("text", "") for part in item.get("summary") or []]
     return "".join(part for part in parts if isinstance(part, str))
+
 
 def public_call(call: dict[str, Any]) -> dict[str, Any]:
     """Project a Responses function call to the existing agent loop's shape."""

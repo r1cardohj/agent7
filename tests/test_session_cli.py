@@ -56,15 +56,19 @@ class SessionCliTests(unittest.TestCase):
 
     def test_empty_new_repl_preserves_the_workspace_snapshot(self) -> None:
         state = SimpleNamespace(
-            cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
+            cwd=self.cwd,
+            model_ref="deepseek/test",
+            max_turns=30,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": "old"}],
         )
         path = save(state, created_at="2025-01-01T00:00:00+00:00")
         original = path.read_bytes()
-        with patch("agent7.cli.resolve_all", return_value={}), \
-             patch("agent7.cli.resolve_default", return_value=None), \
-             patch("agent7.cli.make_client") as client, \
-             patch("agent7.repl.PromptSession") as prompt:
+        with (
+            patch("agent7.cli.resolve_all", return_value={}),
+            patch("agent7.cli.resolve_default", return_value=None),
+            patch("agent7.cli.make_client") as client,
+            patch("agent7.repl.PromptSession") as prompt,
+        ):
             client.return_value.close = AsyncMock()
             prompt.return_value.prompt_async.side_effect = EOFError
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd)])))
@@ -72,20 +76,24 @@ class SessionCliTests(unittest.TestCase):
         self.assertEqual(load(self.cwd)["messages"], state.messages)
 
     def test_empty_new_repl_does_not_create_a_snapshot(self) -> None:
-        with patch("agent7.cli.resolve_all", return_value={}), \
-             patch("agent7.cli.resolve_default", return_value=None), \
-             patch("agent7.cli.make_client") as client, \
-             patch("agent7.repl.PromptSession") as prompt:
+        with (
+            patch("agent7.cli.resolve_all", return_value={}),
+            patch("agent7.cli.resolve_default", return_value=None),
+            patch("agent7.cli.make_client") as client,
+            patch("agent7.repl.PromptSession") as prompt,
+        ):
             client.return_value.close = AsyncMock()
             prompt.return_value.prompt_async.side_effect = EOFError
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd)])))
         self.assertFalse((self.root / "state" / "agent7" / "sessions").exists())
 
     def test_ctrl_c_discards_input_and_returns_to_the_prompt(self) -> None:
-        with patch("agent7.cli.resolve_all", return_value={}), \
-             patch("agent7.cli.resolve_default", return_value=None), \
-             patch("agent7.cli.make_client") as client, \
-             patch("agent7.repl.PromptSession") as prompt:
+        with (
+            patch("agent7.cli.resolve_all", return_value={}),
+            patch("agent7.cli.resolve_default", return_value=None),
+            patch("agent7.cli.make_client") as client,
+            patch("agent7.repl.PromptSession") as prompt,
+        ):
             client.return_value.close = AsyncMock()
             prompt.return_value.prompt_async.side_effect = [KeyboardInterrupt, EOFError]
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd)])))
@@ -95,7 +103,7 @@ class SessionCliTests(unittest.TestCase):
         started = asyncio.Event()
         saved = []
 
-        async def stuck_agent(session, task):
+        async def stuck_agent(_session, _task):
             started.set()
             try:
                 await asyncio.Event().wait()
@@ -104,13 +112,15 @@ class SessionCliTests(unittest.TestCase):
                     await asyncio.Event().wait()
                 except asyncio.CancelledError as e:
                     raise Interrupted from e
-                raise Interrupted
+                raise Interrupted from None
 
         async def exercise() -> None:
             before = signal.getsignal(signal.SIGINT)
             state = SimpleNamespace()
             with patch("agent7.repl._run_agent_once", new=stuck_agent):
-                task = asyncio.create_task(run_turn(state, "go", on_saved=lambda: saved.append(True)))
+                task = asyncio.create_task(
+                    run_turn(state, "go", on_saved=lambda: saved.append(True))
+                )
                 await started.wait()
                 os.kill(os.getpid(), signal.SIGINT)
                 await asyncio.sleep(0)
@@ -125,7 +135,7 @@ class SessionCliTests(unittest.TestCase):
     def test_one_shot_repeated_ctrl_c_is_handled(self) -> None:
         started = asyncio.Event()
 
-        async def stuck_agent(session, task):
+        async def stuck_agent(_session, _task):
             started.set()
             try:
                 await asyncio.Event().wait()
@@ -140,15 +150,18 @@ class SessionCliTests(unittest.TestCase):
                 os.kill(os.getpid(), signal.SIGINT)
 
             client = SimpleNamespace(close=AsyncMock())
-            provider = SimpleNamespace(id="deepseek", make_client=lambda cred: client)
+            provider = SimpleNamespace(id="deepseek", make_client=lambda _cred: client)
             credential = SimpleNamespace(source="test")
-            with patch("agent7.cli.resolve_all", return_value={"deepseek": credential}), \
-                 patch("agent7.cli.resolve_default", return_value=(provider, credential)), \
-                 patch("agent7.cli.fetch_models", new=AsyncMock(return_value=[])), \
-                 patch("agent7.cli.switch_model", new=AsyncMock(
-                     return_value=SimpleNamespace(message="ok")
-                 )), \
-                 patch("agent7.repl._run_agent_once", new=stuck_agent):
+            with (
+                patch("agent7.cli.resolve_all", return_value={"deepseek": credential}),
+                patch("agent7.cli.resolve_default", return_value=(provider, credential)),
+                patch("agent7.cli.fetch_models", new=AsyncMock(return_value=[])),
+                patch(
+                    "agent7.cli.switch_model",
+                    new=AsyncMock(return_value=SimpleNamespace(message="ok")),
+                ),
+                patch("agent7.repl._run_agent_once", new=stuck_agent),
+            ):
                 sender = asyncio.create_task(interrupt_twice())
                 try:
                     await async_main(Options.parse(["--cwd", str(self.cwd), "go"]))
@@ -164,28 +177,35 @@ class SessionCliTests(unittest.TestCase):
         def interrupt(coro):
             coro.close()
             raise KeyboardInterrupt
-        with patch("agent7.cli.asyncio.run", side_effect=interrupt), \
-             patch("agent7.cli.err") as err:
+
+        with (
+            patch("agent7.cli.asyncio.run", side_effect=interrupt),
+            patch("agent7.cli.err") as err,
+            self.assertRaises(SystemExit),
+        ):
             # click reports a clean exit once the command returns.
-            with self.assertRaises(SystemExit):
-                main([])
+            main([])
         err.print.assert_called_once_with("\n[dim]# interrupted[/dim]")
 
     def test_new_session_reuses_last_model_with_fresh_context(self) -> None:
         state = SimpleNamespace(
-            cwd=self.cwd, model_ref="kimi/kimi-for-coding", max_turns=30,
+            cwd=self.cwd,
+            model_ref="kimi/kimi-for-coding",
+            max_turns=30,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": "old"}],
         )
         save(state, created_at="2025-01-01T00:00:00+00:00")
         client = SimpleNamespace(close=AsyncMock())
-        provider = SimpleNamespace(id="deepseek", make_client=lambda cred: client)
+        provider = SimpleNamespace(id="deepseek", make_client=lambda _cred: client)
         credential = SimpleNamespace(source="test")
         switch = AsyncMock(return_value=SimpleNamespace(message="ok"))
-        with patch("agent7.cli.resolve_all", return_value={"deepseek": credential}), \
-             patch("agent7.cli.resolve_default", return_value=(provider, credential)), \
-             patch("agent7.cli.fetch_models", new=AsyncMock(return_value=[])), \
-             patch("agent7.cli.switch_model", new=switch), \
-             patch("agent7.repl.PromptSession") as prompt:
+        with (
+            patch("agent7.cli.resolve_all", return_value={"deepseek": credential}),
+            patch("agent7.cli.resolve_default", return_value=(provider, credential)),
+            patch("agent7.cli.fetch_models", new=AsyncMock(return_value=[])),
+            patch("agent7.cli.switch_model", new=switch),
+            patch("agent7.repl.PromptSession") as prompt,
+        ):
             prompt.return_value.prompt_async.side_effect = EOFError
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd)])))
         switch.assert_awaited_once()
@@ -194,55 +214,66 @@ class SessionCliTests(unittest.TestCase):
 
     def test_new_repl_replaces_the_snapshot_after_an_agent_task(self) -> None:
         state = SimpleNamespace(
-            cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
+            cwd=self.cwd,
+            model_ref="deepseek/test",
+            max_turns=30,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": "old"}],
         )
         save(state, created_at="2025-01-01T00:00:00+00:00")
 
         async def fake_run(session, task, **kwargs):
-            session.messages.extend([
-                {"role": "user", "content": task},
-                {"role": "assistant", "content": "new answer"},
-            ])
+            session.messages.extend(
+                [
+                    {"role": "user", "content": task},
+                    {"role": "assistant", "content": "new answer"},
+                ]
+            )
             kwargs["on_saved"]()
             return "new answer"
 
         inputs = iter(["new task", EOFError()])
 
-        async def fake_prompt(*args, **kwargs):
+        async def fake_prompt(*_args, **_kwargs):
             value = next(inputs)
             if isinstance(value, BaseException):
                 raise value
             return value
 
         client = SimpleNamespace(close=AsyncMock())
-        provider = SimpleNamespace(id="deepseek", make_client=lambda cred: client)
+        provider = SimpleNamespace(id="deepseek", make_client=lambda _cred: client)
         credential = SimpleNamespace(source="test")
-        with patch("agent7.cli.resolve_all", return_value={"deepseek": credential}), \
-             patch("agent7.cli.resolve_default", return_value=(provider, credential)), \
-             patch("agent7.cli.fetch_models", new=AsyncMock(return_value=[])), \
-             patch("agent7.cli.switch_model", new=AsyncMock(
-                 return_value=SimpleNamespace(message="ok")
-             )), \
-             patch("agent7.repl.PromptSession") as prompt, \
-             patch("agent7.repl.run_turn", new=fake_run):
+        with (
+            patch("agent7.cli.resolve_all", return_value={"deepseek": credential}),
+            patch("agent7.cli.resolve_default", return_value=(provider, credential)),
+            patch("agent7.cli.fetch_models", new=AsyncMock(return_value=[])),
+            patch(
+                "agent7.cli.switch_model", new=AsyncMock(return_value=SimpleNamespace(message="ok"))
+            ),
+            patch("agent7.repl.PromptSession") as prompt,
+            patch("agent7.repl.run_turn", new=fake_run),
+        ):
             prompt.return_value.prompt_async.side_effect = fake_prompt
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd)])))
-        self.assertEqual(load(self.cwd)["messages"][1:], [
-            {"role": "user", "content": "new task"},
-            {"role": "assistant", "content": "new answer"},
-        ])
+        self.assertEqual(
+            load(self.cwd)["messages"][1:],
+            [
+                {"role": "user", "content": "new task"},
+                {"role": "assistant", "content": "new answer"},
+            ],
+        )
 
     def test_history_shows_conversation_text_without_internal_messages(self) -> None:
         stream = io.StringIO()
         with patch("agent7.repl.console", new=Console(file=stream, width=120, color_system=None)):
-            print_history([
-                {"role": "system", "content": "hidden system"},
-                {"role": "user", "content": "old question"},
-                {"role": "assistant", "content": "old answer"},
-                {"role": "tool", "content": "hidden tool result"},
-                {"role": "assistant", "content": "", "tool_calls": []},
-            ])
+            print_history(
+                [
+                    {"role": "system", "content": "hidden system"},
+                    {"role": "user", "content": "old question"},
+                    {"role": "assistant", "content": "old answer"},
+                    {"role": "tool", "content": "hidden tool result"},
+                    {"role": "assistant", "content": "", "tool_calls": []},
+                ]
+            )
         text = stream.getvalue()
         self.assertIn("previous conversation", text)
         self.assertIn("old question", text)
@@ -252,7 +283,9 @@ class SessionCliTests(unittest.TestCase):
 
     def test_resume_prints_saved_history_before_one_shot(self) -> None:
         state = SimpleNamespace(
-            cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
+            cwd=self.cwd,
+            model_ref="deepseek/test",
+            max_turns=30,
             messages=[
                 {"role": "system", "content": SYSTEM},
                 {"role": "user", "content": "old question"},
@@ -261,27 +294,35 @@ class SessionCliTests(unittest.TestCase):
         )
         save(state, created_at="2025-01-01T00:00:00+00:00")
         client = SimpleNamespace(close=AsyncMock())
-        provider = SimpleNamespace(id="deepseek", make_client=lambda cred: client)
+        provider = SimpleNamespace(id="deepseek", make_client=lambda _cred: client)
         credential = SimpleNamespace(source="test")
-        with patch("agent7.cli.resolve_all", return_value={"deepseek": credential}), \
-             patch("agent7.cli.resolve_default", return_value=(provider, credential)), \
-             patch("agent7.cli.fetch_models", new=AsyncMock(return_value=[])), \
-             patch("agent7.cli.switch_model", new=AsyncMock(return_value=SimpleNamespace(message="ok"))), \
-             patch("agent7.cli.print_history") as history:
+        with (
+            patch("agent7.cli.resolve_all", return_value={"deepseek": credential}),
+            patch("agent7.cli.resolve_default", return_value=(provider, credential)),
+            patch("agent7.cli.fetch_models", new=AsyncMock(return_value=[])),
+            patch(
+                "agent7.cli.switch_model", new=AsyncMock(return_value=SimpleNamespace(message="ok"))
+            ),
+            patch("agent7.cli.print_history") as history,
+        ):
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd), "-r", "继续"])))
         history.assert_called_once_with(state.messages)
 
     def test_new_session_does_not_print_previous_history(self) -> None:
         state = SimpleNamespace(
-            cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
+            cwd=self.cwd,
+            model_ref="deepseek/test",
+            max_turns=30,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": "old"}],
         )
         save(state, created_at="2025-01-01T00:00:00+00:00")
-        with patch("agent7.cli.resolve_all", return_value={}), \
-             patch("agent7.cli.resolve_default", return_value=None), \
-             patch("agent7.cli.make_client") as client, \
-             patch("agent7.repl.PromptSession") as prompt, \
-             patch("agent7.cli.print_history") as history:
+        with (
+            patch("agent7.cli.resolve_all", return_value={}),
+            patch("agent7.cli.resolve_default", return_value=None),
+            patch("agent7.cli.make_client") as client,
+            patch("agent7.repl.PromptSession") as prompt,
+            patch("agent7.cli.print_history") as history,
+        ):
             client.return_value.close = AsyncMock()
             prompt.return_value.prompt_async.side_effect = EOFError
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd)])))
@@ -289,23 +330,31 @@ class SessionCliTests(unittest.TestCase):
 
     def test_resume_passes_saved_context_to_agent(self) -> None:
         state = SimpleNamespace(
-            cwd=self.cwd, model_ref="deepseek/test", max_turns=30,
+            cwd=self.cwd,
+            model_ref="deepseek/test",
+            max_turns=30,
             messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": "old"}],
         )
         save(state, created_at="2025-01-01T00:00:00+00:00")
         seen = []
+
         async def fake_run(session, task, **kwargs):
             seen.append((list(session.messages), task))
             kwargs["on_saved"]()
             return "done"
+
         client = SimpleNamespace(close=AsyncMock())
-        provider = SimpleNamespace(id="deepseek", make_client=lambda cred: client)
+        provider = SimpleNamespace(id="deepseek", make_client=lambda _cred: client)
         credential = SimpleNamespace(source="test")
-        with patch("agent7.cli.resolve_all", return_value={"deepseek": credential}), \
-             patch("agent7.cli.resolve_default", return_value=(provider, credential)), \
-             patch("agent7.cli.fetch_models", new=AsyncMock(return_value=[])), \
-             patch("agent7.cli.switch_model", new=AsyncMock(return_value=SimpleNamespace(message="ok"))), \
-             patch("agent7.cli.run_turn", new=fake_run):
+        with (
+            patch("agent7.cli.resolve_all", return_value={"deepseek": credential}),
+            patch("agent7.cli.resolve_default", return_value=(provider, credential)),
+            patch("agent7.cli.fetch_models", new=AsyncMock(return_value=[])),
+            patch(
+                "agent7.cli.switch_model", new=AsyncMock(return_value=SimpleNamespace(message="ok"))
+            ),
+            patch("agent7.cli.run_turn", new=fake_run),
+        ):
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd), "-r", "继续"])))
         self.assertEqual(seen[0][0][1:], [{"role": "user", "content": "old"}])
         self.assertEqual(seen[0][1], "继续")

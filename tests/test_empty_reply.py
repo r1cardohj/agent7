@@ -8,11 +8,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from responses_fakes import FakeClient, call_turn, text_turn
 from rich.console import Console
 
 import agent7.repl as repl
 from agent7.repl import NO_TEXT_NOTICE, TRUNCATED_NOTICE, reply_notice
-from responses_fakes import FakeClient, call_turn, text_turn
 
 
 class ReplyNoticeTests(unittest.TestCase):
@@ -62,9 +62,14 @@ class RunOnceSilenceTests(unittest.TestCase):
 
     def run_once(self, turns: list[list[Any]], **kwargs: Any) -> str:
         session = SimpleNamespace(
-            model="test-model", cwd=self.cwd, client=FakeClient(turns),
-            max_turns=kwargs.get("max_turns", 30), messages=[],
-            context_limit=None, prompt_tokens=None, update_usage=lambda u: None,
+            model="test-model",
+            cwd=self.cwd,
+            client=FakeClient(turns),
+            max_turns=kwargs.get("max_turns", 30),
+            messages=[],
+            context_limit=None,
+            prompt_tokens=None,
+            update_usage=lambda _u: None,
         )
         return asyncio.run(repl.run_turn(session, "go"))
 
@@ -80,18 +85,23 @@ class RunOnceSilenceTests(unittest.TestCase):
         self.assertIn("no text in the reply", self.out())
 
     def test_truncated_reply_says_so(self) -> None:
-        self.run_once([
-            call_turn(("bash", {"command": "echo hi"})),
-            text_turn("", finish_reason="length"),
-        ])
+        self.run_once(
+            [
+                call_turn(("bash", {"command": "echo hi"})),
+                text_turn("", finish_reason="length"),
+            ]
+        )
         self.assertIn("output token limit", self.out())
 
     def test_turn_cap_is_printed_with_recovery_guidance(self) -> None:
-        self.run_once([
-            call_turn(("bash", {"command": "echo 1"})),
-            call_turn(("bash", {"command": "echo 2"})),
-            call_turn(("bash", {"command": "echo 3"})),
-        ], max_turns=2)
+        self.run_once(
+            [
+                call_turn(("bash", {"command": "echo 1"})),
+                call_turn(("bash", {"command": "echo 2"})),
+                call_turn(("bash", {"command": "echo 3"})),
+            ],
+            max_turns=2,
+        )
         self.assertIn("(stopped after 2 turns)", self.out())
         self.assertIn("task may be unfinished", self.out())
         self.assertIn("session is preserved", self.out())

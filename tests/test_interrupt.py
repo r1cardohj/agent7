@@ -8,8 +8,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from agent7.agent import Interrupted, _stream_once, dispatch_tool, run_agent
 from responses_fakes import FakeClient, call_turn
+
+from agent7.agent import Interrupted, _stream_once, dispatch_tool, run_agent
 
 
 class InterruptedToolBatchTests(unittest.TestCase):
@@ -30,17 +31,21 @@ class InterruptedToolBatchTests(unittest.TestCase):
                 raise KeyboardInterrupt
             return dispatch_tool(cwd, name, args, **kwargs)
 
-        client = FakeClient([call_turn([
-            ("bash", {"command": f"echo {i}"}) for i in range(3)
-        ])])
-        with patch("agent7.agent.dispatch_tool", side_effect=flaky):
-            with self.assertRaises(Interrupted):
-                asyncio.run(
-                    run_agent(
-                        "go", cwd=self.cwd, client=client, model="test-model",
-                        messages=messages, on_tool=lambda *a: None,
-                    )
+        client = FakeClient([call_turn([("bash", {"command": f"echo {i}"}) for i in range(3)])])
+        with (
+            patch("agent7.agent.dispatch_tool", side_effect=flaky),
+            self.assertRaises(Interrupted),
+        ):
+            asyncio.run(
+                run_agent(
+                    "go",
+                    cwd=self.cwd,
+                    client=client,
+                    model="test-model",
+                    messages=messages,
+                    on_tool=lambda *_a: None,
                 )
+            )
 
         answered = [m.get("tool_call_id") for m in messages if m.get("role") == "tool"]
         self.assertEqual(answered, ["call_0", "call_1", "call_2"])
@@ -51,6 +56,7 @@ class InterruptedToolBatchTests(unittest.TestCase):
                 async def gen():
                     await asyncio.Event().wait()
                     yield None
+
                 return gen()
 
             async def close(self) -> None:
@@ -60,23 +66,29 @@ class InterruptedToolBatchTests(unittest.TestCase):
                     await asyncio.Event().wait()
 
         stream = StubbornStream()
-        client = SimpleNamespace(responses=SimpleNamespace(
-            create=AsyncMock(return_value=stream)
-        ))
+        client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(return_value=stream)))
 
         async def interrupt_stream() -> None:
-            task = asyncio.create_task(_stream_once(
-                client, {}, on_delta=None, on_thinking=None,
-                on_answer_to_thinking=None, on_finish=None,
-            ))
+            task = asyncio.create_task(
+                _stream_once(
+                    client,
+                    {},
+                    on_delta=None,
+                    on_thinking=None,
+                    on_answer_to_thinking=None,
+                    on_finish=None,
+                )
+            )
             await asyncio.sleep(0)
             await asyncio.sleep(0)
             task.cancel()
             await task
 
-        with patch("agent7.agent.STREAM_CLOSE_TIMEOUT", 0.01):
-            with self.assertRaises(Interrupted):
-                asyncio.run(asyncio.wait_for(interrupt_stream(), timeout=0.1))
+        with (
+            patch("agent7.agent.STREAM_CLOSE_TIMEOUT", 0.01),
+            self.assertRaises(Interrupted),
+        ):
+            asyncio.run(asyncio.wait_for(interrupt_stream(), timeout=0.1))
 
     def test_interrupted_stream_close_has_a_timeout(self) -> None:
         class StuckStream:
@@ -86,6 +98,7 @@ class InterruptedToolBatchTests(unittest.TestCase):
                 async def gen():
                     await asyncio.Event().wait()
                     yield None
+
                 return gen()
 
             async def close(self) -> None:
@@ -93,23 +106,29 @@ class InterruptedToolBatchTests(unittest.TestCase):
                 await asyncio.Event().wait()
 
         stream = StuckStream()
-        client = SimpleNamespace(responses=SimpleNamespace(
-            create=AsyncMock(return_value=stream)
-        ))
+        client = SimpleNamespace(responses=SimpleNamespace(create=AsyncMock(return_value=stream)))
 
         async def interrupt_stream() -> None:
-            task = asyncio.create_task(_stream_once(
-                client, {}, on_delta=None, on_thinking=None,
-                on_answer_to_thinking=None, on_finish=None,
-            ))
+            task = asyncio.create_task(
+                _stream_once(
+                    client,
+                    {},
+                    on_delta=None,
+                    on_thinking=None,
+                    on_answer_to_thinking=None,
+                    on_finish=None,
+                )
+            )
             await asyncio.sleep(0)
             await asyncio.sleep(0)
             task.cancel()
             await task
 
-        with patch("agent7.agent.STREAM_CLOSE_TIMEOUT", 0.01):
-            with self.assertRaises(Interrupted):
-                asyncio.run(asyncio.wait_for(interrupt_stream(), timeout=1))
+        with (
+            patch("agent7.agent.STREAM_CLOSE_TIMEOUT", 0.01),
+            self.assertRaises(Interrupted),
+        ):
+            asyncio.run(asyncio.wait_for(interrupt_stream(), timeout=1))
         self.assertTrue(stream.closed)
 
 

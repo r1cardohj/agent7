@@ -84,9 +84,7 @@ class EditResultTests(unittest.TestCase):
     def test_old_string_replaces_only_the_matched_span(self) -> None:
         path = self.cwd / "f.txt"
         path.write_text("head\nkeep me\ntail keep me\n")
-        result = tool_edit(
-            self.cwd, "f.txt", [{"old_string": "keep me", "new_string": "mine"}]
-        )
+        result = tool_edit(self.cwd, "f.txt", [{"old_string": "keep me", "new_string": "mine"}])
         self.assertIn("occurs 2 times", result)
         result = tool_edit(
             self.cwd, "f.txt", [{"old_string": "tail keep me", "new_string": "mine"}]
@@ -120,9 +118,13 @@ class ToolSchemaTests(unittest.TestCase):
         self.assertEqual(sorted(schema["parameters"]["required"]), ["edits", "path"])
 
     def test_summary_for_write_and_edit(self) -> None:
-        self.assertEqual(tool_summary("write", {"path": "a.py", "content": "12345"}), "a.py  (5 chars)")
         self.assertEqual(
-            tool_summary("edit", {"path": "a.py", "edits": [{"old_string": "1", "new_string": "2"}]}),
+            tool_summary("write", {"path": "a.py", "content": "12345"}), "a.py  (5 chars)"
+        )
+        self.assertEqual(
+            tool_summary(
+                "edit", {"path": "a.py", "edits": [{"old_string": "1", "new_string": "2"}]}
+            ),
             "a.py  (1 edit)",
         )
         self.assertEqual(
@@ -155,7 +157,9 @@ class DispatchWiringTests(unittest.TestCase):
     def test_dispatch_forwards_preview_for_write(self) -> None:
         previews: list[str] = []
         result = dispatch_tool(
-            self.cwd, "write", {"path": "a.txt", "content": "new\n"},
+            self.cwd,
+            "write",
+            {"path": "a.txt", "content": "new\n"},
             on_preview=previews.append,
         )
         self.assertTrue(result.startswith("wrote "))

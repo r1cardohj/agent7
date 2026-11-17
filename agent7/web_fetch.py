@@ -21,14 +21,16 @@ READ_TIMEOUT = 20
 
 _USER_AGENT = "Mozilla/5.0 (compatible; agent7)"
 _RETRY_STATUS = (429, 500, 502, 503, 504)
-_TEXT_TYPES = frozenset({
-    "application/javascript",
-    "application/json",
-    "application/toml",
-    "application/x-yaml",
-    "application/xml",
-    "application/yaml",
-})
+_TEXT_TYPES = frozenset(
+    {
+        "application/javascript",
+        "application/json",
+        "application/toml",
+        "application/x-yaml",
+        "application/xml",
+        "application/yaml",
+    }
+)
 
 
 class _FetchError(Exception):
@@ -170,17 +172,32 @@ class _PlainTextParser(HTMLParser):
     """Last-resort HTML text extraction without script/style contents."""
 
     _HIDDEN = frozenset({"script", "style", "noscript", "svg"})
-    _BREAKS = frozenset({
-        "article", "br", "div", "h1", "h2", "h3", "h4", "h5", "h6",
-        "li", "p", "pre", "section", "table", "tr",
-    })
+    _BREAKS = frozenset(
+        {
+            "article",
+            "br",
+            "div",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "li",
+            "p",
+            "pre",
+            "section",
+            "table",
+            "tr",
+        }
+    )
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self.hidden = 0
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
         if tag in self._HIDDEN:
             self.hidden += 1
         elif not self.hidden and tag in self._BREAKS:
@@ -252,6 +269,6 @@ def fetch(url: str, max_chars: int | None = None) -> str:
     return _truncate(text, limit)
 
 
-def tool_fetch(cwd: Path, url: str, max_chars: int | None = None) -> str:
+def tool_fetch(_cwd: Path, url: str, max_chars: int | None = None) -> str:
     """fetch tool handler: cwd is unused because fetching has no workspace path."""
     return fetch(url, max_chars)

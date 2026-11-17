@@ -50,9 +50,7 @@ class SingleTaskCompactionTests(unittest.TestCase):
 
         self.assertEqual(changed, 1)
         self.assertEqual(len(compacted), len(messages))
-        self.assertEqual(
-            [m["role"] for m in compacted], [m["role"] for m in messages]
-        )
+        self.assertEqual([m["role"] for m in compacted], [m["role"] for m in messages])
         self.assertEqual(compacted[3]["tool_call_id"], "call_0")
         expected = messages[3]["content"][:2_000] + "\n...[compacted 1010 chars]"
         self.assertEqual(compacted[3]["content"], expected)

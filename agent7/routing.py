@@ -20,6 +20,7 @@ SCORE_MAX_TOKENS = 500
 SWITCH_SCORE_MARGIN = 3.0
 _INTENTS = frozenset({"quick", "coding", "debugging", "reasoning"})
 
+
 @dataclass(frozen=True)
 class ModelCapability:
     """Reviewed auto-routing metadata; unknown listed models stay out of auto."""
@@ -40,24 +41,35 @@ class ModelCapability:
     def ref(self) -> str:
         return f"{self.provider_id}/{self.model}"
 
+
 MODEL_CAPABILITIES = (
     ModelCapability(
-        provider_id="deepseek", model="deepseek-flash", context_limit=1_048_576,
-        strengths=frozenset({"fast", "coding"}), scorer_priority=1,
+        provider_id="deepseek",
+        model="deepseek-flash",
+        context_limit=1_048_576,
+        strengths=frozenset({"fast", "coding"}),
+        scorer_priority=1,
         supports_vision=True,
         routing_hint="Fast general coding, explanations, and quick edits.",
     ),
     ModelCapability(
-        provider_id="kimi", model="kimi-for-coding", context_limit=1_048_576,
-        strengths=frozenset({"fast", "coding"}), scorer_priority=2,
+        provider_id="kimi",
+        model="kimi-for-coding",
+        context_limit=1_048_576,
+        strengths=frozenset({"fast", "coding"}),
+        scorer_priority=2,
         routing_hint="Fast implementation, refactoring, and test-focused coding.",
     ),
     ModelCapability(
-        provider_id="kimi", model="k3.1-pro", context_limit=1_048_576,
+        provider_id="kimi",
+        model="k3.1-pro",
+        context_limit=1_048_576,
         strengths=frozenset({"strong"}),
         routing_hint="Strong architecture and repository-wide coding; largest context.",
     ),
 )
+
+
 @dataclass(frozen=True)
 class RouteTarget:
     """One concrete upstream request destination."""
@@ -73,12 +85,14 @@ class RouteTarget:
     def ref(self) -> str:
         return f"{self.provider_id}/{self.model}"
 
+
 @dataclass(frozen=True)
 class RouteSelection:
     intent: str
     scores: dict[str, float]
     scorer_ref: str
     error: str = ""
+
 
 @dataclass
 class FailoverRoute:
@@ -102,7 +116,7 @@ class FailoverRoute:
 
     @property
     def active_targets(self) -> tuple[RouteTarget, ...]:
-        return self._active[self.index:]
+        return self._active[self.index :]
 
     def advance(self) -> RouteTarget | None:
         """Move to the next target, or return None after the last one."""
@@ -112,7 +126,10 @@ class FailoverRoute:
         return self.current
 
     async def start(
-        self, task: str, messages: list[dict[str, Any]], estimated_tokens: int,
+        self,
+        task: str,
+        messages: list[dict[str, Any]],
+        estimated_tokens: int,
     ) -> None:
         """Choose a new task's order; execution failover never invokes the scorer."""
         # A new route has no incumbent: its first task must use the argmax.
@@ -138,7 +155,11 @@ class FailoverRoute:
         scorer = _scorer_for(eligible, previous)
         try:
             intent, scores = await _score_targets(
-                scorer, eligible, task, messages, has_images=images,
+                scorer,
+                eligible,
+                task,
+                messages,
+                has_images=images,
             )
         except Exception as e:  # scoring is an optimization, never a task SPOF
             self._active = _fallback_order(eligible, previous)
@@ -159,8 +180,11 @@ class FailoverRoute:
                 if asyncio.iscoroutine(result):
                     await result
 
+
 def build_auto_route(
-    credentials: dict[str, Credential], *, models: list[str] | None = None,
+    credentials: dict[str, Credential],
+    *,
+    models: list[str] | None = None,
     context_limit: Callable[[str], int | None] | None = None,
 ) -> FailoverRoute:
     """Build auto from reviewed models available in the current login session."""
@@ -178,38 +202,45 @@ def build_auto_route(
         credential = credentials.get(provider.id) or provider.resolve()
         if credential is None:
             continue
-        targets.append(RouteTarget(
-            provider_id=provider.id,
-            model=capability.model,
-            credential=credential,
-            client=provider.make_client(credential),
-            context_limit=(
-                context_limit(capability.model)
-                if context_limit else capability.context_limit
-            ),
-            capability=capability,
-        ))
+        targets.append(
+            RouteTarget(
+                provider_id=provider.id,
+                model=capability.model,
+                credential=credential,
+                client=provider.make_client(credential),
+                context_limit=(
+                    context_limit(capability.model) if context_limit else capability.context_limit
+                ),
+                capability=capability,
+            )
+        )
     if not targets:
         raise ValueError("auto: no supported models with credentials")
     return FailoverRoute(tuple(targets), intent_routing=True)
+
 
 def _has_images(messages: list[dict[str, Any]]) -> bool:
     """Whether this conversation already carries inline images for the model."""
     return any(message.get(IMAGES_KEY) for message in messages)
 
+
 def _vision_eligible(targets: tuple[RouteTarget, ...]) -> tuple[RouteTarget, ...]:
     """Drop candidates that would silently lose the images the task depends on."""
     seeing = tuple(
-        target for target in targets
+        target
+        for target in targets
         if target.capability is None or target.capability.supports_vision
     )
     return seeing or targets
 
+
 def _context_eligible(
-    targets: tuple[RouteTarget, ...], estimated_tokens: int,
+    targets: tuple[RouteTarget, ...],
+    estimated_tokens: int,
 ) -> tuple[RouteTarget, ...]:
     fitting = tuple(
-        target for target in targets
+        target
+        for target in targets
         if target.context_limit is None or estimated_tokens < target.context_limit
     )
     if fitting:
@@ -217,23 +248,32 @@ def _context_eligible(
     # Nothing fits as-is: pick the largest window and let normal compaction run.
     return (max(targets, key=lambda target: target.context_limit or 0),)
 
+
 def _scorer_for(
-    targets: tuple[RouteTarget, ...], previous: RouteTarget | None,
+    targets: tuple[RouteTarget, ...],
+    previous: RouteTarget | None,
 ) -> RouteTarget:
-    scorers = [target for target in targets if target.capability and target.capability.scorer_priority]
+    scorers = [
+        target for target in targets if target.capability and target.capability.scorer_priority
+    ]
     if scorers:
         return min(scorers, key=lambda target: target.capability.scorer_priority or 99)
     return previous if previous in targets else targets[0]
 
+
 def _fallback_order(
-    targets: tuple[RouteTarget, ...], previous: RouteTarget | None,
+    targets: tuple[RouteTarget, ...],
+    previous: RouteTarget | None,
 ) -> tuple[RouteTarget, ...]:
     if previous not in targets:
         return targets
     return (previous, *(target for target in targets if target is not previous))
 
+
 def _scored_order(
-    targets: tuple[RouteTarget, ...], previous: RouteTarget | None, scores: dict[str, float],
+    targets: tuple[RouteTarget, ...],
+    previous: RouteTarget | None,
+    scores: dict[str, float],
 ) -> tuple[RouteTarget, ...]:
     ordered = sorted(targets, key=lambda target: -scores.get(target.ref, -1.0))
     if previous in targets and previous.ref in scores:
@@ -241,6 +281,7 @@ def _scored_order(
         if best_score - scores[previous.ref] < SWITCH_SCORE_MARGIN:
             ordered = [previous, *(target for target in ordered if target is not previous)]
     return tuple(ordered)
+
 
 def _recent_context(messages: list[dict[str, Any]]) -> str:
     entries: list[str] = []
@@ -251,19 +292,25 @@ def _recent_context(messages: list[dict[str, Any]]) -> str:
             entries.append(f"{role}: {content.strip()[:2000]}")
     return "\n".join(entries[-2:])[:4000]
 
+
 async def _score_targets(
-    scorer: RouteTarget, targets: tuple[RouteTarget, ...], task: str,
-    messages: list[dict[str, Any]], *, has_images: bool = False,
+    scorer: RouteTarget,
+    targets: tuple[RouteTarget, ...],
+    task: str,
+    messages: list[dict[str, Any]],
+    *,
+    has_images: bool = False,
 ) -> tuple[str, dict[str, float]]:
-    candidates = [{
-        "ref": target.ref,
-        "strengths": sorted(target.capability.strengths) if target.capability else [],
-        "routing_hint": target.capability.routing_hint if target.capability else "",
-        "context_limit": target.context_limit,
-        "sees_images": (
-            target.capability.supports_vision if target.capability else True
-        ),
-    } for target in targets]
+    candidates = [
+        {
+            "ref": target.ref,
+            "strengths": sorted(target.capability.strengths) if target.capability else [],
+            "routing_hint": target.capability.routing_hint if target.capability else "",
+            "context_limit": target.context_limit,
+            "sees_images": (target.capability.supports_vision if target.capability else True),
+        }
+        for target in targets
+    ]
     payload = {
         "task": task[:6000],
         "recent_context": _recent_context(messages),
@@ -300,9 +347,12 @@ async def _score_targets(
     response = await asyncio.wait_for(
         scorer.client.responses.create(**kwargs), timeout=SCORE_TIMEOUT
     )
-    output = response.get("output") if isinstance(response, dict) else getattr(response, "output", [])
+    output = (
+        response.get("output") if isinstance(response, dict) else getattr(response, "output", [])
+    )
     text = output_text([plain_item(item) for item in output or []])
     return _parse_scores(text, targets)
+
 
 def _parse_scores(text: str, targets: tuple[RouteTarget, ...]) -> tuple[str, dict[str, float]]:
     raw = text.strip()

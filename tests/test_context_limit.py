@@ -1,5 +1,4 @@
 import os
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -24,10 +23,10 @@ def make_session(limit: int | None, prompt_tokens: int | None = None) -> Session
 class FmtLimitTests(unittest.TestCase):
     def test_limits_use_the_vendor_unit(self) -> None:
         cases = {
-            1_048_576: "1M",      # deepseek-flash, sold as 1M
-            1_000_000: "1M",      # AGENT7_CONTEXT_LIMIT=1000000
+            1_048_576: "1M",  # deepseek-flash, sold as 1M
+            1_000_000: "1M",  # AGENT7_CONTEXT_LIMIT=1000000
             2_097_152: "2M",
-            262_144: "256k",      # kimi-for-coding-highspeed
+            262_144: "256k",  # kimi-for-coding-highspeed
             256_000: "256k",
             500_000: "500k",
             131_072: "128k",

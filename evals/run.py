@@ -37,15 +37,28 @@ PROJECT_ROOT = EVAL_ROOT.parent
 DEFAULT_MANIFEST = EVAL_ROOT / "tasks.json"
 STRATEGIES = ("fixed-fast", "fixed-strong", "auto-tier", "auto-full")
 AUTO_STRATEGIES = frozenset({"auto-tier", "auto-full"})
-INVALID_STATUSES = frozenset({
-    "infrastructure_error", "verify_error", "runner_error", "interrupted",
-})
+INVALID_STATUSES = frozenset(
+    {
+        "infrastructure_error",
+        "verify_error",
+        "runner_error",
+        "interrupted",
+    }
+)
 _INFRA_STATUSES = frozenset({401, 403, 404, 408, 409, 425, 429, 500, 502, 503, 504})
-_INFRA_ERRORS = frozenset({
-    "APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError",
-    "ServiceUnavailableError", "BadGatewayError", "AuthenticationError",
-    "PermissionDeniedError", "NotFoundError",
-})
+_INFRA_ERRORS = frozenset(
+    {
+        "APIConnectionError",
+        "APITimeoutError",
+        "RateLimitError",
+        "InternalServerError",
+        "ServiceUnavailableError",
+        "BadGatewayError",
+        "AuthenticationError",
+        "PermissionDeniedError",
+        "NotFoundError",
+    }
+)
 
 
 def utc_now() -> str:
@@ -127,24 +140,29 @@ def load_tasks(path: Path = DEFAULT_MANIFEST) -> list[Task]:
     return tasks
 
 
-def build_plan(tasks: list[Task], strategies: list[str], repeat: int) -> list[tuple[Task, str, int]]:
+def build_plan(
+    tasks: list[Task], strategies: list[str], repeat: int
+) -> list[tuple[Task, str, int]]:
     """Interleave policies within a task instead of running one provider in a block."""
     if repeat < 1:
         raise ValueError("repeat must be at least one")
     unknown = set(strategies) - set(STRATEGIES)
     if unknown or not strategies:
         raise ValueError(f"unknown strategies: {sorted(unknown)}")
-    return [(task, strategy, number) for task in tasks for number in range(1, repeat + 1)
-            for strategy in strategies]
+    return [
+        (task, strategy, number)
+        for task in tasks
+        for number in range(1, repeat + 1)
+        for strategy in strategies
+    ]
 
 
 def _responses_spy(responses: Any, usage: list[dict[str, int]]):
     class ResponsesSpy:
         async def create(self, **kwargs):
             response = await responses.create(**kwargs)
-            if not kwargs.get("stream"):
-                if counts := response_usage(response):
-                    usage.append(counts)
+            if not kwargs.get("stream") and (counts := response_usage(response)):
+                usage.append(counts)
             return response
 
     return ResponsesSpy()
@@ -172,14 +190,17 @@ class ObservedRoute(FailoverRoute):
         self.tier_only = tier_only
         self.score_seconds = 0.0
         self.score_usage: list[dict[str, int]] = []
-        targets = tuple(RouteTarget(
-            provider_id=target.provider_id,
-            model=target.model,
-            credential=target.credential,
-            client=_client_spy(target.client, self.score_usage),
-            context_limit=target.context_limit,
-            capability=target.capability,
-        ) for target in base.targets)
+        targets = tuple(
+            RouteTarget(
+                provider_id=target.provider_id,
+                model=target.model,
+                credential=target.credential,
+                client=_client_spy(target.client, self.score_usage),
+                context_limit=target.context_limit,
+                capability=target.capability,
+            )
+            for target in base.targets
+        )
         super().__init__(targets, intent_routing=True)
 
     async def start(self, task: str, messages: list[dict[str, Any]], estimated_tokens: int) -> None:
@@ -192,8 +213,14 @@ class ObservedRoute(FailoverRoute):
             return
         tier = "strong" if self.selection.intent in {"debugging", "reasoning"} else "fast"
         eligible = self._active
-        chosen = next((target for target in self.targets if target in eligible
-                       and target.capability and tier in target.capability.strengths), None)
+        chosen = next(
+            (
+                target
+                for target in self.targets
+                if target in eligible and target.capability and tier in target.capability.strengths
+            ),
+            None,
+        )
         if chosen is not None:
             self._active = (chosen, *(target for target in eligible if target is not chosen))
             self.index = 0
@@ -219,8 +246,13 @@ class AgentRunner:
     """Execute one real agent turn and retain machine-readable routing metrics."""
 
     def __init__(
-        self, credentials: dict[str, Credential], listed_models: list[str], *,
-        fast_model: str, strong_model: str, max_turns: int | None = None,
+        self,
+        credentials: dict[str, Credential],
+        listed_models: list[str],
+        *,
+        fast_model: str,
+        strong_model: str,
+        max_turns: int | None = None,
     ) -> None:
         self.current: AgentResult | None = None
         self.credentials = credentials
@@ -229,7 +261,7 @@ class AgentRunner:
         self.strong_model = strong_model
         self.max_turns = max_turns
 
-    def begin(self, strategy: str) -> AgentResult:
+    def begin(self, _strategy: str) -> AgentResult:
         """Track progress from the start, so a cancelled run still reports it."""
         result = AgentResult()
         self.current = result
@@ -242,7 +274,8 @@ class AgentRunner:
         try:
             if strategy in AUTO_STRATEGIES:
                 base = build_auto_route(
-                    self.credentials, models=self.listed_models,
+                    self.credentials,
+                    models=self.listed_models,
                     context_limit=resolve_context_limit,
                 )
                 route = ObservedRoute(base, tier_only=strategy == "auto-tier")
@@ -276,13 +309,16 @@ class AgentRunner:
                     result.initial_model = target.ref
                 else:
                     result.failovers += 1
-                result.events.append({
-                    "event": "route", "target": target.ref,
-                    "previous": previous.ref if previous else None,
-                    "error": str(error) if error else None,
-                })
+                result.events.append(
+                    {
+                        "event": "route",
+                        "target": target.ref,
+                        "previous": previous.ref if previous else None,
+                        "error": str(error) if error else None,
+                    }
+                )
 
-            def on_tool(turn: int, name: str, args: dict, output: str) -> None:
+            def on_tool(turn: int, name: str, _args: dict, _output: str) -> None:
                 result.tool_rounds = max(result.tool_rounds, turn)
                 result.tool_calls += 1
                 result.events.append({"event": "tool", "turn": turn, "name": name})
@@ -295,12 +331,19 @@ class AgentRunner:
                 result.events.append({"event": "compact", "messages": count})
 
             result.answer = await run_agent(
-                task.prompt, cwd=cwd, client=client, model=model,
+                task.prompt,
+                cwd=cwd,
+                client=client,
+                model=model,
                 max_turns=self.max_turns or task.max_turns,
                 messages=[{"role": "system", "content": SYSTEM}],
-                provider_id=provider_id, context_limit=context_limit,
-                route=route, on_route=on_route if route else None,
-                on_usage=on_usage, on_tool=on_tool, on_model_start=on_model_start,
+                provider_id=provider_id,
+                context_limit=context_limit,
+                route=route,
+                on_route=on_route if route else None,
+                on_usage=on_usage,
+                on_tool=on_tool,
+                on_model_start=on_model_start,
                 on_compact=on_compact,
             )
         except Exception as error:  # the outer runner classifies and records it
@@ -353,7 +396,11 @@ def _infrastructure_error(error: BaseException) -> bool:
 
 def _run(command: list[str], cwd: Path, *, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(
-        command, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        command,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         check=check,
     )
 
@@ -361,10 +408,20 @@ def _run(command: list[str], cwd: Path, *, check: bool = True) -> subprocess.Com
 def _git_baseline(cwd: Path) -> str:
     _run(["git", "init", "-q"], cwd)
     _run(["git", "add", "."], cwd)
-    _run([
-        "git", "-c", "user.name=agent7-eval", "-c", "user.email=eval@localhost",
-        "commit", "-q", "-m", "evaluation baseline",
-    ], cwd)
+    _run(
+        [
+            "git",
+            "-c",
+            "user.name=agent7-eval",
+            "-c",
+            "user.email=eval@localhost",
+            "commit",
+            "-q",
+            "-m",
+            "evaluation baseline",
+        ],
+        cwd,
+    )
     return _run(["git", "rev-parse", "HEAD"], cwd).stdout.strip()
 
 
@@ -379,13 +436,21 @@ def _project_revision() -> str:
 
 def _shell(command: str, cwd: Path, timeout: int, env: dict[str, str] | None = None):
     return subprocess.run(
-        command, cwd=cwd, shell=True, text=True, env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout,
+        command,
+        check=False,
+        cwd=cwd,
+        shell=True,
+        text=True,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=timeout,
     )
 
 
-async def _with_timeout(runner: Any, task: Task, cwd: Path, strategy: str,
-                        timeout: int) -> AgentResult:
+async def _with_timeout(
+    runner: Any, task: Task, cwd: Path, strategy: str, timeout: int
+) -> AgentResult:
     started = runner.begin(strategy) if hasattr(runner, "begin") else None
     pending_task = asyncio.create_task(runner.run(task, cwd, strategy))
     try:
@@ -406,7 +471,12 @@ async def _with_timeout(runner: Any, task: Task, cwd: Path, strategy: str,
 
 
 async def execute_run(
-    task: Task, strategy: str, repeat: int, output: Path, runner: Any, *,
+    task: Task,
+    strategy: str,
+    repeat: int,
+    output: Path,
+    runner: Any,
+    *,
     timeout: int | None = None,
 ) -> dict[str, Any]:
     """Run one isolated task; hidden verification arrives only after the agent stops."""
@@ -426,8 +496,9 @@ async def execute_run(
         try:
             shutil.copytree(EVAL_ROOT / "repos" / task.repo, cwd)
             if task.setup:
-                setup = _shell(task.setup.format(python=shlex.quote(sys.executable)),
-                               cwd, task.timeout)
+                setup = _shell(
+                    task.setup.format(python=shlex.quote(sys.executable)), cwd, task.timeout
+                )
                 (artifact / "setup.txt").write_text(setup.stdout, encoding="utf-8")
                 if setup.returncode:
                     raise RuntimeError(f"setup exited {setup.returncode}")
@@ -435,7 +506,11 @@ async def execute_run(
             agent_started = time.perf_counter()
             try:
                 outcome = await _with_timeout(
-                    runner, task, cwd, strategy, timeout or task.timeout,
+                    runner,
+                    task,
+                    cwd,
+                    strategy,
+                    timeout or task.timeout,
                 )
             finally:
                 agent_seconds = time.perf_counter() - agent_started
@@ -453,8 +528,10 @@ async def execute_run(
                 env = dict(os.environ, AGENT7_EVAL_TASK=task.id, PYTHONDONTWRITEBYTECODE="1")
                 try:
                     verified = _shell(
-                        task.verify.format(python=shlex.quote(sys.executable)), cwd,
-                        task.verify_timeout, env,
+                        task.verify.format(python=shlex.quote(sys.executable)),
+                        cwd,
+                        task.verify_timeout,
+                        env,
                     )
                     verify_exit = verified.returncode
                     (artifact / "verify.txt").write_text(verified.stdout, encoding="utf-8")
@@ -567,7 +644,9 @@ async def _amain(args: argparse.Namespace) -> int:
     strategies = _parse_strategies(args.strategies)
     plan = build_plan(tasks, strategies, args.repeat)
     if args.dry_run:
-        print(f"{len(plan)} runs ({len(tasks)} tasks × {len(strategies)} strategies × {args.repeat})")
+        print(
+            f"{len(plan)} runs ({len(tasks)} tasks × {len(strategies)} strategies × {args.repeat})"
+        )
         for task, strategy, repeat in plan:
             print(f"{task.id:30} {task.category:10} {strategy:13} r{repeat}")
         return 0
@@ -577,7 +656,10 @@ async def _amain(args: argparse.Namespace) -> int:
         raise ValueError("no provider credentials; set an API key or use agent7 /login")
     listed = await _listed_models(credentials) if set(strategies) & AUTO_STRATEGIES else []
     runner = AgentRunner(
-        credentials, listed, fast_model=args.fast_model, strong_model=args.strong_model,
+        credentials,
+        listed,
+        fast_model=args.fast_model,
+        strong_model=args.strong_model,
         max_turns=args.max_turns,
     )
     _preflight(runner, strategies)
@@ -585,14 +667,22 @@ async def _amain(args: argparse.Namespace) -> int:
         probe = build_auto_route(credentials, models=listed, context_limit=resolve_context_limit)
         await probe.close()
 
-    output = args.output or EVAL_ROOT / "results" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output = args.output or EVAL_ROOT / "results" / datetime.now(timezone.utc).strftime(
+        "%Y%m%dT%H%M%SZ"
+    )
     output.mkdir(parents=True, exist_ok=False)
     config = {
-        "started_at": utc_now(), "strategies": strategies, "repeat": args.repeat,
-        "tasks": [asdict(task) for task in tasks], "fast_model": args.fast_model,
-        "strong_model": args.strong_model, "listed_models": listed,
-        "providers": sorted(credentials), "max_turns": args.max_turns,
-        "timeout": args.timeout, "agent7_revision": _project_revision(),
+        "started_at": utc_now(),
+        "strategies": strategies,
+        "repeat": args.repeat,
+        "tasks": [asdict(task) for task in tasks],
+        "fast_model": args.fast_model,
+        "strong_model": args.strong_model,
+        "listed_models": listed,
+        "providers": sorted(credentials),
+        "max_turns": args.max_turns,
+        "timeout": args.timeout,
+        "agent7_revision": _project_revision(),
     }
     (output / "config.json").write_text(
         json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -605,13 +695,21 @@ async def _amain(args: argparse.Namespace) -> int:
             for index, (task, strategy, repeat) in enumerate(plan, 1):
                 print(f"[{index}/{len(plan)}] {task.id} {strategy} r{repeat}", flush=True)
                 record = await execute_run(
-                    task, strategy, repeat, output, runner, timeout=args.timeout,
+                    task,
+                    strategy,
+                    repeat,
+                    output,
+                    runner,
+                    timeout=args.timeout,
                 )
                 records.append(record)
                 stream.write(json.dumps(record, ensure_ascii=False) + "\n")
                 stream.flush()
-                print(f"  {record['status']} {record['selected_model']} "
-                      f"{record['wall_seconds']:.1f}s", flush=True)
+                print(
+                    f"  {record['status']} {record['selected_model']} "
+                    f"{record['wall_seconds']:.1f}s",
+                    flush=True,
+                )
     except (KeyboardInterrupt, asyncio.CancelledError):
         interrupted = True
         print("\ninterrupted; keeping the completed runs", file=sys.stderr)

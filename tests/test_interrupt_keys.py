@@ -22,9 +22,7 @@ class InterruptKeyTests(unittest.TestCase):
                         cancelled.set()
                         raise
 
-                running = asyncio.create_task(
-                    run_with_interrupt_keys(work(), input_obj=input_obj)
-                )
+                running = asyncio.create_task(run_with_interrupt_keys(work(), input_obj=input_obj))
                 await started.wait()
                 await asyncio.sleep(0.02)
                 input_obj.send_text("next")
@@ -46,6 +44,7 @@ class InterruptKeyTests(unittest.TestCase):
     def test_normal_completion_closes_listener_and_keeps_typeahead(self) -> None:
         async def exercise() -> None:
             with create_pipe_input() as input_obj:
+
                 async def work() -> str:
                     input_obj.send_text("later")
                     await asyncio.sleep(0.05)

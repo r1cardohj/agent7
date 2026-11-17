@@ -79,9 +79,11 @@ class LifecycleTests(unittest.TestCase):
                 session = make_session(self.cwd)
                 hooks, events = self.recording_hooks()
                 session.hooks = hooks
-                with patch("agent7.repl._run_agent_once", new=AsyncMock(side_effect=error)):
-                    with self.assertRaises(type(error)):
-                        asyncio.run(run_turn(session, "go"))
+                with (
+                    patch("agent7.repl._run_agent_once", new=AsyncMock(side_effect=error)),
+                    self.assertRaises(type(error)),
+                ):
+                    asyncio.run(run_turn(session, "go"))
                 self.assertEqual([event.kind for event in events], ["turn_started", kind])
                 if kind == "turn_failed":
                     self.assertEqual(events[-1].reason, "RuntimeError")
@@ -95,7 +97,7 @@ class CliLifecycleTests(unittest.TestCase):
             events: list[LifecycleEvent] = []
             systems: list[str] = []
             client = SimpleNamespace(close=AsyncMock())
-            provider = SimpleNamespace(id="deepseek", make_client=lambda cred: client)
+            provider = SimpleNamespace(id="deepseek", make_client=lambda _cred: client)
             credential = SimpleNamespace(source="test")
 
             def session_with_events(**kwargs) -> Session:
@@ -104,23 +106,26 @@ class CliLifecycleTests(unittest.TestCase):
                 session.hooks.subscribe(events.append)
                 return session
 
-            async def fake_run(session: Session, task: str, **kwargs) -> str:
+            async def fake_run(session: Session, _task: str, **_kwargs) -> str:
                 emit_lifecycle(session, "turn_started")
                 emit_lifecycle(session, "turn_succeeded")
                 return "done"
 
-            with patch.dict(os.environ, {"XDG_STATE_HOME": str(Path(root) / "state")}), \
-                 patch.object(cli, "background_tasks_instructions",
-                              return_value="\nHERDR-BACKGROUND") as instructions, \
-                 patch.object(cli, "HerdrReporter", return_value=lambda event: None) as herdr, \
-                 patch.object(cli, "Session", new=session_with_events), \
-                 patch.object(cli, "resolve_all", return_value={"deepseek": credential}), \
-                 patch.object(cli, "resolve_default", return_value=(provider, credential)), \
-                 patch.object(cli, "fetch_models", new=AsyncMock(return_value=[])), \
-                 patch.object(cli, "switch_model", new=AsyncMock(
-                     return_value=SimpleNamespace(message="ok")
-                 )), \
-                 patch.object(cli, "run_turn", new=fake_run):
+            with (
+                patch.dict(os.environ, {"XDG_STATE_HOME": str(Path(root) / "state")}),
+                patch.object(
+                    cli, "background_tasks_instructions", return_value="\nHERDR-BACKGROUND"
+                ) as instructions,
+                patch.object(cli, "HerdrReporter", return_value=lambda _event: None) as herdr,
+                patch.object(cli, "Session", new=session_with_events),
+                patch.object(cli, "resolve_all", return_value={"deepseek": credential}),
+                patch.object(cli, "resolve_default", return_value=(provider, credential)),
+                patch.object(cli, "fetch_models", new=AsyncMock(return_value=[])),
+                patch.object(
+                    cli, "switch_model", new=AsyncMock(return_value=SimpleNamespace(message="ok"))
+                ),
+                patch.object(cli, "run_turn", new=fake_run),
+            ):
                 asyncio.run(cli.async_main(Options.parse(["--cwd", str(cwd), "go"])))
 
             instructions.assert_called_once_with()

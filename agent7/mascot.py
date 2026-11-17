@@ -45,11 +45,11 @@ COLORS = {
 def mascot_text(*, color: bool = True) -> Text:
     """Pack two vertical pixels into each terminal cell with half blocks."""
     art = Text(no_wrap=True)
-    for row, (top, bottom) in enumerate(zip(PIXEL_ROWS[::2], PIXEL_ROWS[1::2])):
+    for row, (top, bottom) in enumerate(zip(PIXEL_ROWS[::2], PIXEL_ROWS[1::2], strict=False)):
         if row:
             art.append("\n")
         art.append("  ")
-        for upper, lower in zip(top, bottom):
+        for upper, lower in zip(top, bottom, strict=False):
             if upper == "." and lower == ".":
                 art.append(" ")
             elif upper == ".":

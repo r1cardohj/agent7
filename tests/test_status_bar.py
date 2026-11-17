@@ -39,7 +39,12 @@ class StatusBarTests(unittest.TestCase):
     def test_bar_fills_exactly_one_line(self) -> None:
         for width in (40, 80, 120):
             with self.subTest(width=width):
-                self.assertEqual(len(flat(status_bar(make_session(), mode=("NORMAL", "ansiyellow"), width=width))), width)
+                self.assertEqual(
+                    len(
+                        flat(status_bar(make_session(), mode=("NORMAL", "ansiyellow"), width=width))
+                    ),
+                    width,
+                )
 
     def test_mode_sits_on_the_right(self) -> None:
         segments = status_bar(make_session(), mode=("NORMAL", "ansiyellow"), width=60)
@@ -47,7 +52,9 @@ class StatusBarTests(unittest.TestCase):
         self.assertEqual(segments[-1], ("fg:ansiyellow", " NORMAL "))
 
     def test_narrow_terminal_drops_the_cwd_before_the_gauge(self) -> None:
-        narrow = flat(status_bar(make_session(tokens=4_868), mode=("INSERT", "ansigreen"), width=30))
+        narrow = flat(
+            status_bar(make_session(tokens=4_868), mode=("INSERT", "ansigreen"), width=30)
+        )
         self.assertNotIn("work", narrow)
         self.assertIn("4,868/256k", narrow)
         self.assertIn("INSERT", narrow)

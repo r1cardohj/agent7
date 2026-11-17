@@ -19,6 +19,7 @@ from .providers import Credential, Provider, get_provider
 from .routing import AUTO_REF, FailoverRoute, RouteTarget
 from .store import new_session_id, timestamp
 
+
 async def _close_client(client: Any) -> None:
     if client is None:
         return
@@ -26,6 +27,7 @@ async def _close_client(client: Any) -> None:
         result = client.close()
         if asyncio.iscoroutine(result):
             await result
+
 
 def resolve_context_limit(model: str) -> int | None:
     raw = os.environ.get("AGENT7_CONTEXT_LIMIT", "").strip()
@@ -48,11 +50,13 @@ def resolve_context_limit(model: str) -> int | None:
         return 1_048_576
     return None
 
+
 def fmt_tokens(n: int) -> str:
     if n < 10_000:
         return f"{n:,}"
     k = n / 1000
     return f"{k:.0f}k" if k >= 100 or abs(k - round(k)) < 0.05 else f"{k:.1f}k"
+
 
 def fmt_limit(n: int) -> str:
     """A context limit in the unit its vendor prints: 1M, 256k, 128k.
@@ -62,16 +66,18 @@ def fmt_limit(n: int) -> str:
     base. Match the label instead: pick whichever base divides the number
     exactly, so 1,048,576 → 1M, 262,144 → 256k, 256,000 → 256k.
     """
-    for suffix, base in (("M", 1_000_000), ("M", 1024 ** 2), ("k", 1_000), ("k", 1024)):
+    for suffix, base in (("M", 1_000_000), ("M", 1024**2), ("k", 1_000), ("k", 1024)):
         if n % base == 0 and 1 <= n // base < 1000:
             return f"{n // base}{suffix}"
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}".rstrip("0").rstrip(".") + "M"
     return fmt_tokens(n)
 
+
 def format_context_prompt(session: Session) -> str:
     u = fmt_tokens(session.prompt_tokens) if session.prompt_tokens is not None else "?"
     return u if session.context_limit is None else f"{u}/{fmt_limit(session.context_limit)}"
+
 
 def context_pressure(session: Session) -> int | None:
     """Share of the context window in use, as a percentage, or None if unknown."""
@@ -79,18 +85,20 @@ def context_pressure(session: Session) -> int | None:
         return None
     return min(100, round(100 * session.prompt_tokens / session.context_limit))
 
+
 def fmt_cwd(path: Path, *, limit: int = 44) -> str:
     """The workspace as `~`-relative text, shortened from the left when long."""
     text, home = str(path), str(Path.home())
     if text == home:
         text = "~"
     elif text.startswith(home.rstrip("/") + "/"):
-        text = "~" + text[len(home):]
+        text = "~" + text[len(home) :]
     if limit > 1 and len(text) > limit:
-        tail = text[1 - limit:]
+        tail = text[1 - limit :]
         cut = tail.find("/")
         text = "…" + (tail[cut:] if 0 <= cut < len(tail) - 1 else tail)
     return text
+
 
 def format_usage(session: Session) -> str:
     if session.prompt_tokens is None:
@@ -106,6 +114,7 @@ def format_usage(session: Session) -> str:
     if (pct := context_pressure(session)) is not None:
         parts.append(f"context_limit={fmt_limit(session.context_limit)} ({pct}%)")
     return "  ".join(parts)
+
 
 @dataclass
 class Session:
@@ -162,7 +171,10 @@ class Session:
         self.credentials[provider_id] = cred
 
     def publish_models(
-        self, fetch: Any, refs: list[str], credentials: dict[str, Credential],
+        self,
+        fetch: Any,
+        refs: list[str],
+        credentials: dict[str, Credential],
     ) -> None:
         """Publish discovery only when it is still the session's current fetch."""
         with self._models_lock:

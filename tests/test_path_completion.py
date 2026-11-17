@@ -171,13 +171,14 @@ class ReplCompleterTests(unittest.TestCase):
         caller = threading.get_ident()
         workers = []
 
-        def fake_completions(cwd: Path, text: str):
+        def fake_completions(_cwd: Path, _text: str):
             workers.append(threading.get_ident())
             return []
 
         async def collect() -> None:
             async for _ in self.completer.get_completions_async(
-                Document("read @not"), CompleteEvent(text_inserted=True),
+                Document("read @not"),
+                CompleteEvent(text_inserted=True),
             ):
                 pass
 
