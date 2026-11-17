@@ -11,7 +11,8 @@ from unittest.mock import patch
 import agent7.agent as A
 from agent7.agent import run_agent
 from agent7.providers import Credential
-from agent7.routing import MODEL_CAPABILITIES, FailoverRoute, RouteTarget
+from agent7.responses import IMAGES_KEY
+from agent7.routing import MODEL_CAPABILITIES, FailoverRoute, ModelCapability, RouteTarget
 from responses_fakes import FakeClient, call_turn, text_turn
 
 
@@ -166,6 +167,78 @@ class IntentSelectionTests(unittest.TestCase):
 
         self.assertEqual(deepseek.score_requests, [])
         self.assertIsNone(route.selection)
+
+    def vision_target(self, ref: str, client: ScoringClient, *, vision: bool) -> RouteTarget:
+        base = capability_target(ref, client)
+        capability = base.capability
+        return RouteTarget(
+            base.provider_id, base.model, base.credential, base.client,
+            base.context_limit,
+            ModelCapability(
+                provider_id=capability.provider_id, model=capability.model,
+                context_limit=capability.context_limit, strengths=capability.strengths,
+                scorer_priority=capability.scorer_priority,
+                supports_vision=vision, routing_hint=capability.routing_hint,
+            ),
+        )
+
+    def test_images_exclude_text_only_candidates_before_scoring(self) -> None:
+        deepseek = ScoringClient(scores("debugging", {
+            "deepseek/deepseek-flash": 90,
+            "kimi/kimi-for-coding": 80,
+            "text/plain-only": 95,
+        }))
+        kimi = ScoringClient()
+        plain = ScoringClient()
+        route = FailoverRoute((
+            self.vision_target("deepseek/deepseek-flash", deepseek, vision=True),
+            self.vision_target("kimi/kimi-for-coding", kimi, vision=True),
+            self.vision_target("kimi/k3.1-pro", plain, vision=False),
+        ), intent_routing=True)
+        messages = [{"role": "tool", "content": "Read image file", IMAGES_KEY: [{"data": "QQ=="}]}]
+
+        asyncio.run(route.start("fix this screenshot", messages, 10))
+
+        payload = json.loads(deepseek.score_requests[0]["input"])
+        self.assertTrue(payload["has_images"])
+        self.assertEqual(
+            [c["ref"] for c in payload["candidates"]],
+            ["deepseek/deepseek-flash", "kimi/kimi-for-coding"],
+        )
+        self.assertNotIn("kimi/k3.1-pro", [t.ref for t in route.active_targets])
+        self.assertEqual(plain.score_requests, [])
+
+    def test_text_only_task_keeps_every_candidate(self) -> None:
+        deepseek = ScoringClient(scores("coding", {
+            "deepseek/deepseek-flash": 50,
+            "kimi/k3.1-pro": 90,
+        }))
+        plain = ScoringClient()
+        route = FailoverRoute((
+            self.vision_target("deepseek/deepseek-flash", deepseek, vision=True),
+            self.vision_target("kimi/k3.1-pro", plain, vision=False),
+        ), intent_routing=True)
+
+        self.start(route, "rename a variable")
+
+        payload = json.loads(deepseek.score_requests[0]["input"])
+        self.assertNotIn("has_images", payload)
+        self.assertEqual(route.current.ref, "kimi/k3.1-pro")
+
+    def test_images_with_one_vision_candidate_skip_scoring(self) -> None:
+        deepseek = ScoringClient("not json")
+        plain = ScoringClient()
+        route = FailoverRoute((
+            self.vision_target("deepseek/deepseek-flash", deepseek, vision=True),
+            self.vision_target("kimi/k3.1-pro", plain, vision=False),
+        ), intent_routing=True)
+        messages = [{"role": "tool", "content": "Read image file", IMAGES_KEY: [{"data": "QQ=="}]}]
+
+        asyncio.run(route.start("look", messages, 10))
+
+        self.assertEqual(deepseek.score_requests, [])
+        self.assertEqual(route.active_targets, (route.current,))
+        self.assertEqual(route.current.ref, "deepseek/deepseek-flash")
 
     def test_context_filter_runs_before_scoring(self) -> None:
         # 300k fits deepseek-flash (1M) but not a 256k fallback target.

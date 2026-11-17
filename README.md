@@ -186,13 +186,15 @@ from a reviewed capability table and the providers that are logged in. When seve
 are available, the first available fast model scores the task for intent, and the
 highest-scoring model handles the whole task, including its tool rounds. Later tasks keep a
 close-scoring incumbent to avoid unnecessary switching. If scoring fails, the route falls
-back to the current or first available target.
+back to the current or first available target. A conversation that already contains images
+only routes among models marked as vision-capable, and the scorer is told the task has
+attachments so it can price that in; it still reads text only.
 
-| Reviewed model | Strength |
-| --- | --- |
-| `deepseek-flash` | fast, coding |
-| `kimi-for-coding` | fast, coding |
-| `k3.1-pro` | strong |
+| Reviewed model | Strength | Images |
+| --- | --- | --- |
+| `deepseek-flash` | fast, coding | yes |
+| `kimi-for-coding` | fast, coding | yes |
+| `k3.1-pro` | strong | yes |
 
 Only reviewed models participate in auto. Other models listed by a provider remain available
 through `/model` and `-m`. The status bar shows the concrete target when routing is active,

@@ -12,7 +12,7 @@ from typing import Any, Callable
 from openai import AsyncOpenAI
 
 from .providers import Credential, list_providers
-from .responses import output_text, plain_item
+from .responses import IMAGES_KEY, output_text, plain_item
 
 AUTO_REF = "auto"
 SCORE_TIMEOUT = 5.0
@@ -127,9 +127,19 @@ class FailoverRoute:
         self._active = eligible
         if len(eligible) == 1:
             return
+        # A task carrying images can only run on models that accept them, so a
+        # text-only candidate must never be scored, selected, or failed over to.
+        images = _has_images(messages)
+        if images:
+            eligible = _vision_eligible(eligible)
+            self._active = eligible
+            if len(eligible) == 1:
+                return
         scorer = _scorer_for(eligible, previous)
         try:
-            intent, scores = await _score_targets(scorer, eligible, task, messages)
+            intent, scores = await _score_targets(
+                scorer, eligible, task, messages, has_images=images,
+            )
         except Exception as e:  # scoring is an optimization, never a task SPOF
             self._active = _fallback_order(eligible, previous)
             self.selection = RouteSelection("default", {}, scorer.ref, type(e).__name__)
@@ -183,6 +193,18 @@ def build_auto_route(
         raise ValueError("auto: no supported models with credentials")
     return FailoverRoute(tuple(targets), intent_routing=True)
 
+def _has_images(messages: list[dict[str, Any]]) -> bool:
+    """Whether this conversation already carries inline images for the model."""
+    return any(message.get(IMAGES_KEY) for message in messages)
+
+def _vision_eligible(targets: tuple[RouteTarget, ...]) -> tuple[RouteTarget, ...]:
+    """Drop candidates that would silently lose the images the task depends on."""
+    seeing = tuple(
+        target for target in targets
+        if target.capability is None or target.capability.supports_vision
+    )
+    return seeing or targets
+
 def _context_eligible(
     targets: tuple[RouteTarget, ...], estimated_tokens: int,
 ) -> tuple[RouteTarget, ...]:
@@ -231,19 +253,26 @@ def _recent_context(messages: list[dict[str, Any]]) -> str:
 
 async def _score_targets(
     scorer: RouteTarget, targets: tuple[RouteTarget, ...], task: str,
-    messages: list[dict[str, Any]],
+    messages: list[dict[str, Any]], *, has_images: bool = False,
 ) -> tuple[str, dict[str, float]]:
     candidates = [{
         "ref": target.ref,
         "strengths": sorted(target.capability.strengths) if target.capability else [],
         "routing_hint": target.capability.routing_hint if target.capability else "",
         "context_limit": target.context_limit,
+        "sees_images": (
+            target.capability.supports_vision if target.capability else True
+        ),
     } for target in targets]
     payload = {
         "task": task[:6000],
         "recent_context": _recent_context(messages),
         "candidates": candidates,
     }
+    if has_images:
+        # Metadata only: the scorer never receives image bytes, just the fact that
+        # the task includes attachments it cannot see.
+        payload["has_images"] = True
     instructions = (
         "You are a model router, not the task solver. Score every supplied candidate "
         "from 0 to 100 for this task. Use fast/coding models for simple or quick coding "
@@ -252,6 +281,8 @@ async def _score_targets(
         "debugging as failures or root causes, and reasoning as design, architecture, "
         "tradeoffs, or proofs. Candidate order is not a ranking; use routing_hint to "
         "differentiate models within a tier. Consider tool use and context needs. "
+        "When has_images is true the task includes image attachments you cannot see; "
+        "prefer candidates whose sees_images is true. "
         "Return only one JSON object with this shape: "
         '{"intent":"quick|coding|debugging|reasoning","scores":{"provider/model":0}}. '
         "Use only the exact candidate refs; do not answer the task."

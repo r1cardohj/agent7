@@ -104,7 +104,7 @@ class RouteAblationTests(unittest.TestCase):
         base = FailoverRoute(tuple(capability_target(ref) for ref in refs), intent_routing=True)
         route = ObservedRoute(base, tier_only=tier_only)
 
-        async def fake_score(*args):
+        async def fake_score(*args, **kwargs):
             return "debugging", {
                 "deepseek/deepseek-flash": 10,
                 "kimi/kimi-for-coding": 90,
