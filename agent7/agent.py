@@ -36,6 +36,7 @@ from .core import (
     ToolCall,
     ToolRegistry,
     ToolResult,
+    create_builtin_registry,
 )
 from .core import (
     Agent as CoreAgent,
@@ -64,6 +65,7 @@ from .responses import (
     response_usage,
 )
 from .routing import FailoverRoute, RouteTarget
+from .tool_adapters import agent7_builtin_tools
 
 MAX_READ_CHARS, MAX_BASH_CHARS = 50_000, 12_000
 DEFAULT_READ_LINES = 200
@@ -1204,9 +1206,11 @@ class ResponsesHistoryPolicy:
 
 
 def create_tool_registry(dispatcher: Callable[..., Any] | None = None) -> ToolRegistry:
-    """Adapt agent7's six concrete tools to the instance-scoped core registry."""
+    """Create the core registry, or adapt it through the legacy dispatcher."""
 
-    dispatch = dispatcher or dispatch_tool
+    if dispatcher is None:
+        return create_builtin_registry(agent7_builtin_tools())
+    dispatch = dispatcher
     registry = ToolRegistry()
     for schema in TOOLS:
         name = schema["function"]["name"]
@@ -1278,7 +1282,7 @@ async def run_agent_result(
     )
     runtime = CoreAgent(
         backend,
-        tools=registry if registry is not None else create_tool_registry(dispatch_tool),
+        tools=registry if registry is not None else create_tool_registry(),
         history=ResponsesHistoryPolicy(),
         lifecycle=hooks or getattr(session, "hooks", None),
         plugins=plugins,

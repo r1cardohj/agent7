@@ -10,7 +10,8 @@ from unittest.mock import AsyncMock, patch
 
 from responses_fakes import FakeClient, call_turn
 
-from agent7.agent import Interrupted, _stream_once, dispatch_tool, run_agent
+from agent7.agent import Interrupted, _stream_once, run_agent
+from agent7.core.builtin_tools import run_shell as original_run_shell
 
 
 class InterruptedToolBatchTests(unittest.TestCase):
@@ -25,15 +26,15 @@ class InterruptedToolBatchTests(unittest.TestCase):
         messages: list[dict[str, Any]] = []
         seen: list[str] = []
 
-        def flaky(cwd: Path, name: str, args: dict[str, Any], **kwargs: Any) -> str:
-            seen.append(name)
+        def flaky(cwd: Path, command: str, timeout: int | None = None, **kwargs: Any) -> str:
+            seen.append(command)
             if len(seen) == 2:  # Ctrl-C lands on the second tool of the batch
                 raise KeyboardInterrupt
-            return dispatch_tool(cwd, name, args, **kwargs)
+            return original_run_shell(cwd, command, timeout, **kwargs)
 
         client = FakeClient([call_turn([("bash", {"command": f"echo {i}"}) for i in range(3)])])
         with (
-            patch("agent7.agent.dispatch_tool", side_effect=flaky),
+            patch("agent7.core.builtin_tools.run_shell", side_effect=flaky),
             self.assertRaises(Interrupted),
         ):
             asyncio.run(

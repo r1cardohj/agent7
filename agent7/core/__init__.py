@@ -6,6 +6,11 @@ backend and moved to a standalone distribution without moving the UI as well.
 """
 
 from .backend import BackendRegistry, ModelBackend, ModelRequest
+from .builtin_tools import (
+    BUILTIN_TOOL_SCHEMAS,
+    BuiltinToolsConfig,
+    create_builtin_registry,
+)
 from .events import (
     EventBus,
     EventEmitter,
@@ -14,6 +19,7 @@ from .events import (
     RuntimeEvent,
     RuntimeEventKind,
 )
+from .filesystem import ImageReader, VisionSupport
 from .lifecycle import (
     LifecycleEvent,
     LifecycleHooks,
@@ -33,6 +39,8 @@ from .plugins import (
     PluginManager,
     discover_plugins,
 )
+from .search import SearchProvider
+from .shell import Shell
 from .tools import Tool, ToolContext, ToolExecution, ToolExecutor, ToolRegistry
 from .types import (
     TOOL_ATTACHMENTS_KEY,
@@ -54,12 +62,15 @@ __all__ = [
     "AgentInterrupted",
     "Attachment",
     "BackendRegistry",
+    "BUILTIN_TOOL_SCHEMAS",
+    "BuiltinToolsConfig",
     "CancellationToken",
     "DEFAULT_MAX_TURNS",
     "EventBus",
     "EventEmitter",
     "EventListener",
     "HistoryPolicy",
+    "ImageReader",
     "LifecycleEvent",
     "LifecycleHooks",
     "LifecycleKind",
@@ -82,6 +93,8 @@ __all__ = [
     "RuntimeEvent",
     "RuntimeEventKind",
     "TOOL_ATTACHMENTS_KEY",
+    "SearchProvider",
+    "Shell",
     "Tool",
     "ToolCall",
     "ToolContext",
@@ -89,6 +102,8 @@ __all__ = [
     "ToolExecutor",
     "ToolRegistry",
     "ToolResult",
+    "VisionSupport",
+    "create_builtin_registry",
     "discover_plugins",
     "emit_lifecycle",
     "new_run_id",

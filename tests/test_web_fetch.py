@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from urllib3 import HTTPHeaderDict
 
 from agent7.agent import TOOLS, dispatch_tool, tool_summary
-from agent7.web_fetch import (
+from agent7.core.web_fetch import (
     DEFAULT_FETCH_CHARS,
     MAX_FETCH_CHARS,
     _download,
@@ -63,8 +63,8 @@ class DownloadTests(unittest.TestCase):
         manager = Mock()
         manager.request.return_value = _http_response()
         with (
-            patch("agent7.web_fetch._proxy_for", return_value="http://127.0.0.1:7890"),
-            patch("agent7.web_fetch._pool", return_value=manager) as pool,
+            patch("agent7.core.web_fetch._proxy_for", return_value="http://127.0.0.1:7890"),
+            patch("agent7.core.web_fetch._pool", return_value=manager) as pool,
         ):
             result = _download("https://example.com/docs")
 
@@ -79,13 +79,13 @@ class DownloadTests(unittest.TestCase):
     def test_https_proxy_and_no_proxy_are_respected(self) -> None:
         proxies = {"http": "http://localhost:8000", "https": "http://localhost:7890"}
         with (
-            patch("agent7.web_fetch.getproxies", return_value=proxies),
-            patch("agent7.web_fetch.proxy_bypass", return_value=False),
+            patch("agent7.core.web_fetch.getproxies", return_value=proxies),
+            patch("agent7.core.web_fetch.proxy_bypass", return_value=False),
         ):
             self.assertEqual(_proxy_for("https://example.com"), "http://localhost:7890")
         with (
-            patch("agent7.web_fetch.getproxies", return_value=proxies),
-            patch("agent7.web_fetch.proxy_bypass", return_value=True),
+            patch("agent7.core.web_fetch.getproxies", return_value=proxies),
+            patch("agent7.core.web_fetch.proxy_bypass", return_value=True),
         ):
             self.assertIsNone(_proxy_for("https://example.com"))
 
@@ -94,8 +94,8 @@ class DownloadTests(unittest.TestCase):
         manager = Mock()
         manager.request.return_value = response
         with (
-            patch("agent7.web_fetch._proxy_for", return_value=None),
-            patch("agent7.web_fetch._pool", return_value=manager),
+            patch("agent7.core.web_fetch._proxy_for", return_value=None),
+            patch("agent7.core.web_fetch._pool", return_value=manager),
             self.assertRaisesRegex(_FetchError, "HTTP 503"),
         ):
             _download("https://example.com/unavailable")
@@ -106,9 +106,9 @@ class DownloadTests(unittest.TestCase):
         manager = Mock()
         manager.request.return_value = response
         with (
-            patch("agent7.web_fetch.MAX_DOWNLOAD_BYTES", 4),
-            patch("agent7.web_fetch._proxy_for", return_value=None),
-            patch("agent7.web_fetch._pool", return_value=manager),
+            patch("agent7.core.web_fetch.MAX_DOWNLOAD_BYTES", 4),
+            patch("agent7.core.web_fetch._proxy_for", return_value=None),
+            patch("agent7.core.web_fetch._pool", return_value=manager),
             self.assertRaisesRegex(_FetchError, "exceeds 4 bytes"),
         ):
             _download("https://example.com/large")
@@ -117,7 +117,7 @@ class DownloadTests(unittest.TestCase):
 
 class TrafilaturaFetchTests(unittest.TestCase):
     def test_extracts_markdown_and_strips_url_fragment(self) -> None:
-        with patch("agent7.web_fetch._download", return_value=_downloaded()) as download:
+        with patch("agent7.core.web_fetch._download", return_value=_downloaded()) as download:
             result = fetch("https://example.com/docs#section")
 
         self.assertEqual(download.call_args.args, ("https://example.com/docs",))
@@ -135,7 +135,7 @@ class TrafilaturaFetchTests(unittest.TestCase):
             return "fallback text" if kwargs.get("favor_recall") else None
 
         with (
-            patch("agent7.web_fetch._download", return_value=_downloaded()),
+            patch("agent7.core.web_fetch._download", return_value=_downloaded()),
             patch("trafilatura.extract", side_effect=extract),
         ):
             result = fetch("https://example.com/sparse")
@@ -153,7 +153,10 @@ class TrafilaturaFetchTests(unittest.TestCase):
         for body, media_type in cases:
             with (
                 self.subTest(media_type=media_type),
-                patch("agent7.web_fetch._download", return_value=_downloaded(body, media_type)),
+                patch(
+                    "agent7.core.web_fetch._download",
+                    return_value=_downloaded(body, media_type),
+                ),
                 patch("trafilatura.extract") as extract,
             ):
                 self.assertEqual(fetch("https://example.com/raw"), body)
@@ -164,7 +167,7 @@ class TrafilaturaFetchTests(unittest.TestCase):
         <p>Readable fallback &amp; useful text.</p>
         <script>hidden script</script></body></html>"""
         with (
-            patch("agent7.web_fetch._download", return_value=_downloaded(page)),
+            patch("agent7.core.web_fetch._download", return_value=_downloaded(page)),
             patch("trafilatura.extract", return_value=None),
         ):
             result = fetch("https://example.com/fallback")
@@ -174,7 +177,7 @@ class TrafilaturaFetchTests(unittest.TestCase):
 
     def test_max_chars_truncates_output(self) -> None:
         with (
-            patch("agent7.web_fetch._download", return_value=_downloaded()),
+            patch("agent7.core.web_fetch._download", return_value=_downloaded()),
             patch("trafilatura.extract", return_value="x" * 100),
         ):
             result = fetch("https://example.com/long", max_chars=10)
@@ -185,7 +188,7 @@ class TrafilaturaFetchTests(unittest.TestCase):
         self.assertEqual(DEFAULT_FETCH_CHARS, 12_000)
         self.assertEqual(MAX_FETCH_CHARS, 50_000)
         with (
-            patch("agent7.web_fetch._download", return_value=_downloaded()),
+            patch("agent7.core.web_fetch._download", return_value=_downloaded()),
             patch("trafilatura.extract", return_value="y" * (MAX_FETCH_CHARS + 1)),
         ):
             result = fetch("https://example.com/long", max_chars=MAX_FETCH_CHARS)
@@ -194,12 +197,18 @@ class TrafilaturaFetchTests(unittest.TestCase):
         self.assertLess(len(result), MAX_FETCH_CHARS + 100)
 
     def test_fetch_failure_reports_error(self) -> None:
-        with patch("agent7.web_fetch._download", side_effect=_FetchError("could not fetch URL")):
+        with patch(
+            "agent7.core.web_fetch._download",
+            side_effect=_FetchError("could not fetch URL"),
+        ):
             self.assertEqual(fetch("https://example.com/missing"), "error: could not fetch URL")
 
     def test_unextractable_page_reports_error(self) -> None:
         with (
-            patch("agent7.web_fetch._download", return_value=_downloaded("<html></html>")),
+            patch(
+                "agent7.core.web_fetch._download",
+                return_value=_downloaded("<html></html>"),
+            ),
             patch("trafilatura.extract", return_value=None),
         ):
             self.assertEqual(
@@ -209,7 +218,8 @@ class TrafilaturaFetchTests(unittest.TestCase):
 
     def test_binary_content_is_rejected(self) -> None:
         with patch(
-            "agent7.web_fetch._download", return_value=_downloaded(b"PDF", "application/pdf")
+            "agent7.core.web_fetch._download",
+            return_value=_downloaded(b"PDF", "application/pdf"),
         ):
             self.assertEqual(
                 fetch("https://example.com/file"),
@@ -240,14 +250,14 @@ class FetchToolWiringTests(unittest.TestCase):
         )
 
     def test_dispatch_runs_fetch_tool(self) -> None:
-        with patch("agent7.web_fetch._download", return_value=_downloaded()):
+        with patch("agent7.core.web_fetch._download", return_value=_downloaded()):
             result = dispatch_tool(self.cwd, "fetch", {"url": "https://example.com/docs"})
 
         self.assertIn("title: Getting started", result)
 
     def test_handler_accepts_max_chars(self) -> None:
         with (
-            patch("agent7.web_fetch._download", return_value=_downloaded()),
+            patch("agent7.core.web_fetch._download", return_value=_downloaded()),
             patch("trafilatura.extract", return_value="z" * 100),
         ):
             result = tool_fetch(self.cwd, "https://example.com/docs", max_chars=5)

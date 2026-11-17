@@ -13,16 +13,19 @@ from agent7.core import (
     Agent,
     AgentInterrupted,
     Attachment,
+    BuiltinToolsConfig,
     CancellationToken,
     EventBus,
     LifecycleHooks,
     ModelTurn,
     PluginError,
     RunStatus,
+    Shell,
     Tool,
     ToolCall,
     ToolRegistry,
     ToolResult,
+    create_builtin_registry,
 )
 
 
@@ -242,6 +245,47 @@ class EventBusTests(unittest.TestCase):
         self.assertEqual(len(bus.errors), 1)
         self.assertEqual(str(bus.errors[0].error), "observer failed")
         self.assertEqual(bus.errors[0].event.run_id, "run-test")
+
+
+class BuiltinToolTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cwd = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_generic_registry_runs_without_agent7_services(self):
+        class LocalSearch:
+            def __init__(self):
+                self.seen = []
+
+            def search(self, query, count=None, *, user_question=None):
+                self.seen.append((query, count, user_question))
+                return f"local result for {query}"
+
+        provider = LocalSearch()
+        registry = create_builtin_registry(
+            BuiltinToolsConfig(shell=Shell("bash", ("/bin/bash", "-lc")), search_provider=provider)
+        )
+        target = self.cwd / "note.txt"
+        target.write_text("hello\n", encoding="utf-8")
+        backend = FakeBackend(
+            [
+                ModelTurn(calls=[ToolCall("call-1", "read", '{"path":"note.txt"}')]),
+                ModelTurn(calls=[ToolCall("call-2", "search", '{"query":"agent"}')]),
+                ModelTurn(text="done"),
+            ]
+        )
+        messages = []
+
+        result = asyncio.run(
+            Agent(backend, tools=registry).run("go", cwd=self.cwd, messages=messages)
+        )
+
+        self.assertEqual(result.text, "done")
+        self.assertEqual(messages[2]["content"], "1|hello")
+        self.assertEqual(messages[4]["content"], "local result for agent")
+        self.assertEqual(provider.seen, [("agent", None, "go")])
+        self.assertEqual(registry.names(), ("read", "write", "edit", "bash", "fetch", "search"))
 
 
 class PluginTests(unittest.TestCase):

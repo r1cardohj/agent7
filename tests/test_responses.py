@@ -9,7 +9,8 @@ from typing import Any
 
 from responses_fakes import FakeClient, call_turn, completed, ns, text_turn
 
-from agent7.agent import TOOLS, run_agent
+from agent7.agent import run_agent
+from agent7.core.builtin_tools import BUILTIN_TOOL_SCHEMAS
 from agent7.responses import (
     RAW_ITEMS_KEY,
     output_text,
@@ -53,7 +54,7 @@ class ResponsesRequestTests(unittest.TestCase):
         self.assertNotIn("messages", request)
         self.assertNotIn("stream_options", request)
         self.assertNotIn("previous_response_id", request)
-        self.assertEqual(request["tools"], response_tools(TOOLS))
+        self.assertEqual(request["tools"], response_tools(BUILTIN_TOOL_SCHEMAS))
         self.assertTrue(all(tool["type"] == "function" for tool in request["tools"]))
         self.assertNotIn("web_search", json.dumps(request["tools"]))
 
