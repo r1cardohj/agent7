@@ -320,6 +320,10 @@ CI runs the test suite on Python 3.10 through 3.13, builds the distribution, and
 the installed wheel. `scripts/generate_mascot.py` regenerates the mascot assets from
 `agent7/mascot.py`.
 
+The headless loop, model/tool interfaces, structured events, lifecycle hooks, cancellation,
+and plugin SDK live behind `agent7.core`, independently of the terminal. See
+[docs/runtime.md](docs/runtime.md) for embedding and plugin examples.
+
 ## License
 
 [MIT](LICENSE)

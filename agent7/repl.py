@@ -34,9 +34,10 @@ from rich.console import Console
 from rich.live import Live
 from rich.text import Text
 
-from .agent import Interrupted, run_agent, tool_summary
+from .agent import Interrupted, run_agent_result, tool_summary
 from .commands import dispatch, known_names
-from .hooks import emit_lifecycle
+from .core import RunResult, new_run_id
+from .hooks import run_with_lifecycle
 from .images import clipboard_text, paste_image_file
 from .interrupt import run_with_interrupt_keys
 from .markdown import Markdown
@@ -887,27 +888,13 @@ async def run_turn(
         # the REPL handled the first one. Always cancel just this turn instead.
         previous_sigint = signal.getsignal(signal.SIGINT)
         signal.signal(signal.SIGINT, lambda *_: current.cancel())
-    emit_lifecycle(session, "turn_started")
+    run_id = new_run_id()
     try:
-        work = _run_agent_once(session, task)
+        work = _run_agent_once(session, task, run_id=run_id)
         if sys.stdin is not None and sys.stdin.isatty():
-            answer = await run_with_interrupt_keys(work, input_obj=get_app_session().input)
-        else:
-            answer = await work
-    except (Interrupted, asyncio.CancelledError, KeyboardInterrupt):
-        emit_lifecycle(session, "turn_interrupted")
-        raise
-    except Exception as e:
-        emit_lifecycle(session, "turn_failed", reason=type(e).__name__)
-        raise
-    else:
-        if answer.startswith(STOPPED_PREFIX):
-            emit_lifecycle(session, "turn_blocked", reason="max_turns")
-        else:
-            # Do not immediately replace done with idle just because the REPL
-            # is about to prompt again: observers need the completion transition.
-            emit_lifecycle(session, "turn_succeeded")
-        return answer
+            work = run_with_interrupt_keys(work, input_obj=get_app_session().input)
+        result = await run_with_lifecycle(session, work, run_id=run_id)
+        return result.legacy_text
     finally:
         if previous_sigint is not None:
             signal.signal(signal.SIGINT, previous_sigint)
@@ -915,8 +902,7 @@ async def run_turn(
             on_saved()
 
 
-async def _run_agent_once(session: Session, task: str) -> str:
-    finish: list[str] = []
+async def _run_agent_once(session: Session, task: str, *, run_id: str = "") -> RunResult:
     with ReplyPrinter() as rp:
         route_shown = False
 
@@ -931,7 +917,7 @@ async def _run_agent_once(session: Session, task: str) -> str:
 
         if getattr(session, "route", None):
             rp.on_model_start(0)  # also cover the non-streaming scoring request
-        answer = await run_agent(
+        result = await run_agent_result(
             task,
             cwd=session.cwd,
             client=session.client,
@@ -949,17 +935,18 @@ async def _run_agent_once(session: Session, task: str) -> str:
             context_limit=session.context_limit,
             prompt_tokens=session.prompt_tokens,
             on_compact=rp.on_compact,
-            on_finish=finish.append,
             provider_id=getattr(session, "provider_id", None),
             route=getattr(session, "route", None),
             on_route=on_route,
+            run_id=run_id,
         )
+    answer = result.legacy_text
     # A turn-limit pause is a warning, not an invisible or successful final answer.
-    if notice := reply_notice(answer, finish[-1] if finish else None):
-        style = "yellow" if answer.startswith(STOPPED_PREFIX) else "dim"
+    if notice := reply_notice(answer, result.finish_reason):
+        style = "yellow" if result.stop_reason == "max_turns" else "dim"
         for line in notice.splitlines():
             err.print(f"[{style}]# {line}[/{style}]")
-    return answer
+    return result
 
 
 def print_history(messages: list[dict]) -> None:

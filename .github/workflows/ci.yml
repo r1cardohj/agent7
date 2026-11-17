@@ -81,7 +81,7 @@ jobs:
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install dist/*.whl
           /tmp/venv/bin/agent7 --help > /dev/null
-          /tmp/venv/bin/python -c "import agent7; print('agent7', agent7.__version__)"
+          /tmp/venv/bin/python -c "import agent7; import agent7.core; print('agent7', agent7.__version__)"
 
       - uses: actions/upload-artifact@v4
         with:

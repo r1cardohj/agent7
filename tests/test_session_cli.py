@@ -103,7 +103,7 @@ class SessionCliTests(unittest.TestCase):
         started = asyncio.Event()
         saved = []
 
-        async def stuck_agent(_session, _task):
+        async def stuck_agent(_session, _task, **_kwargs):
             started.set()
             try:
                 await asyncio.Event().wait()
@@ -135,7 +135,7 @@ class SessionCliTests(unittest.TestCase):
     def test_one_shot_repeated_ctrl_c_is_handled(self) -> None:
         started = asyncio.Event()
 
-        async def stuck_agent(_session, _task):
+        async def stuck_agent(_session, _task, **_kwargs):
             started.set()
             try:
                 await asyncio.Event().wait()

@@ -49,11 +49,13 @@ class LifecycleTests(unittest.TestCase):
 
         self.assertEqual([event.kind for event in seen], ["session_started", "turn_blocked"])
         self.assertEqual([event.seq for event in seen], [1, 2])
-        self.assertEqual(seen[0].session_id, workspace_key(self.cwd))
+        self.assertEqual(seen[0].session_id, session.id)
+        self.assertEqual(seen[0].workspace_id, workspace_key(self.cwd))
         self.assertEqual(seen[0].cwd, self.cwd.resolve())
         self.assertEqual(seen[0].model, "test/m")
         self.assertEqual(seen[1].reason, "max_turns")
         self.assertEqual(len(events), 2)
+        self.assertEqual(len(hooks.errors), 2)
 
     def run_with_answer(self, answer: str) -> list[LifecycleEvent]:
         session = make_session(self.cwd)

@@ -101,6 +101,7 @@ include = [
     "/agent7",
     "/README.md",
     "/assets",
+    "/docs",
     "/LICENSE",
     "/pyproject.toml",
 ]

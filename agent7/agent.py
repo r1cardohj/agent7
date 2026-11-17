@@ -1,4 +1,4 @@
-"""Async agent loop and tools: read, write, edit, bash, fetch, search (+ compact)."""
+"""agent7's Responses/tool adapters and legacy facade; the generic loop is in core."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import signal
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +20,25 @@ from typing import Any
 from openai import APIConnectionError, APITimeoutError, AsyncOpenAI
 
 from . import web_fetch, web_search
+from .core import (
+    DEFAULT_MAX_TURNS,
+    AgentInterrupted,
+    CancellationToken,
+    EventEmitter,
+    EventListener,
+    LifecycleHooks,
+    ModelRequest,
+    ModelTurn,
+    Recovery,
+    RunResult,
+    Tool,
+    ToolCall,
+    ToolRegistry,
+    ToolResult,
+)
+from .core import (
+    Agent as CoreAgent,
+)
 from .images import (
     IMAGE_TOKEN_ESTIMATE,
     ToolImageOutput,
@@ -46,7 +65,9 @@ from .responses import (
 from .routing import FailoverRoute, RouteTarget
 
 MAX_READ_CHARS, MAX_BASH_CHARS = 50_000, 12_000
-DEFAULT_READ_LINES, DEFAULT_MAX_TURNS = 200, 200  # turns are a safety net, not a budget
+DEFAULT_READ_LINES = 200
+# Turns are a safety net, not a budget; the canonical default lives in core.
+
 COMPACT_THRESHOLD, KEEP_USER_TURNS, KEEP_TOOL_RESULTS = 0.75, 3, 4
 TOOL_MAX_CHARS, ASSISTANT_MAX_CHARS = 2_000, 4_000
 OVERFLOW_RETRIES = 2
@@ -57,10 +78,8 @@ FAILOVER_STATUS = frozenset({401, 403, 404})
 OVERFLOW_STATUS = frozenset({400, 413, 422})
 
 
-class Interrupted(Exception):
-    def __init__(self, partial: str = "") -> None:
-        self.partial = partial
-        super().__init__(partial)
+# Backwards-compatible name; the canonical exception lives in the runtime.
+Interrupted = AgentInterrupted
 
 
 @dataclass(frozen=True)
@@ -893,12 +912,13 @@ def _completion_kwargs(
     model: str,
     messages: list[dict[str, Any]],
     provider_id: str | None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     inputs, instructions = request_input(messages, provider_id, vision=supports_vision(model))
     kwargs: dict[str, Any] = {
         "model": model,
         "input": inputs,
-        "tools": response_tools(TOOLS),
+        "tools": response_tools(TOOLS if tools is None else tools),
         "stream": True,
     }
     if instructions is not None:
@@ -948,11 +968,12 @@ async def _stream_completion(
     on_answer_to_thinking,
     on_finish=None,
     provider_id: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> ResponseTurn:
     try:
         return await _stream_with_retries(
             client,
-            _completion_kwargs(model, messages, provider_id),
+            _completion_kwargs(model, messages, provider_id, tools),
             on_delta=on_delta,
             on_thinking=on_thinking,
             on_answer_to_thinking=on_answer_to_thinking,
@@ -971,6 +992,7 @@ async def _stream_failover(
     on_answer_to_thinking,
     on_finish,
     on_route,
+    tools: list[dict[str, Any]] | None = None,
 ) -> tuple[ResponseTurn, RouteTarget]:
     """Replay a silent failed request on the next target, never a partial stream."""
     while True:
@@ -978,7 +1000,7 @@ async def _stream_failover(
         try:
             turn = await _stream_with_retries(
                 target.client,
-                _completion_kwargs(target.model, messages, target.provider_id),
+                _completion_kwargs(target.model, messages, target.provider_id, tools),
                 on_delta=on_delta,
                 on_thinking=on_thinking,
                 on_answer_to_thinking=on_answer_to_thinking,
@@ -1009,6 +1031,308 @@ def _answer_pending(
             messages.append({"role": "tool", "tool_call_id": call_id, "content": note})
 
 
+class ResponsesBackend:
+    """agent7's OpenAI Responses/routing adapter for the generic backend SPI."""
+
+    def __init__(
+        self,
+        client: AsyncOpenAI,
+        model: str,
+        *,
+        provider_id: str | None = None,
+        route: FailoverRoute | None = None,
+        context_limit: int | None = None,
+        on_route=None,
+    ) -> None:
+        self.client = client
+        self._model = model
+        self._provider_id = provider_id
+        self.route = route
+        self._context_limit = context_limit
+        self.on_route = on_route
+
+    @property
+    def model(self) -> str:
+        return self.route.current.model if self.route is not None else self._model
+
+    @property
+    def provider_id(self) -> str | None:
+        return self.route.current.provider_id if self.route is not None else self._provider_id
+
+    @property
+    def context_limit(self) -> int | None:
+        return self.route.current.context_limit if self.route is not None else self._context_limit
+
+    async def _route_changed(
+        self,
+        events: EventEmitter,
+        target: RouteTarget,
+        previous: RouteTarget | None,
+        error: BaseException | None,
+    ) -> None:
+        await events.emit(
+            "route_changed",
+            target=target.ref,
+            previous=previous.ref if previous is not None else None,
+            error=str(error) if error is not None else None,
+            error_type=type(error).__name__ if error is not None else None,
+        )
+        # The terminal adapter also needs the concrete object to update Session.
+        # The structured event above intentionally contains only transport-safe data.
+        await _emit(self.on_route, target, previous, error)
+
+    async def prepare(
+        self,
+        task: str,
+        messages: list[dict[str, Any]],
+        estimated_tokens: int,
+        events: EventEmitter,
+    ) -> None:
+        if self.route is not None:
+            await self.route.start(task, messages, estimated_tokens)
+            await self._route_changed(events, self.route.current, None, None)
+
+    async def complete(self, request: ModelRequest, events: EventEmitter) -> ModelTurn:
+        if request.cancellation is not None:
+            request.cancellation.throw_if_cancelled(run_id=request.run_id)
+
+        async def on_delta(text) -> None:
+            await events.emit("text_delta", turn=request.turn, text=text)
+
+        async def on_thinking(text) -> None:
+            await events.emit("reasoning_delta", turn=request.turn, text=text)
+
+        async def on_answer_to_thinking() -> None:
+            await events.emit("answer_to_thinking", turn=request.turn)
+
+        async def on_finish(reason) -> None:
+            await events.emit("model_finished", turn=request.turn, finish_reason=reason)
+
+        target: RouteTarget | None = None
+        if self.route is not None:
+
+            async def changed(current, previous, error) -> None:
+                await self._route_changed(events, current, previous, error)
+
+            turn, target = await _stream_failover(
+                self.route,
+                messages=request.messages,
+                on_delta=on_delta,
+                on_thinking=on_thinking,
+                on_answer_to_thinking=on_answer_to_thinking,
+                on_finish=on_finish,
+                on_route=changed,
+                tools=request.tools,
+            )
+        else:
+            turn = await _stream_completion(
+                self.client,
+                model=self._model,
+                messages=request.messages,
+                on_delta=on_delta,
+                on_thinking=on_thinking,
+                on_answer_to_thinking=on_answer_to_thinking,
+                on_finish=on_finish,
+                provider_id=self._provider_id,
+                tools=request.tools,
+            )
+        answered_by = target.provider_id if target else self._provider_id
+        answered_model = target.model if target else self._model
+        calls = []
+        for raw in turn.calls:
+            call = public_call(raw)
+            calls.append(
+                ToolCall(
+                    id=call["id"],
+                    name=call["function"]["name"],
+                    arguments=call["function"]["arguments"],
+                )
+            )
+        return ModelTurn(
+            text=turn.text,
+            calls=calls,
+            usage=turn.usage,
+            finish_reason=turn.finish_reason,
+            model=answered_model,
+            state={RAW_ITEMS_KEY: raw_state(answered_by, turn.output)},
+        )
+
+
+class ResponsesHistoryPolicy:
+    """Responses-specific compaction and safe-retry decisions for the core loop."""
+
+    def estimate(self, messages: list[dict[str, Any]]) -> int:
+        return estimate_tokens(messages)
+
+    def should_compact(self, prompt_tokens: int | None, context_limit: int | None) -> bool:
+        return should_compact(prompt_tokens, context_limit)
+
+    def compact(
+        self, messages: list[dict[str, Any]], *, aggressive: bool = False
+    ) -> tuple[list[dict[str, Any]], int]:
+        if aggressive:
+            new_messages, changed = compact_messages(
+                messages, keep_user_turns=1, keep_tool_results=1
+            )
+        else:
+            new_messages, changed = compact_messages(messages)
+        if changed:
+            discard_raw_output(new_messages)
+            _without_orphan_tool_results(new_messages)
+        return new_messages, changed
+
+    def recover(
+        self,
+        messages: list[dict[str, Any]],
+        error: Exception,
+        *,
+        attempt: int,
+    ) -> Recovery | None:
+        # Some compatible backends reject valid raw tool-call replay. Fall back
+        # to portable history once, without spending a model turn.
+        if _is_tool_history_error(error) and any(RAW_ITEMS_KEY in message for message in messages):
+            discard_raw_output(messages)
+            return Recovery(messages)
+        if attempt > OVERFLOW_RETRIES or not _is_context_overflow(error):
+            return None
+        new_messages, changed = self.compact(messages, aggressive=True)
+        return Recovery(new_messages, changed) if changed else None
+
+
+def create_tool_registry(dispatcher: Callable[..., Any] | None = None) -> ToolRegistry:
+    """Adapt agent7's six concrete tools to the instance-scoped core registry."""
+
+    dispatch = dispatcher or dispatch_tool
+    registry = ToolRegistry()
+    for schema in TOOLS:
+        name = schema["function"]["name"]
+
+        def handler(context, args, *, _name=name):
+            result = dispatch(
+                context.cwd,
+                _name,
+                args,
+                on_preview=context.preview,
+                user_question=context.user_question,
+                model=context.model,
+            )
+            if isinstance(result, ToolImageOutput):
+                return ToolResult(
+                    result.text,
+                    {
+                        IMAGES_KEY: [
+                            {"data": block.data, "mimeType": block.mime_type}
+                            for block in result.images
+                        ]
+                    },
+                )
+            return result
+
+        registry.register(Tool(schema=schema, handler=handler))
+    return registry
+
+
+async def run_agent_result(
+    task: str,
+    *,
+    cwd: Path,
+    client: AsyncOpenAI,
+    model: str,
+    max_turns: int = DEFAULT_MAX_TURNS,
+    messages: list[dict[str, Any]],
+    on_delta=None,
+    on_thinking=None,
+    on_answer_to_thinking=None,
+    on_tool=None,
+    on_tool_start=None,
+    on_preview=None,
+    on_usage=None,
+    context_limit: int | None = None,
+    prompt_tokens: int | None = None,
+    on_compact=None,
+    on_finish=None,
+    on_model_start=None,
+    provider_id: str | None = None,
+    route: FailoverRoute | None = None,
+    on_route=None,
+    registry: ToolRegistry | None = None,
+    on_event: EventListener | None = None,
+    cancellation: CancellationToken | None = None,
+    plugins: Iterable[Any] = (),
+    plugin_names: Iterable[str] = (),
+    hooks: LifecycleHooks | None = None,
+    session: Any | None = None,
+    run_id: str = "",
+) -> RunResult:
+    """Run through the headless core and adapt its events to legacy callbacks."""
+
+    backend = ResponsesBackend(
+        client,
+        model,
+        provider_id=provider_id,
+        route=route,
+        context_limit=context_limit,
+        on_route=on_route,
+    )
+    runtime = CoreAgent(
+        backend,
+        tools=registry if registry is not None else create_tool_registry(dispatch_tool),
+        history=ResponsesHistoryPolicy(),
+        lifecycle=hooks or getattr(session, "hooks", None),
+        plugins=plugins,
+        plugin_names=plugin_names,
+    )
+
+    async def legacy_event(event) -> None:
+        kind, data, turn = event.kind, event.payload, event.turn or 0
+        if kind == "text_delta":
+            await _emit(on_delta, data["text"])
+        elif kind == "reasoning_delta":
+            await _emit(on_thinking, data["text"])
+        elif kind == "answer_to_thinking":
+            await _emit(on_answer_to_thinking)
+        elif kind == "model_started":
+            await _emit(on_model_start, turn)
+        elif kind == "model_finished":
+            await _emit(on_finish, data.get("finish_reason"))
+        elif kind == "usage":
+            await _emit(on_usage, data["usage"])
+        elif kind == "compacted":
+            await _emit(on_compact, data["changed"])
+        elif kind == "tool_started":
+            await _emit(on_tool_start, turn, data["name"], data["args"])
+        elif kind == "tool_preview":
+            await _emit(on_preview, data["text"])
+        elif kind == "tool_finished":
+            name, args, text = data["name"], data["args"], data["result"]
+            if on_tool:
+                await _emit(on_tool, turn, name, args, text)
+            else:
+                print(
+                    f"  [{turn}] {name} {tool_summary(name, args)}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+    unsubscribe = runtime.events.subscribe(legacy_event)
+    try:
+        return await runtime.run(
+            task,
+            cwd=cwd,
+            messages=messages,
+            max_turns=max_turns,
+            context_limit=context_limit,
+            prompt_tokens=prompt_tokens,
+            cancellation=cancellation,
+            on_event=on_event,
+            session=session,
+            run_id=run_id,
+        )
+    finally:
+        unsubscribe()
+        await runtime.close()
+
+
 async def run_agent(
     task: str,
     *,
@@ -1033,149 +1357,29 @@ async def run_agent(
     route: FailoverRoute | None = None,
     on_route=None,
 ) -> str:
-    cwd = cwd.resolve()
-    messages.append({"role": "user", "content": task})
-    last_prompt = prompt_tokens
-    turns = retries = 0
-    try:
-        if route is not None:
-            await route.start(task, messages, estimate_tokens(messages))
-            await _emit(on_route, route.current, None, None)
-        while turns < max_turns:
-            # Providers that never report usage would otherwise never compact.
-            prompt = last_prompt if last_prompt is not None else estimate_tokens(messages)
-            active_limit = route.current.context_limit if route else context_limit
-            if should_compact(prompt, active_limit):
-                new_msgs, n = compact_messages(messages)
-                if n:
-                    discard_raw_output(new_msgs)
-                    _without_orphan_tool_results(new_msgs)
-                    messages[:] = new_msgs
-                    last_prompt = None
-                    await _emit(on_compact, n)
-            # The gap after a tool result is a new model wait, not a running tool.
-            await _emit(on_model_start, turns + 1)
-            try:
-                target: RouteTarget | None = None
-                if route is not None:
-                    turn, target = await _stream_failover(
-                        route,
-                        messages=messages,
-                        on_delta=on_delta,
-                        on_thinking=on_thinking,
-                        on_answer_to_thinking=on_answer_to_thinking,
-                        on_finish=on_finish,
-                        on_route=on_route,
-                    )
-                else:
-                    turn = await _stream_completion(
-                        client,
-                        model=model,
-                        messages=messages,
-                        on_delta=on_delta,
-                        on_thinking=on_thinking,
-                        on_answer_to_thinking=on_answer_to_thinking,
-                        on_finish=on_finish,
-                        provider_id=provider_id,
-                    )
-                answered_by = target.provider_id if target else provider_id
-                answered_model = target.model if target else model
-                content = turn.text
-                tool_calls = [public_call(call) for call in turn.calls]
-                usage = turn.usage
-            except Interrupted as e:
-                if e.partial:
-                    messages.append({"role": "assistant", "content": e.partial})
-                raise
-            except Exception as e:
-                # A compatible Responses backend may mismatch function_call.id and
-                # call_id while converting raw replay to chat history. The raw items
-                # are optional; retry once with the portable assistant/tool messages.
-                if _is_tool_history_error(e) and any(
-                    RAW_ITEMS_KEY in message for message in messages
-                ):
-                    discard_raw_output(messages)
-                    last_prompt = None
-                    continue
-                # Server-side context overflow: shrink hard, then retry the same turn.
-                # The retry makes no progress, so it must not spend the turn budget.
-                retries += 1
-                squeezed: list[dict[str, Any]] = []
-                n = 0
-                if retries <= OVERFLOW_RETRIES and _is_context_overflow(e):
-                    squeezed, n = compact_messages(messages, keep_user_turns=1, keep_tool_results=1)
-                if not n:
-                    raise
-                discard_raw_output(squeezed)
-                _without_orphan_tool_results(squeezed)
-                messages[:] = squeezed
-                last_prompt = None
-                await _emit(on_compact, n)
-                continue
-            retries = 0
-            turns += 1
-            if usage:
-                await _emit(on_usage, usage)
-                last_prompt = usage.get("prompt_tokens", last_prompt)
-            assistant: dict[str, Any] = {
-                "role": "assistant",
-                "content": content,
-                RAW_ITEMS_KEY: raw_state(answered_by, turn.output),
-            }
-            if tool_calls:
-                assistant["tool_calls"] = tool_calls
-            messages.append(assistant)
-            if not tool_calls:
-                return content
-            question = _last_user_question(messages)
-            for tc in tool_calls:
-                name, raw_args = tc["function"]["name"], tc["function"]["arguments"]
-                try:
-                    args = json.loads(raw_args or "{}")
-                except json.JSONDecodeError:
-                    args, result = {}, f"error: invalid JSON arguments: {raw_args!r}"
-                else:
-                    await _emit(on_tool_start, turns, name, args)
-                    try:
-                        result = await asyncio.to_thread(
-                            dispatch_tool,
-                            cwd,
-                            name,
-                            args,
-                            on_preview=on_preview,
-                            user_question=question,
-                            model=answered_model,
-                        )
-                    except (asyncio.CancelledError, KeyboardInterrupt) as e:
-                        # Every tool_call needs a tool message, or the next request is a 400.
-                        _answer_pending(messages, tool_calls)
-                        raise Interrupted() from e
-                if isinstance(result, ToolImageOutput):
-                    text, blocks = result.text, result.images
-                else:
-                    text, blocks = result, []
-                if on_tool:
-                    await _emit(on_tool, turns, name, args, text)
-                else:
-                    print(
-                        f"  [{turns}] {name} {tool_summary(name, args)}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                tool_message: dict[str, Any] = {
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": text,
-                }
-                if blocks:
-                    # Base64 stays in this private field, exactly like pi's image
-                    # content: the UI and compaction only ever see the text.
-                    tool_message[IMAGES_KEY] = [
-                        {"data": block.data, "mimeType": block.mime_type} for block in blocks
-                    ]
-                messages.append(tool_message)
-        return f"(stopped after {max_turns} turns)"
-    except Interrupted:
-        raise
-    except (asyncio.CancelledError, KeyboardInterrupt) as e:
-        raise Interrupted() from e
+    """Compatibility facade; new embedders should consume ``run_agent_result``."""
+
+    result = await run_agent_result(
+        task,
+        cwd=cwd,
+        client=client,
+        model=model,
+        max_turns=max_turns,
+        messages=messages,
+        on_delta=on_delta,
+        on_thinking=on_thinking,
+        on_answer_to_thinking=on_answer_to_thinking,
+        on_tool=on_tool,
+        on_tool_start=on_tool_start,
+        on_preview=on_preview,
+        on_usage=on_usage,
+        context_limit=context_limit,
+        prompt_tokens=prompt_tokens,
+        on_compact=on_compact,
+        on_finish=on_finish,
+        on_model_start=on_model_start,
+        provider_id=provider_id,
+        route=route,
+        on_route=on_route,
+    )
+    return result.legacy_text
