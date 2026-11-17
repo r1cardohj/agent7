@@ -31,13 +31,13 @@ from prompt_toolkit.key_binding.vi_state import InputMode
 from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.live import Live
-from rich.markdown import Markdown
 from rich.text import Text
 
 from .agent import Interrupted, run_agent, tool_summary
 from .commands import dispatch, known_names
 from .hooks import emit_lifecycle
 from .interrupt import run_with_interrupt_keys
+from .markdown import Markdown
 from .mascot import print_mascot
 from .mdstream import MarkdownStream
 from .providers import list_providers, login_hints

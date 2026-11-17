@@ -9,8 +9,9 @@ by the block being typed instead of the whole reply.
 from __future__ import annotations
 
 from rich.console import Console, Group, RenderableType
-from rich.markdown import Markdown
 from rich.segment import Segment, Segments
+
+from .markdown import Markdown
 
 _FENCE_CHARS = ("`", "~")
 # Rich separates block elements with one blank line; the pre-rendered stable
