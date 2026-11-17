@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 RAW_ITEMS_KEY = "_responses"
+IMAGES_KEY = "_images"  # tool-result image blocks: [{"data": base64, "mimeType": ...}]
 
 @dataclass
 class ResponseTurn:
@@ -59,7 +60,7 @@ def raw_output(message: dict[str, Any], provider_id: str | None) -> list[dict[st
 
 
 def request_input(
-    messages: list[dict[str, Any]], provider_id: str | None = None,
+    messages: list[dict[str, Any]], provider_id: str | None = None, *, vision: bool = True,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Project chat-shaped history to Responses input and optional instructions.
 
@@ -84,9 +85,28 @@ def request_input(
             out.append({
                 "type": "function_call_output",
                 "call_id": message.get("tool_call_id", ""),
-                "output": message.get("content") or "",
+                "output": tool_output(message, vision=vision),
             })
     return out, instructions
+
+def tool_output(message: dict[str, Any], *, vision: bool = True) -> str | list[dict[str, Any]]:
+    """Tool text plus inline images, as Responses function_call_output content.
+
+    Text-only models get the text alone: pi drops images the same way instead
+    of letting the provider reject the whole request.
+    """
+    text = message.get("content") or ""
+    blocks = message.get(IMAGES_KEY) if vision else None
+    if not isinstance(blocks, list) or not blocks:
+        return text
+    parts: list[dict[str, Any]] = [{"type": "input_text", "text": text}]
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        data, mime = block.get("data"), block.get("mimeType") or "image/png"
+        if isinstance(data, str) and data:
+            parts.append({"type": "input_image", "image_url": f"data:{mime};base64,{data}"})
+    return parts if len(parts) > 1 else text
 
 def legacy_function_call(call: dict[str, Any]) -> dict[str, Any]:
     """Read a version-1 snapshot without inventing unavailable reasoning state."""

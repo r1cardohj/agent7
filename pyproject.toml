@@ -37,6 +37,7 @@ dependencies = [
     "fzp>=0.2.3",
     "click>=8.1",
     "trafilatura>=2.3,<3",
+    "pillow>=12.3.0",
 ]
 
 [project.urls]

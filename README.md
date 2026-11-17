@@ -124,6 +124,13 @@ paths, `/` for commands, and `/model <fragment>` for models. `Ctrl-E` opens the 
 in `$VISUAL` or `$EDITOR`; `Ctrl-C` cancels the input or interrupts a running turn;
 `Ctrl-D` exits (`Ctrl-Z` on Windows).
 
+`Ctrl-V` (or `Alt-V`, when the terminal owns Ctrl-V) pastes an image from the clipboard
+(in vi insert mode): the image is written to a temporary file and its path is inserted into
+the prompt, so you can keep typing around it. Nothing is attached automatically — the model
+sees the picture by calling `read` on that path. Text is pasted normally when the clipboard
+has no image. Clipboard backends: `wl-paste` (Wayland) or `xclip` (X11) on Linux, `pngpaste`
+on macOS, PowerShell on Windows and WSL.
+
 | Command | Purpose |
 | --- | --- |
 | `/help` | List commands |
@@ -143,7 +150,7 @@ or `AGENT7_NO_STATUSBAR=1` to use a plain prompt.
 
 | Tool | Description | Output limit |
 | --- | --- | --- |
-| `read` | Read a text file with line numbers; page with `offset` and `limit` | 200 lines by default; 50k character cap |
+| `read` | Read a text file with line numbers, or an image (png/jpg/jpeg/gif/webp/bmp) as an inline attachment | 200 lines by default; 50k character cap; images resized to 2000px / 4.5MB |
 | `write` | Create or overwrite a whole file | One-line result; diff preview in the REPL |
 | `edit` | Exact replacements, with one or more non-overlapping `edits[]` per call | One-line result; diff preview in the REPL |
 | `bash` | Run a command in the workspace using the host shell | About 12k characters |
@@ -153,6 +160,10 @@ or `AGENT7_NO_STATUSBAR=1` to use a plain prompt.
 Edits are applied without a confirmation prompt. All tools run serially, so output is never
 interleaved. Writes are atomic: an interrupted `write` or `edit` leaves the original file
 untouched.
+
+Images travel inside the `read` tool result, so a session snapshot keeps them and later rounds
+can still see them. Text-only models (for example DeepSeek) get the text note instead of the
+image, and compaction drops old images while keeping their notes.
 
 On Windows, agent7 selects Git Bash, then PowerShell, then `cmd`; on other platforms it uses
 bash. The selected shell is written into the system prompt. Override it with

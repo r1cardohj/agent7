@@ -24,7 +24,7 @@ from prompt_toolkit.application.current import get_app, get_app_session
 from prompt_toolkit.completion import Completer, Completion, CompleteEvent
 from prompt_toolkit.document import Document
 from prompt_toolkit.enums import DEFAULT_BUFFER, EditingMode
-from prompt_toolkit.filters import has_focus
+from prompt_toolkit.filters import has_focus, vi_insert_mode, vi_insert_multiple_mode
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.key_binding.vi_state import InputMode
@@ -36,6 +36,7 @@ from rich.text import Text
 from .agent import Interrupted, run_agent, tool_summary
 from .commands import dispatch, known_names
 from .hooks import emit_lifecycle
+from .images import clipboard_text, paste_image_file
 from .interrupt import run_with_interrupt_keys
 from .markdown import Markdown
 from .mascot import print_mascot
@@ -570,9 +571,10 @@ def path_completions(cwd: Path, text: str) -> list[Completion]:
     return out
 
 def repl_key_bindings() -> KeyBindings:
-    """Enter submits; Ctrl-E edits the whole prompt in the external editor."""
+    """Enter submits; Ctrl-E edits in $EDITOR; Ctrl-V/Alt-V paste from the clipboard."""
     bindings = KeyBindings()
     default_focused = has_focus(DEFAULT_BUFFER)
+    insert_mode = vi_insert_mode | vi_insert_multiple_mode
 
     @bindings.add("enter", filter=default_focused)
     def _accept(event: KeyPressEvent) -> None:
@@ -583,7 +585,46 @@ def repl_key_bindings() -> KeyBindings:
         # Do not validate_and_handle: :wq returns to the prompt for review.
         event.current_buffer.open_in_editor(validate_and_handle=False)
 
+    @bindings.add("c-v", filter=default_focused & insert_mode)
+    @bindings.add("escape", "v", filter=default_focused & insert_mode)
+    async def _paste(event: KeyPressEvent) -> None:
+        """Insert a clipboard image as a temp-file path, else paste text.
+
+        Like pi, the path is all the prompt carries: the model sees the image
+        by calling `read` on it, so no attachment state lives in the editor.
+        Alt-V carries the same binding for terminals that own Ctrl-V.
+        """
+        await _insert_clipboard(event.current_buffer)
+
     return bindings
+
+
+def _safe_paste_image() -> Path | None:
+    """Clipboard work off the event loop; a broken backend must not break the prompt."""
+    try:
+        return paste_image_file()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _insert_path(buffer, image: Path) -> None:
+    lead = "" if not buffer.text or buffer.text[-1].isspace() else " "
+    buffer.insert_text(f"{lead}@{str(image).replace(' ', chr(92) + ' ')} ")
+
+
+async def _insert_clipboard(buffer) -> None:
+    image = await asyncio.to_thread(_safe_paste_image)
+    if image is not None:
+        _insert_path(buffer, image)
+    else:
+        text = await asyncio.to_thread(clipboard_text)
+        if text:
+            buffer.insert_text(text)
+    if os.environ.get("AGENT7_DEBUG_PASTE"):
+        # Terminal-side paste can swallow the key entirely; this line is how we
+        # tell "the key never arrived" apart from "the clipboard read failed".
+        detail = f"image={image}" if image is not None else f"text_chars={len(text or '')}"
+        err.print(f"[dim]# paste: {detail}[/dim]")
 
 _STATUS_SEP = ("fg:ansibrightblack", " · ")
 
@@ -897,7 +938,8 @@ async def repl_loop(state: Session, persist: Callable[[bool], None]) -> None:
     if err.is_terminal and not os.environ.get("AGENT7_NO_MASCOT"):
         print_mascot(err)
     quit_hint = "Ctrl-Z to quit" if sys.platform == "win32" else "Ctrl-D to quit"
-    err.print(f"[dim]# REPL  /help · /session · /login · /model · @file · Ctrl-E editor · {quit_hint}[/dim]")
+    err.print(f"[dim]# REPL  /help · /session · /login · /model · @file · Ctrl/Alt-V image · "
+              f"Ctrl-E editor · {quit_hint}[/dim]")
     if not state.credentials:
         err.print(f"[dim]# no credentials — {login_hints()}[/dim]")
 
