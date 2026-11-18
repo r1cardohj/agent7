@@ -332,7 +332,7 @@ class BashTimeoutTests(unittest.TestCase):
 
             try:
                 started = time.monotonic()
-                with patch("agent7.agent.subprocess.Popen.wait", new=wait_after_ready):
+                with patch("agent0_runtime.shell.subprocess.Popen.wait", new=wait_after_ready):
                     result = dispatch_tool(
                         Path(tmp),
                         "bash",

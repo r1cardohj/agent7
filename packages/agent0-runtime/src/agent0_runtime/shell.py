@@ -75,11 +75,13 @@ def _shell_for_name(name: str, platform: str) -> Shell:
     return Shell("cmd", (comspec, "/c"))
 
 
-def resolve_shell(*, platform: str | None = None) -> Shell:
+def resolve_shell(*, platform: str | None = None, override: str | None = None) -> Shell:
     """Pick a shell from sys.platform, honoring an explicit executable/name."""
 
     plat = sys.platform if platform is None else platform
-    override = os.environ.get("AGENT0_SHELL", "").strip()
+    if override is None:
+        override = os.environ.get("AGENT0_SHELL", "")
+    override = override.strip()
     if override:
         key = override.lower()
         if key in ("bash", "powershell", "cmd", "sh"):

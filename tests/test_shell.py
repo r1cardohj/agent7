@@ -27,9 +27,9 @@ class ResolveShellTests(unittest.TestCase):
         with patch.dict(os.environ, {"COMSPEC": "C:\\Windows\\System32\\cmd.exe"}, clear=False):
             os.environ.pop("AGENT7_SHELL", None)
             with (
-                patch("agent7.agent._git_bash_path", return_value=None),
+                patch("agent0_runtime.shell._git_bash_path", return_value=None),
                 patch(
-                    "agent7.agent.shutil.which",
+                    "agent0_runtime.shell.shutil.which",
                     side_effect=lambda n: "C:\\pwsh.exe" if n == "pwsh" else None,
                 ),
             ):
@@ -41,8 +41,8 @@ class ResolveShellTests(unittest.TestCase):
         with patch.dict(os.environ, {"COMSPEC": "C:\\Windows\\System32\\cmd.exe"}, clear=False):
             os.environ.pop("AGENT7_SHELL", None)
             with (
-                patch("agent7.agent._git_bash_path", return_value=None),
-                patch("agent7.agent.shutil.which", return_value=None),
+                patch("agent0_runtime.shell._git_bash_path", return_value=None),
+                patch("agent0_runtime.shell.shutil.which", return_value=None),
             ):
                 sh = resolve_shell(platform="win32")
         self.assertEqual(sh.name, "cmd")
