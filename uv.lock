@@ -9,14 +9,14 @@ resolution-markers = [
 
 [[package]]
 name = "agent0-runtime"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "openai" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5b/27/fa1c6c45d80dc1f61ae46499016ec08f1a99c6c345dad14c1617b11c22fd/agent0_runtime-0.1.1.tar.gz", hash = "sha256:df347d6b845a24e4e1d67290a98cd78a93fd4de921a762c380620a44810a1080", size = 78809, upload-time = "2026-11-18T13:39:51.672Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/68/cc/d8ba1a801bffa847a14d3cf229185c3cc21b47974aef72f3814991c8d964/agent0_runtime-0.1.2.tar.gz", hash = "sha256:67c7e734e6173e060406d592705b22caa84500e0a7ae1d22c50701782ca6d710", size = 84205, upload-time = "2026-11-18T15:01:02.681Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/08/2d/c7dd5ec64819553e05d62771879b3bca420744377efe49103d07b043e354/agent0_runtime-0.1.1-py3-none-any.whl", hash = "sha256:55c3de23d8625b1c22ca310d49ee98e9ca35013b456b015af65d5d1568d2f0a2", size = 66746, upload-time = "2026-11-18T13:39:50.311Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/30/7b5b4483f4fbd08886a5277425c92994d34a0c03aecd8e146308c7aa55c6/agent0_runtime-0.1.2-py3-none-any.whl", hash = "sha256:2389eb41583cb70c82709e86a6c743829f0c2eebd9e7af33706b925ba6e8c8ac", size = 68402, upload-time = "2026-11-18T15:01:01.426Z" },
 ]
 
 [package.optional-dependencies]
@@ -43,7 +43,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent0-runtime", extras = ["all"], specifier = ">=0.1.1,<0.2" },
+    { name = "agent0-runtime", extras = ["all"], specifier = ">=0.1.2,<0.2" },
     { name = "click", specifier = ">=8.1" },
     { name = "fzp", specifier = ">=0.2.3" },
     { name = "openai", specifier = ">=1.40.0" },
