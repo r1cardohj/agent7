@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from functools import wraps
 from pathlib import Path
-from typing import Any, TypeAlias
+from types import UnionType
+from typing import Any, Literal, TypeAlias, Union, get_args, get_origin, get_type_hints
 
 from .events import EventEmitter
 from .types import AgentInterrupted, CancellationToken, ToolCall, ToolResult
@@ -68,15 +70,132 @@ class Tool:
         )
 
 
+_JSON_SCALAR_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean"}
+
+
+def _parameter_schema(annotation: Any) -> dict[str, Any]:
+    """Translate common Python annotations into a function-tool JSON schema."""
+
+    if annotation is inspect.Parameter.empty or annotation is Any:
+        return {}
+    if annotation is type(None):
+        return {"type": "null"}
+    origin = get_origin(annotation)
+    if origin is Literal:
+        return {"enum": list(get_args(annotation))}
+    if origin in (Union, UnionType):
+        return {"anyOf": [_parameter_schema(item) for item in get_args(annotation)]}
+    if annotation is list or origin is list:
+        schema: dict[str, Any] = {"type": "array"}
+        args = get_args(annotation)
+        if args:
+            schema["items"] = _parameter_schema(args[0])
+        return schema
+    if annotation is dict or origin is dict:
+        return {"type": "object"}
+    if annotation in _JSON_SCALAR_TYPES:
+        return {"type": _JSON_SCALAR_TYPES[annotation]}
+    raise TypeError(f"unsupported tool parameter annotation: {annotation!r}")
+
+
+_TOOL_ATTRIBUTE = "__agent7_tool__"
+
+
+def _as_tool(value: Any) -> Tool:
+    """Resolve a Tool or a decorated function into its Tool definition."""
+
+    if isinstance(value, Tool):
+        return value
+    tool_definition = getattr(value, _TOOL_ATTRIBUTE, None)
+    if isinstance(tool_definition, Tool):
+        return tool_definition
+    raise TypeError("tools must be Tool instances or functions decorated with @tool")
+
+
+def tool(
+    name_or_function: str | Callable[..., Any] | None = None,
+    *,
+    name: str = "",
+    description: str = "",
+) -> Callable[..., Any] | Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Mark a typed function as a Tool and keep it callable.
+
+    ``@tool``, ``@tool(name="...")``, and ``@tool("...")`` all work. The name,
+    JSON schema, required arguments, and docstring are stored on the returned
+    function so an Agent can later resolve a decorated tool by its string name.
+    """
+
+    if isinstance(name_or_function, str):
+
+        def configure(function: Callable[..., Any]) -> Callable[..., Any]:
+            return _decorate_tool(function, name=name or name_or_function, description=description)
+
+        return configure
+
+    def decorate(function: Callable[..., Any]) -> Callable[..., Any]:
+        return _decorate_tool(function, name=name, description=description)
+
+    return decorate if name_or_function is None else decorate(name_or_function)
+
+
+def _decorate_tool(func: Callable[..., Any], *, name: str, description: str) -> Callable[..., Any]:
+    """Build a Tool from a function and attach it to the function itself."""
+
+    hints = get_type_hints(func)
+    signature = inspect.signature(func)
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for parameter_name, parameter in signature.parameters.items():
+        if parameter.kind not in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            raise TypeError("@tool functions may only declare named parameters")
+        properties[parameter_name] = _parameter_schema(
+            hints.get(parameter_name, parameter.annotation)
+        )
+        if parameter.default is inspect.Parameter.empty:
+            required.append(parameter_name)
+
+    tool_definition = Tool.define(
+        name or func.__name__,
+        description or inspect.getdoc(func) or func.__name__.replace("_", " "),
+        properties,
+        _tool_handler(func),
+        required=required,
+    )
+    setattr(func, _TOOL_ATTRIBUTE, tool_definition)
+    return func
+
+
+def _tool_handler(
+    func: Callable[..., Any],
+) -> Callable[[ToolContext, dict[str, Any]], Any]:
+    if inspect.iscoroutinefunction(func):
+
+        @wraps(func)
+        async def invoke(_context: ToolContext, args: dict[str, Any]) -> Any:
+            return await func(**args)
+
+    else:
+
+        @wraps(func)
+        def invoke(_context: ToolContext, args: dict[str, Any]) -> Any:
+            return func(**args)
+
+    return invoke
+
+
 class ToolRegistry:
     """Tools registered on one runtime, never process-global mutable handlers."""
 
-    def __init__(self, tools: tuple[Tool, ...] = ()) -> None:
+    def __init__(self, tools: Iterable[Tool | Callable[..., Any]] = ()) -> None:
         self._tools: dict[str, Tool] = {}
         for tool in tools:
             self.register(tool)
 
-    def register(self, tool: Tool, *, replace_existing: bool = False) -> None:
+    def register(self, tool: Tool | Callable[..., Any], *, replace_existing: bool = False) -> None:
+        tool = _as_tool(tool)
         if tool.name in self._tools and not replace_existing:
             raise ValueError(f"tool already registered: {tool.name}")
         self._tools[tool.name] = tool

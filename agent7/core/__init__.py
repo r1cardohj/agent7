@@ -1,8 +1,9 @@
-"""The future agent0-runtime boundary, currently packaged inside agent7.
+"""Embeddable agent runtime, currently packaged inside agent7.
 
-Nothing in this package imports the terminal, provider configuration, session
-storage, or agent7's concrete tools. It can therefore be exercised with a fake
-backend and moved to a standalone distribution without moving the UI as well.
+Nothing in this package imports the terminal, provider authentication UI, session
+storage, or agent7's concrete tools. ``Agent.from_env()`` is the recommended
+zero-configuration entry point; the backend/tool protocols remain available to
+advanced embedders and future standalone distributions.
 """
 
 from .backend import BackendRegistry, ModelBackend, ModelInfo, ModelRequest
@@ -54,7 +55,7 @@ from .providers import (
 from .search import SearchProvider
 from .session import MemorySessionStore, RunContext, RuntimeSession, SessionStore
 from .shell import Shell
-from .tools import Tool, ToolContext, ToolExecution, ToolExecutor, ToolRegistry
+from .tools import Tool, ToolContext, ToolExecution, ToolExecutor, ToolRegistry, tool
 from .types import (
     TOOL_ATTACHMENTS_KEY,
     AgentInterrupted,
@@ -136,4 +137,5 @@ __all__ = [
     "new_run_id",
     "resolve_all_env",
     "run_with_lifecycle",
+    "tool",
 ]

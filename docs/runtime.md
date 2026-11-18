@@ -1,15 +1,49 @@
 # Headless runtime and plugin API
 
-`agent7.core` is the internal boundary intended for a future standalone
-`agent0-runtime` package. It has no imports from the terminal, agent7 providers,
-or application-owned session storage. It contains the generic loop plus optional
-built-in filesystem/shell/web tools that other agent types can select without
-importing agent7's coding profile.
+`agent7.core` is the public headless runtime, currently packaged inside agent7
+and intended for a future standalone `agent0-runtime` distribution. It has no
+imports from the terminal, agent7 providers, or application-owned session storage.
+It contains the generic loop plus optional built-in filesystem/shell/web tools
+that other agent types can select without importing agent7's coding profile.
+
+## Quick start
+
+The recommended construction path is `Agent.from_env()`. It discovers a configured
+DeepSeek or Kimi credential, selects that provider's default model, and installs
+the matching Responses backend and history policy:
+
+```python
+import asyncio
+from agent7.core import Agent, tool
+
+@tool("add")
+def add(a: float, b: float) -> str:
+    """Add two numbers."""
+    return str(a + b)
+
+async def main():
+    async with Agent.from_env(tools=["add"]) as agent:
+        result = await agent.run("Use add to calculate 20 + 22.")
+        print(result.text)
+
+asyncio.run(main())
+```
+
+Set `DEEPSEEK_API_KEY` or `KIMI_API_KEY` before running. With both configured,
+pass an explicit reference such as `Agent.from_env("kimi/kimi-for-coding")`.
+`AGENT7_MODEL` supplies the same default reference, and `AGENT7_BASE_URL` overrides
+the endpoint. No tools are enabled unless supplied. The executable version of this
+example is `examples/minimal_agent.py`.
+
+A run without a session is independent. Reuse a `RuntimeSession` for conversation
+history, as shown below. Entering the async context and exiting it closes plugins,
+the backend, and its network client; no separate client cleanup is required.
 
 ## Typed runs and structured events
 
-The existing `run_agent()` remains a compatibility facade returning `str`.
-New integrations should use `run_agent_result()`:
+`run_agent_result()` remains the compatibility facade for agent7 hosts. Ordinary
+embedders should prefer `Agent.from_env()`; the facade is useful when an existing
+application already owns its client, routing, and coding registry:
 
 ```python
 from agent7.agent import run_agent_result
@@ -42,7 +76,8 @@ WebSocket adapter. `on_event` may be synchronous or asynchronous.
 
 For custom backends, instantiate `agent7.core.Agent` directly. The required
 backend protocol is only `complete(request, events) -> ModelTurn`; `model`,
-`provider_id`, `context_limit`, and `prepare()` are optional metadata/policy:
+`provider_id`, `context_limit`, and `prepare()` are optional metadata/policy.
+An owned backend may implement `close()` or `aclose()` to release resources:
 
 ```python
 class Backend:
@@ -53,17 +88,33 @@ class Backend:
 The runtime owns the model integration layer and normally depends on the
 `openai` package. `agent7.core.OpenAIResponsesBackend` implements one
 OpenAI-compatible Responses endpoint, including streaming, function calls,
-usage mapping, retry-safe requests, and raw Responses history. The core also
-has provider-neutral registry metadata for built-in OpenAI-compatible
+usage mapping, retry-safe requests, raw Responses history, and client cleanup.
+The core also has provider-neutral registry metadata for built-in OpenAI-compatible
 providers such as DeepSeek and Kimi. agent7 adds only its auth-file/login UI
 and `RoutedResponsesBackend` intent/failover policy; another application can
 use the core backend/provider registry, its own router, or a different backend
 entirely.
 
+`Agent(backend)` owns and closes its backend by default. Pass
+`close_backend=False` when a host shares that backend or its network client across
+runs. `Agent.close()` and async-context exit are idempotent.
+
 ## Tool registry
 
-Registries belong to an `Agent` instance; adding a plugin does not mutate global
-handlers or another session:
+`@tool` derives names, JSON schemas, required arguments, and descriptions from a
+Python signature and docstring. It works bare as `@tool`, as `@tool("name")`,
+and configured as `@tool(name="...", description="...")`; synchronous and
+asynchronous functions are supported. Common scalar, list, dictionary, literal,
+and optional annotations are supported. Defaults become optional tool arguments.
+The decorated value remains the original Python function, so tests and normal
+calls can use it unchanged.
+
+`Agent.from_env()` may receive decorated tool names such as `tools=["add"]`. The
+constructor reflects the calling scope and resolves uniquely named tools. No
+process-global registry is created; an ambiguous or invisible name raises a
+clear error. Function objects remain the best choice for dynamically generated
+or shadowed tools. Use `Tool.define()` when a tool needs an explicit schema or
+`ToolContext`:
 
 ```python
 from agent7.agent import create_tool_registry, run_agent_result

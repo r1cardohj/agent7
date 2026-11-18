@@ -156,6 +156,9 @@ class RoutedResponsesBackend(OpenAIResponsesBackend):
         )
         return self.model_turn(turn, provider_id=target.provider_id, model=target.model)
 
+    async def close(self) -> None:
+        await self.route.close()
+
 
 # Compatibility name from the first runtime extraction pass.
 ResponsesBackend = RoutedResponsesBackend

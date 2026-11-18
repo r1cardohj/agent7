@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable, Mapping
+import inspect
+import os
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -12,7 +14,14 @@ from .events import EventBus, EventEmitter, EventListener
 from .lifecycle import LifecycleHooks, run_with_lifecycle
 from .plugins import PluginContext, PluginManager
 from .session import RunContext, RuntimeSession
-from .tools import ToolContext, ToolExecutor, ToolRegistry
+from .tools import (
+    _TOOL_ATTRIBUTE,
+    Tool,
+    ToolContext,
+    ToolExecutor,
+    ToolRegistry,
+    _as_tool,
+)
 from .types import (
     TOOL_ATTACHMENTS_KEY,
     AgentInterrupted,
@@ -87,6 +96,49 @@ def _merge_attachments(message: Message, result: ToolResult) -> None:
         message[TOOL_ATTACHMENTS_KEY] = [block.to_dict() for block in result.attachments]
 
 
+def _visible_tool_candidates(frame: Any | None) -> list[Tool]:
+    """Collect uniquely identified decorated tools visible from the caller stack."""
+
+    candidates: list[Tool] = []
+    seen: set[int] = set()
+    while frame is not None:
+        for scope in (frame.f_locals, frame.f_globals):
+            for value in scope.values():
+                if id(value) in seen:
+                    continue
+                definition = getattr(value, _TOOL_ATTRIBUTE, None)
+                tool = definition if isinstance(definition, Tool) else None
+                if tool is None and isinstance(value, Tool):
+                    tool = value
+                if tool is not None:
+                    seen.add(id(value))
+                    candidates.append(tool)
+        frame = frame.f_back
+    return candidates
+
+
+def _resolve_tools(
+    values: Iterable[Tool | str | Callable[..., Any]],
+    candidates: list[Tool],
+) -> list[Tool]:
+    """Resolve Tool objects, decorated callables, and decorated names."""
+
+    resolved: list[Tool] = []
+    for value in values:
+        if not isinstance(value, str):
+            resolved.append(_as_tool(value))
+            continue
+        matches: list[Tool] = []
+        for candidate in candidates:
+            if candidate.name == value and all(candidate is not seen for seen in matches):
+                matches.append(candidate)
+        if len(matches) != 1:
+            qualifier = "not found" if not matches else "ambiguous"
+            raise ValueError(f"tool name {value!r} is {qualifier}; pass the function instead")
+        resolved.append(matches[0])
+    return resolved
+
+
 class Agent:
     """Reusable headless runtime; one instance may serve multiple sequential runs.
 
@@ -94,6 +146,77 @@ class Agent:
     Event subscription and tool/plugin registration are instance-scoped, while
     run IDs, event sequences, cancellation tokens, and outcomes are per run.
     """
+
+    @classmethod
+    def from_env(
+        cls,
+        model: str | None = None,
+        *,
+        tools: ToolRegistry | Iterable[Tool | str | Callable[..., Any]] = (),
+        context_limit: int | None = None,
+        **runtime_options: Any,
+    ) -> Agent:
+        """Build the recommended default Agent from provider environment variables.
+
+        With several configured providers, use an explicit ``provider/model``
+        reference. The returned Agent owns and closes its OpenAI network client.
+        Advanced runtime options are forwarded to the regular constructor.
+        """
+
+        from openai import AsyncOpenAI
+
+        from .history import ResponsesHistoryPolicy
+        from .openai_backend import OpenAIResponsesBackend
+        from .providers import get_provider, resolve_all_env
+
+        registry = tools if isinstance(tools, ToolRegistry) else None
+        if registry is None:
+            values = list(tools)
+            if any(isinstance(value, str) for value in values):
+                caller = inspect.currentframe().f_back
+                try:
+                    candidates = _visible_tool_candidates(caller)
+                    registry = ToolRegistry(_resolve_tools(values, candidates))
+                finally:
+                    # Never retain caller frame references on this Agent.
+                    del caller
+            else:
+                registry = ToolRegistry(values)
+        requested = (model or os.environ.get("AGENT7_MODEL", "")).strip()
+        credentials = resolve_all_env()
+        if not credentials:
+            raise ValueError("no model provider configured; set DEEPSEEK_API_KEY or KIMI_API_KEY")
+        available = [provider for key in credentials if (provider := get_provider(key))]
+        if requested == "auto":
+            raise ValueError("Agent.from_env() needs a concrete provider/model, not 'auto'")
+        if "/" in requested:
+            provider_name, model_name = requested.split("/", 1)
+            provider = get_provider(provider_name)
+            if provider is None or not model_name:
+                raise ValueError(f"invalid model reference: {requested!r}")
+        elif requested:
+            if len(available) != 1:
+                raise ValueError("use provider/model when more than one provider is configured")
+            provider, model_name = available[0], requested
+        else:
+            provider = available[0]
+            model_name = provider.default_model
+        credential = credentials.get(provider.id)
+        if credential is None:
+            raise ValueError(f"{requested!r} requires {provider.env_keys[0]}")
+        client = AsyncOpenAI(
+            api_key=credential.api_key,
+            base_url=os.environ.get("AGENT7_BASE_URL", "").strip() or credential.base_url,
+        )
+        backend = OpenAIResponsesBackend(
+            client,
+            model_name,
+            provider_id=provider.id,
+            context_limit=context_limit,
+        )
+        runtime_options.setdefault("history", ResponsesHistoryPolicy())
+        runtime_options.setdefault("close_backend", True)
+        return cls(backend, tools=registry, **runtime_options)
 
     def __init__(
         self,
@@ -105,6 +228,7 @@ class Agent:
         lifecycle: LifecycleHooks | None = None,
         backends: BackendRegistry | None = None,
         services: Mapping[str, Any] | None = None,
+        close_backend: bool = True,
         plugins: Iterable[Any] = (),
         plugin_names: Iterable[str] = (),
     ) -> None:
@@ -115,6 +239,8 @@ class Agent:
         self.lifecycle = lifecycle if lifecycle is not None else LifecycleHooks()
         self.backends = backends if backends is not None else BackendRegistry()
         self.services = dict(services or {})
+        self.close_backend = close_backend
+        self._closed = False
         self.plugins = PluginManager(
             PluginContext(
                 tools=self.tools,
@@ -130,8 +256,31 @@ class Agent:
         if names:
             self.plugins.load_discovered(names)
 
+    async def __aenter__(self) -> Agent:
+        if self._closed:
+            raise RuntimeError("agent is closed")
+        return self
+
+    async def __aexit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> None:
+        await self.close()
+
     async def close(self) -> None:
-        await self.plugins.close()
+        """Close plugins and, when owned, the backend and its network resources."""
+
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await self.plugins.close()
+        finally:
+            if self.close_backend:
+                close = getattr(self.backend, "aclose", None) or getattr(
+                    self.backend, "close", None
+                )
+                if close is not None:
+                    result = close()
+                    if inspect.isawaitable(result):
+                        await result
 
     async def run(
         self,
@@ -158,8 +307,9 @@ class Agent:
         runtime_session = session if isinstance(session, RuntimeSession) else None
         if runtime_session is not None and messages is None:
             messages = runtime_session.messages
-        if messages is None:
-            raise ValueError("messages are required when session is not a RuntimeSession")
+        elif messages is None:
+            # A one-shot run needs no explicit session or mutable message list.
+            messages = []
         selected_workspace = workspace if workspace is not None else cwd
         if selected_workspace is None and runtime_session is not None:
             metadata_workspace = runtime_session.metadata.get("workspace")
@@ -205,6 +355,8 @@ class Agent:
     ) -> RunResult:
         """Run one task using an explicit per-run context."""
 
+        if self._closed:
+            raise RuntimeError("agent is closed")
         listeners = (on_event,) if on_event is not None else ()
         events = self.events.for_run(context.run_id, listeners=listeners)
         services = {**self.services, **dict(context.services)}

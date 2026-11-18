@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import sys
 from collections.abc import Callable
 from contextlib import suppress
@@ -365,6 +366,15 @@ class OpenAIResponsesBackend:
     @property
     def context_limit(self) -> int | None:
         return self._context_limit
+
+    async def close(self) -> None:
+        """Close the endpoint client when this backend is owned by an Agent."""
+
+        close = getattr(self.client, "close", None)
+        if close is not None:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
 
     def model_turn(
         self,

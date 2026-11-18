@@ -1144,6 +1144,8 @@ async def run_agent_result(
         tools=registry if registry is not None else create_tool_registry(),
         history=ResponsesHistoryPolicy(),
         lifecycle=hooks or getattr(session, "hooks", None),
+        # The CLI/session owns its client and may reuse it across many runs.
+        close_backend=False,
         plugins=plugins,
         plugin_names=plugin_names,
     )

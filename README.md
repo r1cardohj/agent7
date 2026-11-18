@@ -309,6 +309,33 @@ general coding-agent ranking; repeat it before drawing conclusions about the cur
   instructions; the system prompt tells the model to treat them accordingly.
 - **Hard kills lose the current turn.** Sessions are durable only after they are saved.
 
+## Embed a minimal agent
+
+With `DEEPSEEK_API_KEY` or `KIMI_API_KEY` set, the headless runtime needs no
+manual client, backend, history, or message-list setup:
+
+```python
+import asyncio
+from agent7.core import Agent, tool
+
+@tool("add")
+def add(a: float, b: float) -> str:
+    """Add two numbers."""
+    return str(a + b)
+
+async def main():
+    async with Agent.from_env(tools=["add"]) as agent:
+        result = await agent.run("Use add to calculate 20 + 22.")
+        print(result.text)
+
+asyncio.run(main())
+```
+
+The async context closes plugins and network resources automatically. See
+[`examples/minimal_agent.py`](examples/minimal_agent.py) and
+[docs/runtime.md](docs/runtime.md) for sessions, events, custom backends, built-in
+tools, lifecycle hooks, and plugins.
+
 ## Development
 
 ```bash
