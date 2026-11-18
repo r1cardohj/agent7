@@ -37,4 +37,7 @@ _SUBMODULES = (
     "web_search",
 )
 for _name in _SUBMODULES:
-    sys.modules[f"{__name__}.{_name}"] = importlib.import_module(f"agent0_runtime.{_name}")
+    _module = importlib.import_module(f"agent0_runtime.{_name}")
+    sys.modules[f"{__name__}.{_name}"] = _module
+    # Keep normal package semantics for mock.patch and reflective importers.
+    globals()[_name] = _module
