@@ -90,11 +90,11 @@ The runtime owns the model integration layer and normally depends on the
 `openai` package. `agent0_runtime.OpenAIResponsesBackend` implements one
 OpenAI-compatible Responses endpoint, including streaming, function calls,
 usage mapping, retry-safe requests, raw Responses history, and client cleanup.
-The core also has provider-neutral registry metadata for built-in OpenAI-compatible
-providers such as DeepSeek and Kimi. agent7 adds only its auth-file/login UI
-and `RoutedResponsesBackend` intent/failover policy; another application can
-use the core backend/provider registry, its own router, or a different backend
-entirely.
+The runtime owns provider metadata, configurable clients, credential storage,
+model discovery, and `RoutedResponsesBackend` intent/failover. Hosts such as
+agent7 inject their credential store, client identity, and provider selection;
+other applications can use the default provider registry, their own router, or
+a different backend entirely.
 
 `Agent(backend)` owns and closes its backend by default. Pass
 `close_backend=False` when a host shares that backend or its network client across
@@ -197,11 +197,11 @@ session = RuntimeSession(
 result = await agent.run("hello", session=session)
 ```
 
-`RuntimeSession` contains an ID, message history, and application metadata. It
-does not prescribe names, credentials, paths, retention, workspace semantics, or
-a storage format. `SessionStore` is the persistence contract; the included
-`MemorySessionStore` is intended for tests and ephemeral agents. agent7's XDG
-JSON snapshots remain an agent7 implementation, not runtime policy.
+`RuntimeSession` contains an ID, message history, and application metadata.
+`SessionStore` is the portable persistence contract; `MemorySessionStore` supports
+tests and ephemeral agents. `FileSessionStore` adds host-rooted, workspace-scoped
+JSON snapshots with resume, legacy migration, and non-overwriting trash. agent7
+supplies its existing XDG paths while the runtime owns the file format and I/O.
 
 For explicit per-run state, use `RunContext` and `Agent.run_in_context()`. The
 legacy `cwd` parameter is the filesystem spelling of the optional run workspace;

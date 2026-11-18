@@ -340,12 +340,13 @@ tools, lifecycle hooks, and plugins.
 
 ```bash
 uv sync
+uv run python -m unittest discover -s packages/agent0-runtime/tests -v
 uv run python -m unittest discover -s tests -v
 ```
 
-CI runs the test suite on Python 3.10 through 3.13, builds the distribution, and smoke-tests
-the installed wheel. `scripts/generate_mascot.py` regenerates the mascot assets from
-`agent7/mascot.py`.
+CI tests the standalone runtime and agent7 on Python 3.10 through 3.13, builds
+both distributions, and smoke-tests their installed wheels. `scripts/generate_mascot.py`
+regenerates the mascot assets from `agent7/mascot.py`.
 
 The headless loop, model/tool interfaces, structured events, lifecycle hooks, cancellation,
 and plugin SDK live behind the standalone `agent0_runtime` package, independently of the terminal. See

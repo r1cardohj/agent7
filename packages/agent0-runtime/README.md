@@ -41,7 +41,9 @@ This host-oriented factory defaults to `close_backend=False`.
 
 Tools may also be registered as function objects or through `Tool.define()` when they
 need an explicit schema or `ToolContext`. Reuse `RuntimeSession` for multi-turn history;
-applications can select a `SessionStore` implementation without changing the agent loop.
+applications can select `MemorySessionStore` or a host-rooted `FileSessionStore`
+without changing the agent loop. `ManagedProvider` and `FileCredentialStore` provide
+host-configurable login, model discovery, and client cleanup.
 
 ## Development
 
