@@ -28,6 +28,7 @@ _SUBMODULES = (
     "tools",
     "types",
     "web_fetch",
+    "web_search",
 )
 for _name in _SUBMODULES:
     sys.modules[f"{__name__}.{_name}"] = importlib.import_module(f"agent0_runtime.{_name}")

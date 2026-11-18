@@ -176,11 +176,11 @@ registry = create_builtin_registry(
 agent = Agent(backend, tools=registry)
 ```
 
-Image decoding is optional through `ImageReader`; search credentials stay in the
-application's `SearchProvider`. Filesystem/shell tools require a workspace only
-when selected by the model, so an assistant with no workspace can still use its
-own tools. agent7 injects its Pillow image reader and DeepSeek Search provider
-from `agent7.tool_adapters`; neither is part of the generic tool definitions.
+The runtime ships `PillowImageReader` and `DeepSeekSearchProvider`; hosts may inject
+credential resolvers or alternative implementations. Filesystem/shell tools require
+a workspace only when selected by the model, so an assistant with no workspace can
+still use its own tools. agent7 supplies its existing login credentials to the
+runtime search provider without implementing the search transport itself.
 
 ## Sessions and stores
 

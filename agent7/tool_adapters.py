@@ -1,25 +1,17 @@
-"""agent7 adapters for the generic runtime built-in tools."""
+"""Host credential wiring for the runtime's built-in tools."""
 
 from __future__ import annotations
 
 from agent0_runtime.builtin_tools import BuiltinToolsConfig
 from agent0_runtime.images import PillowImageReader, supports_vision
-from agent0_runtime.search import SearchProvider
-
-from . import web_search
+from agent0_runtime.web_search import DeepSeekSearchProvider
 
 
-class DeepSeekSearchProvider(SearchProvider):
-    """agent7's default DeepSeek Search API integration."""
+def _deepseek_credential():
+    from .providers import get_provider
 
-    def search(
-        self,
-        query: str,
-        count: int | None = None,
-        *,
-        user_question: str | None = None,
-    ) -> str:
-        return web_search.search(query, count, ori_question=user_question)
+    provider = get_provider("deepseek")
+    return provider.resolve() if provider else None
 
 
 def agent7_builtin_tools() -> BuiltinToolsConfig:
@@ -29,5 +21,5 @@ def agent7_builtin_tools() -> BuiltinToolsConfig:
         shell=SHELL,
         image_reader=PillowImageReader(),
         supports_vision=supports_vision,
-        search_provider=DeepSeekSearchProvider(),
+        search_provider=DeepSeekSearchProvider(_deepseek_credential),
     )

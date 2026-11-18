@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 import urllib.error
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -60,9 +61,15 @@ class _StubProvider:
         return self._credential
 
 
+@contextmanager
 def _with_key():
     credential = Credential("sk-test", "https://api.deepseek.com", "env")
-    return patch("agent7.web_search.get_provider", return_value=_StubProvider(credential))
+    provider = _StubProvider(credential)
+    with (
+        patch("agent7.web_search.get_provider", return_value=provider),
+        patch("agent7.providers.get_provider", return_value=provider),
+    ):
+        yield
 
 
 class SearchRequestTests(unittest.TestCase):

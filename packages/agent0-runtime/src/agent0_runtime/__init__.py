@@ -72,6 +72,7 @@ from .types import (
     ToolResult,
     new_run_id,
 )
+from .web_search import DeepSeekSearchProvider
 
 __all__ = [
     "Agent",
@@ -84,6 +85,7 @@ __all__ = [
     "CancellationToken",
     "Credential",
     "DEFAULT_MAX_TURNS",
+    "DeepSeekSearchProvider",
     "EventBus",
     "EventEmitter",
     "EventListener",
