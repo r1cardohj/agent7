@@ -165,8 +165,6 @@ class Agent:
 
         from openai import AsyncOpenAI
 
-        from .history import ResponsesHistoryPolicy
-        from .openai_backend import OpenAIResponsesBackend
         from .providers import get_provider, resolve_all_env
 
         registry = tools if isinstance(tools, ToolRegistry) else None
@@ -208,15 +206,62 @@ class Agent:
             api_key=credential.api_key,
             base_url=os.environ.get("AGENT0_BASE_URL", "").strip() or credential.base_url,
         )
-        backend = OpenAIResponsesBackend(
+        return cls.from_openai(
             client,
             model_name,
             provider_id=provider.id,
             context_limit=context_limit,
+            tools=registry,
+            close_backend=runtime_options.pop("close_backend", True),
+            **runtime_options,
+        )
+
+    @classmethod
+    def from_openai(
+        cls,
+        client: Any,
+        model: str,
+        *,
+        provider_id: str | None = None,
+        context_limit: int | None = None,
+        tools: ToolRegistry | Iterable[Tool | Callable[..., Any]] = (),
+        close_backend: bool = False,
+        supports_vision: Callable[[str | None], bool] | None = None,
+        retry_sleeps: tuple[float, ...] | None = None,
+        stream_close_timeout: float | None = None,
+        **runtime_options: Any,
+    ) -> Agent:
+        """Assemble the default Responses backend for an existing host client.
+
+        The host owns an injected client by default. ``close_backend=True``
+        transfers backend/client cleanup to this Agent.
+        """
+
+        from .history import ResponsesHistoryPolicy
+        from .openai_backend import OpenAIResponsesBackend
+
+        registry = tools if isinstance(tools, ToolRegistry) else ToolRegistry(tools)
+        backend_options: dict[str, Any] = {}
+        if supports_vision is not None:
+            backend_options["supports_vision"] = supports_vision
+        if retry_sleeps is not None:
+            backend_options["retry_sleeps"] = retry_sleeps
+        if stream_close_timeout is not None:
+            backend_options["stream_close_timeout"] = stream_close_timeout
+        backend = OpenAIResponsesBackend(
+            client,
+            model,
+            provider_id=provider_id,
+            context_limit=context_limit,
+            **backend_options,
         )
         runtime_options.setdefault("history", ResponsesHistoryPolicy())
-        runtime_options.setdefault("close_backend", True)
-        return cls(backend, tools=registry, **runtime_options)
+        return cls(
+            backend,
+            tools=registry,
+            close_backend=close_backend,
+            **runtime_options,
+        )
 
     def __init__(
         self,

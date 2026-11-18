@@ -100,6 +100,23 @@ entirely.
 `close_backend=False` when a host shares that backend or its network client across
 runs. `Agent.close()` and async-context exit are idempotent.
 
+Hosts that already own an OpenAI-compatible client should use the same default
+assembly as `from_env()` without transferring client ownership:
+
+```python
+agent = Agent.from_openai(
+    client,
+    model,
+    provider_id=provider_id,
+    context_limit=context_limit,
+    tools=registry,
+)
+```
+
+This factory installs `OpenAIResponsesBackend` and `ResponsesHistoryPolicy`.
+It defaults to `close_backend=False`; the host remains responsible for closing
+the injected client.
+
 ## Tool registry
 
 `@tool` derives names, JSON schemas, required arguments, and descriptions from a

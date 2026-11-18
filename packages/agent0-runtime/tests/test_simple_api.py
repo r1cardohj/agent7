@@ -122,6 +122,29 @@ class DefaultAgentTests(unittest.TestCase):
         ):
             asyncio.run(exercise())
 
+    def test_from_openai_shares_assembly_without_taking_host_client(self):
+        @tool
+        def echo(text: str) -> str:
+            return text
+
+        client = ClosingFakeClient([call_turn(("echo", {"text": "hello"})), text_turn("done")])
+
+        async def exercise():
+            agent = Agent.from_openai(
+                client,
+                "model",
+                provider_id="host",
+                tools=[echo],
+            )
+            result = await agent.run("go")
+            self.assertEqual(result.text, "done")
+            self.assertIsInstance(agent.history, ResponsesHistoryPolicy)
+            self.assertEqual(agent.tools.names(), ("echo",))
+            await agent.close()
+            self.assertEqual(client.closed, 0)
+
+        asyncio.run(exercise())
+
     def test_string_tools_resolve_from_the_calling_scope(self):
         @tool("weather")
         def local_weather(city: str) -> str:

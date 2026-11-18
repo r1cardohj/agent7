@@ -1112,11 +1112,32 @@ async def run_agent_result(
 ) -> RunResult:
     """Run through the headless core and adapt its events to legacy callbacks."""
 
-    if backend is None:
+    runtime_options = {
+        "tools": registry if registry is not None else create_tool_registry(),
+        "lifecycle": hooks or getattr(session, "hooks", None),
+        "plugins": plugins,
+        "plugin_names": plugin_names,
+    }
+    if backend is None and route is None:
         if client is None or not model:
             raise ValueError("client and model are required when backend is not provided")
-        backend = (
-            RoutedResponsesBackend(
+        runtime = CoreAgent.from_openai(
+            client,
+            model,
+            provider_id=provider_id,
+            context_limit=context_limit,
+            supports_vision=supports_vision,
+            retry_sleeps=RETRY_SLEEPS,
+            stream_close_timeout=STREAM_CLOSE_TIMEOUT,
+            # The CLI/session owns its client and may reuse it across many runs.
+            close_backend=False,
+            **runtime_options,
+        )
+    else:
+        if backend is None:
+            if client is None or not model:
+                raise ValueError("client and model are required when backend is not provided")
+            backend = RoutedResponsesBackend(
                 client,
                 model,
                 route=route,
@@ -1126,27 +1147,12 @@ async def run_agent_result(
                 retry_sleeps=RETRY_SLEEPS,
                 stream_close_timeout=STREAM_CLOSE_TIMEOUT,
             )
-            if route is not None
-            else OpenAIResponsesBackend(
-                client,
-                model,
-                provider_id=provider_id,
-                context_limit=context_limit,
-                supports_vision=supports_vision,
-                retry_sleeps=RETRY_SLEEPS,
-                stream_close_timeout=STREAM_CLOSE_TIMEOUT,
-            )
+        runtime = CoreAgent(
+            backend,
+            history=ResponsesHistoryPolicy(),
+            close_backend=False,
+            **runtime_options,
         )
-    runtime = CoreAgent(
-        backend,
-        tools=registry if registry is not None else create_tool_registry(),
-        history=ResponsesHistoryPolicy(),
-        lifecycle=hooks or getattr(session, "hooks", None),
-        # The CLI/session owns its client and may reuse it across many runs.
-        close_backend=False,
-        plugins=plugins,
-        plugin_names=plugin_names,
-    )
 
     async def legacy_event(event) -> None:
         kind, data, turn = event.kind, event.payload, event.turn or 0

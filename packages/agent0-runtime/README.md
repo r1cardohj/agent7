@@ -30,6 +30,15 @@ asyncio.run(main())
 policy. Exiting the async context closes plugins and network resources. Pass an explicit
 `provider/model` when more than one provider is configured.
 
+Hosts with an existing client can share the same backend/history assembly without
+transferring ownership:
+
+```python
+agent = Agent.from_openai(client, model, provider_id=provider_id, tools=registry)
+```
+
+This host-oriented factory defaults to `close_backend=False`.
+
 Tools may also be registered as function objects or through `Tool.define()` when they
 need an explicit schema or `ToolContext`. Reuse `RuntimeSession` for multi-turn history;
 applications can select a `SessionStore` implementation without changing the agent loop.
