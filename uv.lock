@@ -30,7 +30,7 @@ all = [
 
 [[package]]
 name = "agent7"
-version = "0.3.6"
+version = "0.3.7"
 source = { editable = "." }
 dependencies = [
     { name = "agent0-runtime", extra = ["all"] },
