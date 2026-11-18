@@ -151,6 +151,19 @@ class TokenTotals:
     def known(self) -> bool:
         return self.rounds > 0
 
+    @classmethod
+    def from_dict(cls, data: Any) -> TokenTotals:
+        """Rebuild totals from a snapshot, ignoring anything malformed."""
+
+        totals = cls()
+        if not isinstance(data, dict):
+            return totals
+        for name in ("prompt_tokens", "completion_tokens", "total_tokens", "rounds"):
+            value = data.get(name)
+            if isinstance(value, int) and not isinstance(value, bool):
+                setattr(totals, name, value)
+        return totals
+
     @property
     def total(self) -> int | None:
         """The reported total, or prompt+completion for providers that omit it."""
@@ -285,6 +298,21 @@ class Session:
     @property
     def context_estimated(self) -> bool:
         return self.prompt_tokens is None and self.has_turns
+
+    def restore_usage(self, block: Any) -> None:
+        """Reload the usage stored with a saved conversation.
+
+        Snapshots written before usage was recorded simply have no block; the
+        context gauge then estimates from the messages and spend reads unknown.
+        """
+
+        self.reset_usage()
+        if not isinstance(block, dict):
+            return
+        last = block.get("last")
+        if isinstance(last, dict):
+            self.update_usage(last)
+        self.session_tokens = TokenTotals.from_dict(block.get("session"))
 
     def remember(self, provider_id: str, cred: Credential) -> None:
         self.credentials[provider_id] = cred

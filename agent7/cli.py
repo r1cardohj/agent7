@@ -482,6 +482,9 @@ async def async_main(options: Options) -> None:
         credential=cred,
         credentials=dict(all_creds),
     )
+    # A resumed conversation keeps the usage it was saved with, so the gauge and
+    # /status describe the history on screen instead of starting from nothing.
+    state.restore_usage(snapshot.get("usage") if snapshot else None)
     # A one-shot becomes a real session only once it runs: a run that never
     # starts (bad -m, menu cancelled) must not create a session snapshot.
     committed = snapshot is not None

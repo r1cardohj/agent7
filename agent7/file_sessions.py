@@ -86,6 +86,27 @@ def session_name(messages: list[dict[str, Any]], *, limit: int = 60) -> str:
     return ""
 
 
+def session_usage(session: Any) -> dict[str, Any]:
+    """Usage worth keeping with a conversation: its context and its spend.
+
+    Duck-typed because tests and callers may save lightweight session-like
+    objects; anything missing stays ``None`` and is ignored on restore.
+    """
+
+    def block(source: Any) -> dict[str, Any]:
+        return {
+            "prompt_tokens": getattr(source, "prompt_tokens", None),
+            "completion_tokens": getattr(source, "completion_tokens", None),
+            "total_tokens": getattr(source, "total_tokens", None),
+        }
+
+    totals = getattr(session, "session_tokens", None)
+    return {
+        "last": block(session),
+        "session": {**block(totals), "rounds": getattr(totals, "rounds", 0)},
+    }
+
+
 def save(session: Any, *, created_at: str | None = None, root: Path | None = None) -> Path:
     """Atomically replace this session's snapshot, never its workspace's."""
     cwd = session.cwd.resolve()
@@ -107,6 +128,7 @@ def save(session: Any, *, created_at: str | None = None, root: Path | None = Non
         "created_at": created,
         "updated_at": timestamp(),
         "messages": session.messages,
+        "usage": session_usage(session),
     }
     root = path.parent
     root.mkdir(parents=True, exist_ok=True, mode=0o700)

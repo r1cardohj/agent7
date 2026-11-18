@@ -419,9 +419,9 @@ async def cmd_session(session: Session, args: list[str]) -> CommandResult:
     session.created_at = snapshot["created_at"]
     session.persisted = True
     session.messages[:] = messages
-    # Usage belongs to the conversation that produced it, not to the REPL
-    # process. The next turn will populate it from the selected session.
-    session.reset_usage()
+    # Usage belongs to the conversation that produced it, so the snapshot carries
+    # it; a conversation saved before that keeps an estimated context instead.
+    session.restore_usage(snapshot.get("usage"))
     print_history(snapshot["messages"])
     return CommandResult(message=f"session: {old} → {session.name} ({session.id})")
 

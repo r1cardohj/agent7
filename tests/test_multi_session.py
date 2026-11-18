@@ -20,7 +20,7 @@ from agent7.repl import (
     pick_sessions,
     session_choices,
 )
-from agent7.session import Session
+from agent7.session import Session, TokenTotals
 from agent7.store import list_sessions, load, new_session_id, save, trash_session_dir
 
 
@@ -163,6 +163,9 @@ class SessionSwitchTests(unittest.TestCase):
     def test_session_command_switches_identity_history_and_save_target(self) -> None:
         first = snapshot_state(self.cwd, "first task")
         second = snapshot_state(self.cwd, "second task")
+        # The target conversation carries its own usage; switching must adopt it.
+        second.prompt_tokens = 4_868
+        second.session_tokens = TokenTotals(total_tokens=9_500, rounds=2)
         save(first, created_at="2025-01-01T00:00:00+00:00")
         save(second, created_at="2025-01-02T00:00:00+00:00")
         state = Session(
@@ -190,8 +193,9 @@ class SessionSwitchTests(unittest.TestCase):
         self.assertEqual(state.name, "second task")
         self.assertEqual(state.created_at, "2025-01-02T00:00:00+00:00")
         self.assertEqual(state.messages[1]["content"], "second task")
-        self.assertIsNone(state.prompt_tokens)
-        self.assertIsNone(state.spent_tokens)  # spend belongs to the conversation
+        # Usage follows the conversation, not the process that switched to it.
+        self.assertEqual(state.prompt_tokens, 4_868)
+        self.assertEqual(state.spent_tokens, 9_500)
         history.assert_called_once_with(second.messages)
 
         state.messages.append({"role": "user", "content": "follow up"})
