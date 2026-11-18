@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent7.agent import SYSTEM
+from agent7.config import SYSTEM
 from agent7.store import (
     VERSION,
     delete_session,

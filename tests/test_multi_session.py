@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from rich.console import Console
 
-from agent7.agent import SYSTEM
 from agent7.cli import Options, async_main
 from agent7.commands import dispatch
+from agent7.config import SYSTEM
 from agent7.repl import (
     confirm_sessions_delete,
     pick_session,

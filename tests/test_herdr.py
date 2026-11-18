@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from agent0_runtime.lifecycle import LifecycleEvent, LifecycleKind
+
 from agent7.herdr import (
     HerdrReporter,
     background_tasks_available,
@@ -11,7 +13,6 @@ from agent7.herdr import (
     herdr_skill_path,
     status_sequence,
 )
-from agent7.hooks import LifecycleEvent, LifecycleKind
 
 
 class TTY(io.StringIO):

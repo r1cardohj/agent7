@@ -13,9 +13,9 @@ from click.testing import CliRunner
 from rich.console import Console
 
 from agent7 import cli, repl
-from agent7.agent import SYSTEM
 from agent7.cli import PICK_MODEL, Options, main
 from agent7.commands import cmd_model
+from agent7.config import SYSTEM
 from agent7.store import load, save
 
 

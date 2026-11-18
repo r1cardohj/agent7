@@ -8,11 +8,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from agent0_runtime import AgentInterrupted as Interrupted
 from prompt_toolkit.keys import Keys
 from rich.console import Console
 
-from agent7.agent import SYSTEM, Interrupted
 from agent7.cli import Options, async_main, main
+from agent7.config import SYSTEM
 from agent7.repl import print_history, repl_key_bindings, run_turn
 from agent7.store import load, save
 
