@@ -15,6 +15,7 @@ _SUBMODULES = (
     "client",
     "credentials",
     "events",
+    "file_sessions",
     "filesystem",
     "history",
     "images",
