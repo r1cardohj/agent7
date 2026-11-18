@@ -1,21 +1,21 @@
-"""Providers: paste API key → OpenAI-compatible client."""
+"""agent7 auth/UI adapter over the generic provider metadata in core."""
 
 from __future__ import annotations
 
 import contextlib
 import json
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from openai import AsyncOpenAI, OpenAI
 
 from . import __version__
+from .core.providers import BUILTIN_PROVIDERS, Credential, ProviderSpec
 
 
 class Agent7Client(AsyncOpenAI):
-    """OpenAI-compatible client identified as agent7, not `AsyncOpenAI/Python <sdk>`."""
+    """OpenAI-compatible client identified as agent7, not the generic SDK."""
 
     @property
     def user_agent(self) -> str:
@@ -23,8 +23,6 @@ class Agent7Client(AsyncOpenAI):
 
 
 class Agent7SyncClient(OpenAI):
-    """OpenAI-compatible synchronous client identified as agent7."""
-
     @property
     def user_agent(self) -> str:
         return f"agent7/{__version__}"
@@ -74,42 +72,21 @@ def _save(data: dict[str, Any]) -> Path:
     return path
 
 
-@dataclass
-class Credential:
-    api_key: str
-    base_url: str
-    source: str
-
-
-@dataclass
-class ApiKeyProvider:
-    id: str
-    aliases: tuple[str, ...]
-    env_keys: tuple[str, ...]
-    default_base: str
-    prompt: str
-    default_model: str = ""
-    login_name: str = ""
-
-    @property
-    def preferred_login(self) -> str:
-        return self.login_name or self.id
+class ApiKeyProvider(ProviderSpec):
+    """agent7 login/auth-file behavior for a core provider spec."""
 
     def resolve(self) -> Credential | None:
-        base = os.environ.get("AGENT7_BASE_URL", "").strip() or self.default_base
-        for env in self.env_keys:
-            if key := os.environ.get(env, "").strip():
-                return Credential(key, base, "env")
+        if credential := self.resolve_env():
+            base_url = os.environ.get("AGENT7_BASE_URL", "").strip() or credential.base_url
+            return Credential(credential.api_key, base_url, credential.source)
         entry = load_auth().get(self.id)
         if isinstance(entry, dict) and entry.get("type") != "oauth":
             key = entry.get("key")
             if isinstance(key, str) and key.strip():
-                bu = (
-                    entry.get("baseUrl")
-                    if isinstance(entry.get("baseUrl"), str)
-                    else self.default_base
+                base_url = (
+                    entry.get("baseUrl") if isinstance(entry.get("baseUrl"), str) else self.base_url
                 )
-                return Credential(key.strip(), bu, "agent7")
+                return Credential(key.strip(), base_url, "agent7")
         return None
 
     async def login(
@@ -118,12 +95,11 @@ class ApiKeyProvider:
         key = (prompt_secret(self.prompt) or "").strip()
         if not key:
             raise ValueError("cancelled — empty key")
-        base = self.default_base
         data = load_auth()
-        data[self.id] = {"type": "api_key", "key": key, "baseUrl": base}
+        data[self.id] = {"type": "api_key", "key": key, "baseUrl": self.base_url}
         data["active"] = self.id
         _save(data)
-        return Credential(key, base, "login")
+        return Credential(key, self.base_url, "login")
 
     def logout(self) -> bool:
         data = load_auth()
@@ -144,7 +120,6 @@ class ApiKeyProvider:
             await client.close()
 
     def list_models_sync(self, cred: Credential, *, timeout: float) -> list[str]:
-        """Run provider discovery in the caller's thread, bounded by `timeout`."""
         client = make_sync_client(cred.api_key, cred.base_url, timeout=timeout)
         try:
             page = client.models.list()
@@ -158,27 +133,20 @@ class ApiKeyProvider:
 
 _BUILTINS = [
     ApiKeyProvider(
-        "deepseek",
-        ("ds",),
-        ("DEEPSEEK_API_KEY",),
-        "https://api.deepseek.com",
-        "DeepSeek API key",
-        "deepseek-chat",
-    ),
-    ApiKeyProvider(
-        "kimi",
-        (),
-        ("KIMI_API_KEY",),
-        "https://api.kimi.com/coding/v1",
-        "Kimi Code API key",
-        "kimi-for-coding",
-    ),
+        spec.id,
+        spec.aliases,
+        spec.env_keys,
+        spec.base_url,
+        spec.prompt,
+        spec.default_model,
+    )
+    for spec in BUILTIN_PROVIDERS
 ]
 _REGISTRY: dict[str, ApiKeyProvider] = {}
-for _p in _BUILTINS:
-    _REGISTRY[_p.id] = _p
-    for _a in _p.aliases:
-        _REGISTRY[_a] = _p
+for _provider in _BUILTINS:
+    _REGISTRY[_provider.id] = _provider
+    for _alias in _provider.aliases:
+        _REGISTRY[_alias] = _provider
 
 
 def get_provider(name: str) -> ApiKeyProvider | None:
@@ -186,9 +154,10 @@ def get_provider(name: str) -> ApiKeyProvider | None:
 
 
 def default_model_for(provider_id: str | None) -> str:
-    """Fallback model when a provider's /models list is unavailable."""
-    p = get_provider(provider_id or "")
-    return p.default_model if p and p.default_model else _BUILTINS[0].default_model
+    provider = get_provider(provider_id or "")
+    if provider and provider.default_model:
+        return provider.default_model
+    return _BUILTINS[0].default_model
 
 
 def list_providers() -> list[ApiKeyProvider]:
@@ -202,12 +171,12 @@ def resolve_all() -> dict[str, Credential]:
 def resolve_default() -> tuple[ApiKeyProvider, Credential] | None:
     active = load_auth().get("active")
     if isinstance(active, str):
-        p = get_provider(active)
-        if p and (c := p.resolve()):
-            return p, c
-    for p in _BUILTINS:
-        if c := p.resolve():
-            return p, c
+        provider = get_provider(active)
+        if provider and (credential := provider.resolve()):
+            return provider, credential
+    for provider in _BUILTINS:
+        if credential := provider.resolve():
+            return provider, credential
     return None
 
 

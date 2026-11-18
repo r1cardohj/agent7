@@ -1,7 +1,9 @@
 """A second consumer style: an assistant that uses none of agent7's coding pieces."""
 
 import asyncio
+import os
 import unittest
+from unittest.mock import patch
 
 from agent7.core import (
     Agent,
@@ -12,6 +14,8 @@ from agent7.core import (
     Tool,
     ToolCall,
     ToolRegistry,
+    get_provider,
+    resolve_all_env,
 )
 
 
@@ -82,6 +86,17 @@ class AssistantRuntimeTests(unittest.TestCase):
         restored = asyncio.run(store.load("assistant-memory"))
         self.assertGreater(len(restored.messages), 4)
         self.assertIn({"role": "user", "content": "remember my name is Hou"}, restored.messages)
+
+    def test_provider_registry_is_available_without_agent7_auth(self):
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-test"}, clear=True):
+            deepseek = get_provider("ds")
+            self.assertEqual(deepseek.id, "deepseek")
+            self.assertEqual(deepseek.default_model, "deepseek-chat")
+            resolved = resolve_all_env()
+            self.assertEqual(set(resolved), {"deepseek"})
+            self.assertEqual(resolved["deepseek"].source, "env")
+        kimi = get_provider("kimi")
+        self.assertEqual(kimi.base_url, "https://api.kimi.com/coding/v1")
 
     def test_plain_responses_backend_has_no_route_policy(self):
         backend = OpenAIResponsesBackend(object(), "model")

@@ -42,6 +42,15 @@ from .plugins import (
     PluginManager,
     discover_plugins,
 )
+from .providers import (
+    BUILTIN_PROVIDERS,
+    Credential,
+    ProviderSpec,
+    default_model_for,
+    get_provider,
+    list_providers,
+    resolve_all_env,
+)
 from .search import SearchProvider
 from .session import MemorySessionStore, RunContext, RuntimeSession, SessionStore
 from .shell import Shell
@@ -66,9 +75,11 @@ __all__ = [
     "AgentInterrupted",
     "Attachment",
     "BackendRegistry",
+    "BUILTIN_PROVIDERS",
     "BUILTIN_TOOL_SCHEMAS",
     "BuiltinToolsConfig",
     "CancellationToken",
+    "Credential",
     "DEFAULT_MAX_TURNS",
     "EventBus",
     "EventEmitter",
@@ -91,6 +102,7 @@ __all__ = [
     "PLUGIN_API_VERSION",
     "PLUGIN_ENTRY_POINT",
     "Plugin",
+    "ProviderSpec",
     "PluginContext",
     "PluginError",
     "PluginInfo",
@@ -116,8 +128,12 @@ __all__ = [
     "ToolResult",
     "VisionSupport",
     "create_builtin_registry",
+    "default_model_for",
     "discover_plugins",
     "emit_lifecycle",
+    "get_provider",
+    "list_providers",
     "new_run_id",
+    "resolve_all_env",
     "run_with_lifecycle",
 ]

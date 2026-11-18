@@ -53,9 +53,11 @@ class Backend:
 The runtime owns the model integration layer and normally depends on the
 `openai` package. `agent7.core.OpenAIResponsesBackend` implements one
 OpenAI-compatible Responses endpoint, including streaming, function calls,
-usage mapping, retry-safe requests, and raw Responses history. agent7 adds
-`RoutedResponsesBackend` only for its intent/failover policy; another
-application can use the core backend, its own router, or a different backend
+usage mapping, retry-safe requests, and raw Responses history. The core also
+has provider-neutral registry metadata for built-in OpenAI-compatible
+providers such as DeepSeek and Kimi. agent7 adds only its auth-file/login UI
+and `RoutedResponsesBackend` intent/failover policy; another application can
+use the core backend/provider registry, its own router, or a different backend
 entirely.
 
 ## Tool registry
