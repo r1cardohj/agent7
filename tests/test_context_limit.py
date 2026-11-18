@@ -59,7 +59,7 @@ class ContextPromptTests(unittest.TestCase):
         self.assertEqual(format_context_prompt(make_session(1_048_576, None)), "?/1M")
 
     def test_status_line(self) -> None:
-        self.assertIn("context_limit=1M", format_usage(make_session(1_048_576, 4_868)))
+        self.assertIn("context=4,868/1M", format_usage(make_session(1_048_576, 4_868)))
         self.assertIn("context_limit=256k", format_usage(make_session(262_144, None)))
 
 

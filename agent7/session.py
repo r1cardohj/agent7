@@ -58,6 +58,10 @@ def fmt_tokens(n: int) -> str:
     return f"{k:.0f}k" if k >= 100 or abs(k - round(k)) < 0.05 else f"{k:.1f}k"
 
 
+def fmt_rounds(n: int) -> str:
+    return f"{n} round" if n == 1 else f"{n} rounds"
+
+
 def fmt_limit(n: int) -> str:
     """A context limit in the unit its vendor prints: 1M, 256k, 128k.
 
@@ -101,19 +105,76 @@ def fmt_cwd(path: Path, *, limit: int = 44) -> str:
 
 
 def format_usage(session: Session) -> str:
+    """Context occupancy now, plus what this run and this session actually spent.
+
+    ``prompt_tokens`` tracks the *last* model round because that is the context
+    the next request carries. Totals are separate fields so a long turn no
+    longer hides its cost behind the final round's numbers.
+    """
+
+    parts: list[str] = []
     if session.prompt_tokens is None:
-        return "usage=none" + (
-            f"  context_limit={fmt_limit(session.context_limit)}" if session.context_limit else ""
+        parts.append("usage=none")
+        if session.context_limit:
+            parts.append(f"context_limit={fmt_limit(session.context_limit)}")
+    else:
+        context = f"context={format_context_prompt(session)}"
+        if (pct := context_pressure(session)) is not None:
+            context += f" ({pct}%)"
+        parts.append(context)
+    if (spent := session.run_tokens.total) is not None:
+        parts.append(f"run={fmt_tokens(spent)} ({fmt_rounds(session.run_tokens.rounds)})")
+    if (spent := session.session_tokens.total) is not None:
+        totals = session.session_tokens
+        parts.append(
+            f"session={fmt_tokens(spent)} "
+            f"(prompt={fmt_tokens(totals.prompt_tokens or 0)} "
+            f"completion={fmt_tokens(totals.completion_tokens or 0)})"
         )
-    parts = [
-        f"prompt_tokens={fmt_tokens(session.prompt_tokens)}",
-        f"completion_tokens={fmt_tokens(session.completion_tokens or 0)}",
-    ]
-    if session.total_tokens is not None:
-        parts.append(f"total_tokens={fmt_tokens(session.total_tokens)}")
-    if (pct := context_pressure(session)) is not None:
-        parts.append(f"context_limit={fmt_limit(session.context_limit)} ({pct}%)")
     return "  ".join(parts)
+
+
+@dataclass
+class TokenTotals:
+    """Tokens a provider actually billed, summed over model rounds.
+
+    Every field stays ``None`` until a provider reports it, and ``rounds`` counts
+    the rounds that did, so "no usage" stays distinguishable from "zero tokens".
+    """
+
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    rounds: int = 0
+
+    @property
+    def known(self) -> bool:
+        return self.rounds > 0
+
+    @property
+    def total(self) -> int | None:
+        """The reported total, or prompt+completion for providers that omit it."""
+
+        if self.total_tokens is not None:
+            return self.total_tokens
+        if self.prompt_tokens is None and self.completion_tokens is None:
+            return None
+        return (self.prompt_tokens or 0) + (self.completion_tokens or 0)
+
+    def add(self, usage: dict[str, int] | None, *, rounds: int = 1) -> None:
+        if not usage:
+            return
+        for name in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = usage.get(name)
+            if isinstance(value, int) and not isinstance(value, bool):
+                setattr(self, name, (getattr(self, name) or 0) + value)
+        self.rounds += max(1, rounds)
+
+    def reset(self) -> None:
+        self.prompt_tokens = None
+        self.completion_tokens = None
+        self.total_tokens = None
+        self.rounds = 0
 
 
 @dataclass
@@ -135,6 +196,8 @@ class Session:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
+    run_tokens: TokenTotals = field(default_factory=TokenTotals)
+    session_tokens: TokenTotals = field(default_factory=TokenTotals)
     provider_id: str | None = None
     cred_source: str | None = None
     credential: Credential | None = None
@@ -163,9 +226,40 @@ class Session:
         return logical
 
     def update_usage(self, usage: dict[str, int]) -> None:
+        """Track the last model round: these numbers size the next context."""
+
         self.prompt_tokens = usage.get("prompt_tokens")
         self.completion_tokens = usage.get("completion_tokens")
         self.total_tokens = usage.get("total_tokens")
+
+    def record_run_usage(self, usage: dict[str, int] | None, *, rounds: int = 1) -> None:
+        """Record what a finished run spent, on top of the session total.
+
+        ``RunResult.usage`` is already summed over the run's model rounds, so it
+        is added once; ``run_tokens`` holds that run and ``session_tokens`` keeps
+        the whole conversation, which is what cost reporting needs.
+        """
+
+        self.run_tokens.reset()
+        self.run_tokens.add(usage, rounds=rounds)
+        self.session_tokens.add(usage, rounds=rounds)
+
+    def reset_usage(self) -> None:
+        """Forget usage that belongs to a conversation this session no longer holds."""
+
+        self.prompt_tokens = None
+        self.completion_tokens = None
+        self.total_tokens = None
+        self.run_tokens.reset()
+        self.session_tokens.reset()
+
+    @property
+    def spent_tokens(self) -> int | None:
+        """Tokens consumed in this session, for the docked status bar."""
+
+        if (total := self.session_tokens.total) is not None:
+            return total
+        return self.run_tokens.total
 
     def remember(self, provider_id: str, cred: Credential) -> None:
         self.credentials[provider_id] = cred

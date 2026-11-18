@@ -51,6 +51,7 @@ from .session import (
     Session,
     context_pressure,
     fmt_cwd,
+    fmt_tokens,
     format_context_prompt,
 )
 
@@ -694,14 +695,23 @@ def status_bar(
     segments += [_STATUS_SEP, (f"fg:{tone}", format_context_prompt(state))]
     if pct is not None:
         segments.append((f"fg:{tone}", f" {pct}%"))
+    # The gauge is the context the next request carries; this is what the session
+    # has actually spent, which a single round's usage cannot tell you.
+    spent = state.spent_tokens
+    if spent is not None:
+        segments += [_STATUS_SEP, ("fg:ansibrightblack", f"tok {fmt_tokens(spent)}")]
     cwd = [_STATUS_SEP, ("fg:ansibrightblack", fmt_cwd(state.cwd))]
     right = [(f"fg:{color}", f" {label} ")]
 
     def used(parts: list[tuple[str, str]]) -> int:
         return sum(len(text) for _, text in parts)
 
+    # Narrow terminals give up detail in a fixed order: the workspace first, then
+    # the spend total, keeping the model and the context gauge.
     if used(segments + cwd + right) + 1 > width:
-        cwd = []  # a narrow terminal keeps the model, the gauge, and the mode
+        cwd = []
+    if spent is not None and used(segments + right) + 1 > width:
+        segments = segments[:-2]
     gap = max(1, width - used(segments + cwd + right))
     return segments + cwd + [("", " " * gap)] + right
 
@@ -952,6 +962,9 @@ async def _run_agent_once(session: Session, task: str, *, run_id: str = "") -> R
             on_route=on_route,
             run_id=run_id,
         )
+    # RunResult.usage is summed over the run's model rounds; on_usage only keeps
+    # the gauge honest, so the spend has to be recorded here.
+    session.record_run_usage(result.usage, rounds=len(result.usage_by_turn))
     answer = _result_text(result)
     # A turn-limit pause is a warning, not an invisible or successful final answer.
     if notice := reply_notice(answer, result.finish_reason):

@@ -5,7 +5,6 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 from responses_fakes import FakeClient, call_turn, text_turn
@@ -13,6 +12,7 @@ from rich.console import Console
 
 import agent7.repl as repl
 from agent7.repl import NO_TEXT_NOTICE, TRUNCATED_NOTICE, reply_notice
+from agent7.session import Session
 
 
 class ReplyNoticeTests(unittest.TestCase):
@@ -61,15 +61,11 @@ class RunOnceSilenceTests(unittest.TestCase):
         return self.stream.getvalue()
 
     def run_once(self, turns: list[list[Any]], **kwargs: Any) -> str:
-        session = SimpleNamespace(
+        session = Session(
             model="test-model",
             cwd=self.cwd,
             client=FakeClient(turns),
             max_turns=kwargs.get("max_turns", 30),
-            messages=[],
-            context_limit=None,
-            prompt_tokens=None,
-            update_usage=lambda _u: None,
         )
         return asyncio.run(repl.run_turn(session, "go"))
 

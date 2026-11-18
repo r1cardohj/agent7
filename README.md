@@ -119,10 +119,10 @@ with. Other options are listed by `agent7 --help`.
 ## REPL
 
 The prompt is a multiline vi-mode editor. A status bar shows the active model, context usage,
-working directory, and editing mode. Argument completion is fuzzy: type `@` for workspace
-paths, `/` for commands, and `/model <fragment>` for models. `Ctrl-E` opens the current input
-in `$VISUAL` or `$EDITOR`; `Ctrl-C` cancels the input or interrupts a running turn;
-`Ctrl-D` exits (`Ctrl-Z` on Windows).
+the tokens the session has spent, working directory, and editing mode. Argument completion is
+fuzzy: type `@` for workspace paths, `/` for commands, and `/model <fragment>` for models.
+`Ctrl-E` opens the current input in `$VISUAL` or `$EDITOR`; `Ctrl-C` cancels the input or
+interrupts a running turn; `Ctrl-D` exits (`Ctrl-Z` on Windows).
 
 `Ctrl-V` (or `Alt-V`, when the terminal owns Ctrl-V) pastes an image from the clipboard
 (in vi insert mode): the image is written to a temporary file and its path is inserted into
@@ -138,7 +138,7 @@ on macOS, PowerShell on Windows and WSL.
 | `/session delete [ID...]` | Delete one or more other sessions |
 | `/model [REF]` | List or switch models; `/model auto` enables routing |
 | `/model refresh` | Refresh the provider model list |
-| `/status` | Show model, provider, usage, and workspace details |
+| `/status` | Show model, provider, token spend, and workspace details |
 | `/login <provider>` | Store an API key |
 | `/logout <provider>` | Remove a stored API key |
 | `/compact` | Compact the conversation manually |

@@ -59,6 +59,38 @@ class StatusBarTests(unittest.TestCase):
         self.assertIn("4,868/256k", narrow)
         self.assertIn("INSERT", narrow)
 
+    def test_bar_shows_tokens_the_session_spent(self) -> None:
+        session = make_session(tokens=4_868)
+        session.record_run_usage({"total_tokens": 45_678})
+
+        line = flat(status_bar(session, mode=("INSERT", "ansigreen"), width=80))
+
+        self.assertIn("tok 45.7k", line)
+        self.assertIn("4,868/256k", line)
+
+    def test_bar_with_spend_still_fills_exactly_one_line(self) -> None:
+        session = make_session(tokens=4_868)
+        session.record_run_usage({"total_tokens": 45_678})
+
+        for width in (40, 80, 120):
+            with self.subTest(width=width):
+                self.assertEqual(
+                    len(flat(status_bar(session, mode=("NORMAL", "ansiyellow"), width=width))),
+                    width,
+                )
+
+    def test_bar_drops_the_cwd_then_the_spend_when_narrow(self) -> None:
+        session = make_session(tokens=4_868)
+        session.record_run_usage({"total_tokens": 45_678})
+
+        cramped = flat(status_bar(session, mode=("INSERT", "ansigreen"), width=48))
+        self.assertNotIn("work", cramped)
+        self.assertIn("tok 45.7k", cramped)
+
+        narrow = flat(status_bar(session, mode=("INSERT", "ansigreen"), width=40))
+        self.assertNotIn("tok", narrow)
+        self.assertIn("4,868/256k", narrow)
+
     def test_model_falls_back_when_no_ref(self) -> None:
         line = flat(status_bar(make_session(ref=None), mode=("INSERT", "ansigreen"), width=80))
         self.assertIn("k3.1", line)

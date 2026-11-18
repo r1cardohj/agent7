@@ -177,6 +177,7 @@ class SessionSwitchTests(unittest.TestCase):
             persisted=True,
             prompt_tokens=999,
         )
+        state.record_run_usage({"total_tokens": 1_234})
 
         with (
             patch("agent7.repl.pick_session", new=AsyncMock(return_value=second.id)),
@@ -190,6 +191,7 @@ class SessionSwitchTests(unittest.TestCase):
         self.assertEqual(state.created_at, "2025-01-02T00:00:00+00:00")
         self.assertEqual(state.messages[1]["content"], "second task")
         self.assertIsNone(state.prompt_tokens)
+        self.assertIsNone(state.spent_tokens)  # spend belongs to the conversation
         history.assert_called_once_with(second.messages)
 
         state.messages.append({"role": "user", "content": "follow up"})

@@ -421,9 +421,7 @@ async def cmd_session(session: Session, args: list[str]) -> CommandResult:
     session.messages[:] = messages
     # Usage belongs to the conversation that produced it, not to the REPL
     # process. The next turn will populate it from the selected session.
-    session.prompt_tokens = None
-    session.completion_tokens = None
-    session.total_tokens = None
+    session.reset_usage()
     print_history(snapshot["messages"])
     return CommandResult(message=f"session: {old} → {session.name} ({session.id})")
 
