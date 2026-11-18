@@ -26,7 +26,7 @@ wheels = [
 
 [[package]]
 name = "agent7"
-version = "0.3.5"
+version = "0.3.6"
 source = { editable = "." }
 dependencies = [
     { name = "agent0-runtime" },
