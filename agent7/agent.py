@@ -26,8 +26,11 @@ from agent0_runtime import (
     create_builtin_registry,
 )
 from agent0_runtime import Agent as CoreAgent
+from agent0_runtime import history as _runtime_history
 from agent0_runtime.filesystem import edit_file, read_file, write_file
-from agent0_runtime.history import ResponsesHistoryPolicy as CoreResponsesHistoryPolicy
+from agent0_runtime.history import (
+    ResponsesHistoryPolicy as CoreResponsesHistoryPolicy,
+)
 from agent0_runtime.images import PillowImageReader
 from agent0_runtime.openai_backend import OpenAIResponsesBackend as CoreOpenAIResponsesBackend
 from agent0_runtime.shell import (
@@ -41,14 +44,8 @@ from agent0_runtime.shell import (
 from openai import APIConnectionError, APITimeoutError, AsyncOpenAI
 
 from . import web_fetch, web_search
-from .images import (
-    IMAGE_TOKEN_ESTIMATE,
-    ImageBlock,
-    ToolImageOutput,
-    supports_vision,
-)
+from .images import ImageBlock, ToolImageOutput, supports_vision
 from .responses import (
-    IMAGES_KEY,
     ResponseTurn,
     output_text,
     plain_item,
@@ -79,11 +76,14 @@ RETRY_SLEEPS = (0.5, 1.5, 3.0)
 STREAM_CLOSE_TIMEOUT = 2.0
 RETRY_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 FAILOVER_STATUS = frozenset({401, 403, 404})
-OVERFLOW_STATUS = frozenset({400, 413, 422})
 
 
 # Backwards-compatible name; the canonical exception lives in the runtime.
 Interrupted = AgentInterrupted
+compact_messages = _runtime_history.compact_messages
+estimate_tokens = _runtime_history.estimate_tokens
+should_compact = _runtime_history.should_compact
+_without_orphan_tool_results = _runtime_history.without_orphan_tool_results
 
 
 def resolve_shell(*, platform: str | None = None) -> Shell:
@@ -221,10 +221,6 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
-def _truncate(s: str, limit: int, *, tag: str = "truncated") -> str:
-    return s if len(s) <= limit else s[:limit] + f"\n...[{tag} {len(s) - limit} chars]"
-
-
 def tool_read(
     cwd: Path,
     path: str,
@@ -351,75 +347,6 @@ def tool_summary(name: str, args: dict[str, Any]) -> str:
     return _trunc(json.dumps(args, ensure_ascii=False))
 
 
-def should_compact(
-    prompt_tokens: int | None, context_limit: int | None, *, threshold: float = COMPACT_THRESHOLD
-) -> bool:
-    if prompt_tokens is None or context_limit is None or context_limit <= 0:
-        return False
-    return prompt_tokens >= int(context_limit * threshold)
-
-
-def compact_messages(
-    messages: list[dict[str, Any]],
-    *,
-    keep_user_turns: int = KEEP_USER_TURNS,
-    keep_tool_results: int = KEEP_TOOL_RESULTS,
-    tool_max_chars: int = TOOL_MAX_CHARS,
-    assistant_max_chars: int = ASSISTANT_MAX_CHARS,
-) -> tuple[list[dict[str, Any]], int]:
-    if not messages:
-        return messages, 0
-    head, rest = ([], messages)
-    if messages[0].get("role") == "system":
-        head, rest = [messages[0]], messages[1:]
-    user_idxs = [i for i, m in enumerate(rest) if m.get("role") == "user"]
-    keep_from = user_idxs[-keep_user_turns] if len(user_idxs) >= keep_user_turns else 0
-    tool_idxs = [i for i, m in enumerate(rest) if m.get("role") == "tool"]
-    old_tool_before = keep_from or len(rest)
-    if keep_from == 0 and tool_idxs:
-        old_tool_before = (
-            len(rest)
-            if keep_tool_results <= 0
-            else tool_idxs[max(0, len(tool_idxs) - keep_tool_results)]
-        )
-    out, changed = list(head), 0
-    for i, m in enumerate(rest):
-        role, content = m.get("role"), m.get("content")
-        if role == "tool" and i < old_tool_before:
-            updated = m
-            image_blocks = m.get(IMAGES_KEY) or m.get("_attachments")
-            if image_blocks:
-                # Old screenshots are the bulkiest history there is; keep the note.
-                updated = {
-                    **updated,
-                    "content": (content if isinstance(content, str) else "")
-                    + "\n[image omitted: compacted]",
-                }
-                updated.pop(IMAGES_KEY, None)
-                updated.pop("_attachments", None)
-                content = updated["content"]
-            if isinstance(content, str) and len(content) > tool_max_chars:
-                updated = {
-                    **updated,
-                    "content": _truncate(content, tool_max_chars, tag="compacted"),
-                }
-            if updated is not m:
-                changed += 1
-            out.append(updated)
-        elif (
-            role == "assistant"
-            and i < keep_from
-            and isinstance(content, str)
-            and len(content) > assistant_max_chars
-            and not m.get("tool_calls")
-        ):
-            out.append({**m, "content": _truncate(content, assistant_max_chars, tag="compacted")})
-            changed += 1
-        else:
-            out.append(m)
-    return out, changed
-
-
 async def _emit(cb: Callable[..., Any] | None, *args: Any) -> None:
     if cb and asyncio.iscoroutine(maybe := cb(*args)):
         await maybe
@@ -467,65 +394,6 @@ def _can_failover(exc: BaseException) -> bool:
     if isinstance(exc, (APIConnectionError, APITimeoutError)):
         return False
     return _retryable(exc) or getattr(exc, "status_code", None) in FAILOVER_STATUS
-
-
-def _is_context_overflow(exc: BaseException) -> bool:
-    if getattr(exc, "status_code", None) not in OVERFLOW_STATUS:
-        return False
-    text = f"{exc} {getattr(exc, 'body', '')}".lower()
-    return any(
-        k in text
-        for k in (
-            "context_length",
-            "context length",
-            "maximum context",
-            "too many tokens",
-            "prompt is too long",
-            "input is too long",
-        )
-    )
-
-
-def _is_tool_history_error(exc: BaseException) -> bool:
-    """Some compatible Responses backends reject valid raw tool-call replay."""
-    if getattr(exc, "status_code", None) != 400:
-        return False
-    text = f"{exc} {getattr(exc, 'body', '')}".lower()
-    return "tool_call" in text and (
-        "must be followed by tool messages" in text or "did not have response messages" in text
-    )
-
-
-def _without_orphan_tool_results(messages: list[dict[str, Any]]) -> None:
-    """Drop tool results whose call is no longer in history, in place.
-
-    Truncating compaction can keep a tool result while dropping the assistant
-    turn that requested it. Responses rejects that as an orphan
-    `function_call_output`, so a request is then answered without the call.
-    """
-    calls = {
-        call.get("id")
-        for message in messages
-        if message.get("role") == "assistant"
-        for call in message.get("tool_calls") or []
-    }
-    messages[:] = [
-        message
-        for message in messages
-        if message.get("role") != "tool" or message.get("tool_call_id") in calls
-    ]
-
-
-def estimate_tokens(messages: list[dict[str, Any]]) -> int:
-    """Rough size for providers that never report usage: ~4 chars per token."""
-    chars = images = 0
-    for m in messages:
-        chars += len(str(m.get("content") or ""))
-        images += len(m.get(IMAGES_KEY) or [])
-        images += len(m.get("_attachments") or [])
-        for call in m.get("tool_calls") or []:
-            chars += len(str((call.get("function") or {}).get("arguments") or ""))
-    return chars // 4 + images * IMAGE_TOKEN_ESTIMATE + 1
 
 
 async def _open_stream(client: AsyncOpenAI, kwargs: dict[str, Any]) -> Any:
