@@ -27,6 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "openai>=1.40.0",
+    "pillow>=12.3.0",
     "trafilatura>=2.3,<3",
 ]
 

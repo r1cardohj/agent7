@@ -3,26 +3,10 @@
 from __future__ import annotations
 
 from agent0_runtime.builtin_tools import BuiltinToolsConfig
-from agent0_runtime.filesystem import ImageReader
+from agent0_runtime.images import PillowImageReader, supports_vision
 from agent0_runtime.search import SearchProvider
-from agent0_runtime.types import Attachment, ToolResult
 
 from . import web_search
-from .images import read_image, supports_vision
-
-
-class Agent7ImageReader(ImageReader):
-    """Pillow-backed image processing, injected only into agent7's registry."""
-
-    def read(self, path, _mime_type) -> ToolResult:
-        result = read_image(path)
-        return ToolResult(
-            result.text,
-            attachments=[
-                Attachment(data=block.data, mime_type=block.mime_type, kind="image")
-                for block in result.images
-            ],
-        )
 
 
 class DeepSeekSearchProvider(SearchProvider):
@@ -43,7 +27,7 @@ def agent7_builtin_tools() -> BuiltinToolsConfig:
 
     return BuiltinToolsConfig(
         shell=SHELL,
-        image_reader=Agent7ImageReader(),
+        image_reader=PillowImageReader(),
         supports_vision=supports_vision,
         search_provider=DeepSeekSearchProvider(),
     )

@@ -12,6 +12,7 @@ from .builtin_tools import (
     BuiltinToolsConfig,
     create_builtin_registry,
 )
+from .capabilities import MODEL_CAPABILITIES, ModelCapability
 from .events import (
     EventBus,
     EventEmitter,
@@ -22,6 +23,7 @@ from .events import (
 )
 from .filesystem import ImageReader, VisionSupport
 from .history import ResponsesHistoryPolicy
+from .images import PillowImageReader, supports_vision
 from .lifecycle import (
     LifecycleContext,
     LifecycleEvent,
@@ -96,6 +98,8 @@ __all__ = [
     "ListenerError",
     "Message",
     "ModelBackend",
+    "ModelCapability",
+    "MODEL_CAPABILITIES",
     "ModelInfo",
     "ModelRequest",
     "MemorySessionStore",
@@ -108,6 +112,7 @@ __all__ = [
     "PluginError",
     "PluginInfo",
     "PluginManager",
+    "PillowImageReader",
     "Recovery",
     "RunContext",
     "RunResult",
@@ -137,5 +142,6 @@ __all__ = [
     "new_run_id",
     "resolve_all_env",
     "run_with_lifecycle",
+    "supports_vision",
     "tool",
 ]

@@ -13,12 +13,15 @@ version = "0.1.0"
 source = { editable = "packages/agent0-runtime" }
 dependencies = [
     { name = "openai" },
+    { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pillow", version = "13.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "trafilatura" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "openai", specifier = ">=1.40.0" },
+    { name = "pillow", specifier = ">=12.3.0" },
     { name = "trafilatura", specifier = ">=2.3,<3" },
 ]
 

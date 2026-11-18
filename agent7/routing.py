@@ -9,6 +9,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from agent0_runtime.capabilities import MODEL_CAPABILITIES, ModelCapability
 from openai import AsyncOpenAI
 
 from .providers import Credential, list_providers
@@ -19,55 +20,6 @@ SCORE_TIMEOUT = 5.0
 SCORE_MAX_TOKENS = 500
 SWITCH_SCORE_MARGIN = 3.0
 _INTENTS = frozenset({"quick", "coding", "debugging", "reasoning"})
-
-
-@dataclass(frozen=True)
-class ModelCapability:
-    """Reviewed auto-routing metadata; unknown listed models stay out of auto."""
-
-    provider_id: str
-    model: str
-    context_limit: int
-    strengths: frozenset[str]
-    scorer_priority: int | None = None
-    supports_responses: bool = True
-    supports_tools: bool = True
-    # Reviewed against the provider docs: deepseek-flash and the Kimi coding
-    # models all accept inline images, including in function_call_output.
-    supports_vision: bool = True
-    routing_hint: str = ""
-
-    @property
-    def ref(self) -> str:
-        return f"{self.provider_id}/{self.model}"
-
-
-MODEL_CAPABILITIES = (
-    ModelCapability(
-        provider_id="deepseek",
-        model="deepseek-flash",
-        context_limit=1_048_576,
-        strengths=frozenset({"fast", "coding"}),
-        scorer_priority=1,
-        supports_vision=True,
-        routing_hint="Fast general coding, explanations, and quick edits.",
-    ),
-    ModelCapability(
-        provider_id="kimi",
-        model="kimi-for-coding",
-        context_limit=1_048_576,
-        strengths=frozenset({"fast", "coding"}),
-        scorer_priority=2,
-        routing_hint="Fast implementation, refactoring, and test-focused coding.",
-    ),
-    ModelCapability(
-        provider_id="kimi",
-        model="k3.1-pro",
-        context_limit=1_048_576,
-        strengths=frozenset({"strong"}),
-        routing_hint="Strong architecture and repository-wide coding; largest context.",
-    ),
-)
 
 
 @dataclass(frozen=True)

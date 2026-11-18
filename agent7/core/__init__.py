@@ -11,9 +11,11 @@ globals().update({name: getattr(_runtime, name) for name in __all__})
 _SUBMODULES = (
     "backend",
     "builtin_tools",
+    "capabilities",
     "events",
     "filesystem",
     "history",
+    "images",
     "lifecycle",
     "loop",
     "openai_backend",
