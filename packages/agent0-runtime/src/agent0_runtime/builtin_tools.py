@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import web_fetch
+from . import web_fetch, web_search
 from .filesystem import ImageReader, VisionSupport, edit_file, read_file, write_file
 from .search import SearchProvider
 from .shell import Shell, resolve_shell, run_shell
@@ -52,13 +52,9 @@ _EDIT_ITEM = {
 BUILTIN_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
     _fn(
         "read",
-        "Read a local file. Also supports images (png/jpg/jpeg/webp/gif/bmp), "
-        "which may be returned as attachments.",
-        {
-            "path": {"type": "string"},
-            "offset": {"type": "integer"},
-            "limit": {"type": "integer"},
-        },
+        "Read text file (numbered). Default 200 lines; page with offset/limit. "
+        "Also reads images (png/jpg/jpeg/gif/webp/bmp), which are returned as image attachments.",
+        {"path": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}},
         ["path"],
     ),
     _fn(
@@ -69,19 +65,20 @@ BUILTIN_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
     ),
     _fn(
         "edit",
-        "Precise replacements, with one or more non-overlapping edits[] per call.",
+        "Precise edits. One call may include multiple edits[] against the original "
+        "file; no overlaps.",
         {"path": {"type": "string"}, "edits": {"type": "array", "items": _EDIT_ITEM}},
         ["path", "edits"],
     ),
     _fn(
         "bash",
-        "Run a shell command in the configured workspace. Output is bounded.",
+        "Run a shell command in cwd (host shell). Output capped ~12k chars.",
         {"command": {"type": "string"}, "timeout": {"type": "integer"}},
         ["command"],
     ),
     _fn(
         "fetch",
-        "Fetch an http/https page and extract readable text or metadata.",
+        "Fetch an http/https web page and extract readable Markdown text with metadata.",
         {
             "url": {"type": "string"},
             "max_chars": {
@@ -97,19 +94,25 @@ BUILTIN_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
     ),
     _fn(
         "search",
-        "Search through the configured search provider for ranked results.",
+        "Search the web (DeepSeek Search API) for ranked pages with summaries. "
+        'The query takes site:, -site:, "...", lang:, after: and before: operators. '
+        f"Read {web_search.skill_path()} before the first search of a task for "
+        "query syntax and result triage.",
         {
             "query": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": MAX_SEARCH_QUERY_CHARS,
-                "description": "Search terms or provider-supported query operators.",
+                "maxLength": web_search.MAX_QUERY_CHARS,
+                "description": "Search terms, optionally with search operators.",
             },
             "count": {
                 "type": "integer",
-                "minimum": MIN_SEARCH_COUNT,
-                "maximum": MAX_SEARCH_COUNT,
-                "description": f"Results to return; defaults to {DEFAULT_SEARCH_COUNT}.",
+                "minimum": web_search.MIN_COUNT,
+                "maximum": web_search.MAX_COUNT,
+                "description": (
+                    f"Results to return; defaults to {web_search.DEFAULT_COUNT}. "
+                    "Does not change the price of the request."
+                ),
             },
         },
         ["query"],

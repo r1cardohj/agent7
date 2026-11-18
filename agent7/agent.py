@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from agent0_runtime import (
+    BUILTIN_TOOL_SCHEMAS,
     DEFAULT_MAX_TURNS,
     AgentInterrupted,
     Attachment,
@@ -120,95 +121,7 @@ SHELL = resolve_shell()
 SYSTEM = make_system(SHELL)
 
 
-def _fn(name: str, desc: str, props: dict, required: list[str]) -> dict:
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": desc,
-            "parameters": {"type": "object", "properties": props, "required": required},
-        },
-    }
-
-
-_EDIT_ITEM = {
-    "type": "object",
-    "properties": {
-        "old_string": {"type": "string"},
-        "new_string": {"type": "string"},
-    },
-    "required": ["old_string", "new_string"],
-}
-
-TOOLS: list[dict[str, Any]] = [
-    _fn(
-        "read",
-        "Read text file (numbered). Default 200 lines; page with offset/limit. "
-        "Also reads images (png/jpg/jpeg/gif/webp/bmp), which are returned as image attachments.",
-        {"path": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}},
-        ["path"],
-    ),
-    _fn(
-        "write",
-        "Create or overwrite a whole file.",
-        {"path": {"type": "string"}, "content": {"type": "string"}},
-        ["path", "content"],
-    ),
-    _fn(
-        "edit",
-        "Precise edits. One call may include multiple edits[] against the original "
-        "file; no overlaps.",
-        {"path": {"type": "string"}, "edits": {"type": "array", "items": _EDIT_ITEM}},
-        ["path", "edits"],
-    ),
-    _fn(
-        "bash",
-        "Run a shell command in cwd (host shell). Output capped ~12k chars.",
-        {"command": {"type": "string"}, "timeout": {"type": "integer"}},
-        ["command"],
-    ),
-    _fn(
-        "fetch",
-        "Fetch an http/https web page and extract readable Markdown text with metadata.",
-        {
-            "url": {"type": "string"},
-            "max_chars": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": web_fetch.MAX_FETCH_CHARS,
-                "description": (
-                    f"Maximum returned characters; defaults to {web_fetch.DEFAULT_FETCH_CHARS}."
-                ),
-            },
-        },
-        ["url"],
-    ),
-    _fn(
-        "search",
-        "Search the web (DeepSeek Search API) for ranked pages with summaries. "
-        'The query takes site:, -site:, "...", lang:, after: and before: operators. '
-        f"Read {web_search.skill_path()} before the first search of a task for "
-        "query syntax and result triage.",
-        {
-            "query": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": web_search.MAX_QUERY_CHARS,
-                "description": "Search terms, optionally with search operators.",
-            },
-            "count": {
-                "type": "integer",
-                "minimum": web_search.MIN_COUNT,
-                "maximum": web_search.MAX_COUNT,
-                "description": (
-                    f"Results to return; defaults to {web_search.DEFAULT_COUNT}. "
-                    "Does not change the price of the request."
-                ),
-            },
-        },
-        ["query"],
-    ),
-]
+TOOLS = list(BUILTIN_TOOL_SCHEMAS)
 
 
 def tool_read(
