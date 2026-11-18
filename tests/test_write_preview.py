@@ -4,7 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent7.agent import TOOLS, _write_stats, dispatch_tool, tool_edit, tool_summary, tool_write
+from agent0_runtime.filesystem import _write_stats
+
+from agent7.agent import TOOLS, dispatch_tool, tool_edit, tool_summary, tool_write
 
 
 def _tool_schema(name: str) -> dict:

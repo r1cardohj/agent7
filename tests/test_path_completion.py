@@ -9,10 +9,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from agent0_runtime.filesystem import resolve_path as _resolve
 from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
 
-from agent7.agent import _resolve
 from agent7.repl import (
     MAX_COMPLETIONS,
     MAX_SCANNED_ENTRIES,

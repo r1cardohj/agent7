@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import difflib
 import json
 import os
 import sys
-import tempfile
 from collections.abc import Callable, Iterable
 from contextlib import suppress
 from pathlib import Path
@@ -28,7 +26,9 @@ from agent0_runtime import (
     create_builtin_registry,
 )
 from agent0_runtime import Agent as CoreAgent
+from agent0_runtime.filesystem import edit_file, read_file, write_file
 from agent0_runtime.history import ResponsesHistoryPolicy as CoreResponsesHistoryPolicy
+from agent0_runtime.images import PillowImageReader
 from agent0_runtime.openai_backend import OpenAIResponsesBackend as CoreOpenAIResponsesBackend
 from agent0_runtime.shell import (
     Shell,
@@ -43,9 +43,8 @@ from openai import APIConnectionError, APITimeoutError, AsyncOpenAI
 from . import web_fetch, web_search
 from .images import (
     IMAGE_TOKEN_ESTIMATE,
+    ImageBlock,
     ToolImageOutput,
-    detect_mime,
-    read_image,
     supports_vision,
 )
 from .responses import (
@@ -226,39 +225,6 @@ def _truncate(s: str, limit: int, *, tag: str = "truncated") -> str:
     return s if len(s) <= limit else s[:limit] + f"\n...[{tag} {len(s) - limit} chars]"
 
 
-def _resolve(cwd: Path, path: str) -> Path:
-    p = Path(path.removeprefix("@").replace("\\ ", " ")).expanduser()  # `@path` from the REPL
-    return p if p.is_absolute() else cwd / p
-
-
-def _write_atomic(fp: Path, text: str) -> None:
-    """Temp file + os.replace: a Ctrl-C mid-write can never truncate the file."""
-    target = fp.resolve() if fp.is_symlink() else fp  # keep symlinks pointing where they did
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        with suppress(OSError):
-            os.chmod(tmp, target.stat().st_mode & 0o7777)
-        os.replace(tmp, target)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
-def _count_lines(fp: Path) -> int:
-    """Total line count at C speed (bytes.count) so a 100 MB log stays fast."""
-    total, tail = 0, b"\n"
-    with fp.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            total += chunk.count(b"\n")
-            tail = chunk[-1:]
-    return total if tail == b"\n" or total == 0 else total + 1
-
-
 def tool_read(
     cwd: Path,
     path: str,
@@ -267,61 +233,22 @@ def tool_read(
     *,
     vision: bool = True,
 ) -> str | ToolImageOutput:
-    fp = _resolve(cwd, path)
-    if not fp.is_file():
-        return f"error: not a file: {fp}"
-    if mime := detect_mime(fp):
-        if not vision:
-            return (
-                f"Read image file [{mime}]\n"
-                "[Current model does not support images. The image is omitted from this request.]"
-            )
-        return read_image(fp)
-    want = limit if limit is not None and limit > 0 else DEFAULT_READ_LINES
-    start = max(0, (offset or 1) - 1) if offset is not None else 0
-    total = _count_lines(fp)
-    window: list[str] = []
-    kept = end = 0
-    try:
-        # Only the wanted window is decoded and kept, and no single line can be
-        # unbounded: a 100 MB log costs a few hundred KB instead of 300 MB.
-        with fp.open(encoding="utf-8") as fh:
-            lineno = 0
-            while line := fh.readline(MAX_READ_CHARS + 1):
-                lineno += 1
-                if lineno > start + want or kept >= MAX_READ_CHARS:
-                    break
-                if lineno <= start:
-                    continue
-                text = line.rstrip("\r\n")
-                window.append(text)
-                kept += len(text) + 1
-                end = lineno
-    except UnicodeDecodeError:
-        return f"error: binary or non-utf8: {fp}"
-    end = end or min(start, total)
-    body = "\n".join(f"{i + start + 1}|{line}" for i, line in enumerate(window)) or "(empty)"
-    body = _truncate(body, MAX_READ_CHARS)
-    if start > 0 or end < total:
-        hint = f"...[lines {start + 1}-{end} of {total}"
-        if end < total:
-            hint += f"; continue with offset={end + 1}"
-        body = f"{body}\n{hint}]"
-    return body
+    """Adapt the legacy image result while runtime owns all filesystem work."""
 
-
-def _write_stats(fp: Path, before: str, after: str, *, kind: str = "write") -> str:
-    a, b = before.splitlines(), after.splitlines()
-    add = delete = 0
-    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b).get_opcodes():
-        if tag == "insert":
-            add += j2 - j1
-        elif tag == "delete":
-            delete += i2 - i1
-        elif tag == "replace":
-            delete += i2 - i1
-            add += j2 - j1
-    return f"{kind}  {fp}  +{add} -{delete}"
+    result = read_file(
+        cwd,
+        path,
+        offset,
+        limit,
+        image_reader=PillowImageReader(),
+        supports_vision=lambda _model: vision,
+    )
+    if isinstance(result, ToolResult):
+        return ToolImageOutput(
+            result.text,
+            [ImageBlock(block.data, block.mime_type) for block in result.attachments],
+        )
+    return result
 
 
 def tool_write(
@@ -330,18 +257,7 @@ def tool_write(
     content: str,
     on_preview: Callable[[str], None] | None = None,
 ) -> str:
-    fp = _resolve(cwd, path)
-    try:
-        before = fp.read_text(encoding="utf-8") if fp.exists() else ""
-    except UnicodeDecodeError:
-        return f"error: binary or non-utf8: {fp}"
-    after = content
-    if before == after and fp.is_file():
-        return f"no changes: {fp}"
-    if on_preview:
-        on_preview(_write_stats(fp, before, after, kind="write"))
-    _write_atomic(fp, after)
-    return f"wrote {len(after.encode('utf-8'))} bytes to {fp}"
+    return write_file(cwd, path, content, on_preview)
 
 
 def tool_edit(
@@ -350,46 +266,7 @@ def tool_edit(
     edits: list[dict[str, Any]],
     on_preview: Callable[[str], None] | None = None,
 ) -> str:
-    fp = _resolve(cwd, path)
-    if not fp.is_file():
-        return f"error: not a file: {fp}"
-    try:
-        before = fp.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return f"error: binary or non-utf8: {fp}"
-    if not isinstance(edits, list) or not edits:
-        return "error: edits must be a non-empty array"
-    spans: list[tuple[int, int, str, int]] = []
-    for i, ed in enumerate(edits):
-        if not isinstance(ed, dict):
-            return f"error: edits[{i}] must be an object"
-        old, new = ed.get("old_string"), ed.get("new_string")
-        if not isinstance(old, str) or not old:
-            return f"error: edits[{i}].old_string must be a non-empty string"
-        if not isinstance(new, str):
-            return f"error: edits[{i}].new_string must be a string"
-        n = before.count(old)
-        if n != 1:
-            return f"error: edits[{i}].old_string occurs {n} times in {fp}; expected exactly 1"
-        start = before.index(old)
-        spans.append((start, start + len(old), new, i))
-    ordered = sorted(spans, key=lambda s: s[0])
-    for a, b in zip(ordered, ordered[1:], strict=False):
-        if a[1] > b[0]:
-            return (
-                f"error: edits[{a[3]}] and edits[{b[3]}] overlap; "
-                "merge nearby changes into one edit"
-            )
-    after = before
-    for start, end, new, _ in sorted(spans, key=lambda s: s[0], reverse=True):
-        after = after[:start] + new + after[end:]
-    if before == after:
-        return f"no changes: {fp}"
-    if on_preview:
-        on_preview(_write_stats(fp, before, after, kind="edit"))
-    _write_atomic(fp, after)
-    n = len(edits)
-    return f"edited {n} span{'s' if n != 1 else ''} in {fp}"
+    return edit_file(cwd, path, edits, on_preview)
 
 
 def tool_bash(cwd: Path, command: str, timeout: int | None = None) -> str:
