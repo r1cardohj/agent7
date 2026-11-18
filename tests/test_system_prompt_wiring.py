@@ -7,6 +7,7 @@ from responses_fakes import FakeClient, text_turn
 
 from agent7.agent import run_agent_result
 from agent7.config import SYSTEM, system_prompt
+from agent7.herdr import background_tasks_instructions
 
 
 def fragment_plugin(text: str):
@@ -56,7 +57,9 @@ class PromptWiringTests(unittest.TestCase):
         prompt = system_prompt()
 
         self.assertTrue(prompt.startswith(SYSTEM))
-        self.assertGreater(len(prompt), len(SYSTEM), "environment notes are appended")
+        # Environment notes may be empty (no background runner), so assert the
+        # composition rather than a length that depends on the machine.
+        self.assertEqual(prompt, SYSTEM + background_tasks_instructions())
 
     def test_without_a_prompt_the_runtime_leaves_history_alone(self) -> None:
         client = FakeClient([text_turn("done")])
