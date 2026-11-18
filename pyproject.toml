@@ -31,14 +31,12 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "agent0-runtime>=0.1.0,<0.2",
+    "agent0-runtime[all]>=0.1.1,<0.2",
     "openai>=1.40.0",
     "rich>=13.0.0",
     "prompt-toolkit>=3.0.0",
     "fzp>=0.2.3",
     "click>=8.1",
-    "trafilatura>=2.3,<3",
-    "pillow>=12.3.0",
 ]
 
 [project.urls]

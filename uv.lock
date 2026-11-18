@@ -9,19 +9,23 @@ resolution-markers = [
 
 [[package]]
 name = "agent0-runtime"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi" },
     { name = "openai" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5b/27/fa1c6c45d80dc1f61ae46499016ec08f1a99c6c345dad14c1617b11c22fd/agent0_runtime-0.1.1.tar.gz", hash = "sha256:df347d6b845a24e4e1d67290a98cd78a93fd4de921a762c380620a44810a1080", size = 78809, upload-time = "2026-11-18T13:39:51.672Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/2d/c7dd5ec64819553e05d62771879b3bca420744377efe49103d07b043e354/agent0_runtime-0.1.1-py3-none-any.whl", hash = "sha256:55c3de23d8625b1c22ca310d49ee98e9ca35013b456b015af65d5d1568d2f0a2", size = 66746, upload-time = "2026-11-18T13:39:50.311Z" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "certifi" },
     { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pillow", version = "13.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "trafilatura" },
     { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/8b/659755c79c59cd3cf7b44f06b9963bc1676f706943264ad6e471d766112d/agent0_runtime-0.1.0.tar.gz", hash = "sha256:a119fa712a524c39a1fc0a63e86f77f87d6b96d1a16c8bcbf1c6171128d0b93a", size = 69835, upload-time = "2026-11-18T12:57:04.961Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/1b/eae0d5f931df4d529cdc6ef879a7968ab9fd8cb15660ef619139d4fc2da4/agent0_runtime-0.1.0-py3-none-any.whl", hash = "sha256:a1d0a8be6e9d34c3ba6a2206930855f63cb500f13f7389e6d8771c6ca8a711cc", size = 63008, upload-time = "2026-11-18T12:57:03.353Z" },
 ]
 
 [[package]]
@@ -29,27 +33,22 @@ name = "agent7"
 version = "0.3.6"
 source = { editable = "." }
 dependencies = [
-    { name = "agent0-runtime" },
+    { name = "agent0-runtime", extra = ["all"] },
     { name = "click" },
     { name = "fzp" },
     { name = "openai" },
-    { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "pillow", version = "13.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "prompt-toolkit" },
     { name = "rich" },
-    { name = "trafilatura" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "agent0-runtime", specifier = ">=0.1.0,<0.2" },
+    { name = "agent0-runtime", extras = ["all"], specifier = ">=0.1.1,<0.2" },
     { name = "click", specifier = ">=8.1" },
     { name = "fzp", specifier = ">=0.2.3" },
     { name = "openai", specifier = ">=1.40.0" },
-    { name = "pillow", specifier = ">=12.3.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.0" },
     { name = "rich", specifier = ">=13.0.0" },
-    { name = "trafilatura", specifier = ">=2.3,<3" },
 ]
 
 [[package]]
