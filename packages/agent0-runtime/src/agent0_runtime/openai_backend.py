@@ -352,8 +352,6 @@ class OpenAIResponsesBackend:
         self._supports_vision = supports_vision or _default_vision_support
         self.retry_sleeps = retry_sleeps
         self.stream_close_timeout = stream_close_timeout
-        # Compatibility with older callers; this base backend never routes.
-        self.route = None
 
     @property
     def model(self) -> str:

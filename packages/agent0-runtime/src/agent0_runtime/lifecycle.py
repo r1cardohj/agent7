@@ -158,16 +158,12 @@ def emit_lifecycle(
 
 async def run_with_lifecycle(
     session: Any,
-    work: Awaitable[RunResult | str],
+    work: Awaitable[RunResult],
     *,
     run_id: str = "",
     hooks: LifecycleHooks | None = None,
 ) -> RunResult:
-    """Classify one runner using typed outcomes and emit exactly one end event.
-
-    ``str`` is accepted temporarily for older host embedders. New runners
-    return ``RunResult`` and never need to encode control state in answer text.
-    """
+    """Classify one typed runner and emit exactly one end event."""
 
     run_id = run_id or new_run_id()
     hooks = hooks or getattr(session, "hooks", None)
@@ -184,9 +180,7 @@ async def run_with_lifecycle(
         if hooks is not None:
             hooks.emit("turn_failed", session, reason=type(error).__name__, run_id=run_id)
         raise
-    result = (
-        outcome if isinstance(outcome, RunResult) else RunResult.from_legacy(outcome, run_id=run_id)
-    )
+    result = outcome
     if hooks is not None:
         if result.status is RunStatus.BLOCKED:
             hooks.emit(

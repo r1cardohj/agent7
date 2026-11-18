@@ -31,12 +31,6 @@ class ProviderSpec:
     def preferred_login(self) -> str:
         return self.login_name or self.id
 
-    @property
-    def default_base(self) -> str:
-        """Compatibility spelling used by older host callers."""
-
-        return self.base_url
-
     def resolve_env(self) -> Credential | None:
         for env in self.env_keys:
             if key := os.environ.get(env, "").strip():

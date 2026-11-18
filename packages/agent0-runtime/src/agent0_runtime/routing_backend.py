@@ -65,7 +65,7 @@ async def stream_response_failover(
 
 
 class RoutedResponsesBackend(OpenAIResponsesBackend):
-    """Optional agent7 route selection over a generic single-endpoint backend."""
+    """Optional host-selected routing over a single-endpoint backend."""
 
     def __init__(
         self,
@@ -159,7 +159,3 @@ class RoutedResponsesBackend(OpenAIResponsesBackend):
 
     async def close(self) -> None:
         await self.route.close()
-
-
-# Compatibility name from the first runtime extraction pass.
-ResponsesBackend = RoutedResponsesBackend

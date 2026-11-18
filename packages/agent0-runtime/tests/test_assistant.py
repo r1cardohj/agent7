@@ -100,7 +100,6 @@ class AssistantRuntimeTests(unittest.TestCase):
 
     def test_plain_responses_backend_has_no_route_policy(self):
         backend = OpenAIResponsesBackend(object(), "model")
-        self.assertIsNone(backend.route)
         self.assertEqual(backend.model, "model")
         self.assertEqual(backend.provider_id, None)
         self.assertEqual(backend.context_limit, None)

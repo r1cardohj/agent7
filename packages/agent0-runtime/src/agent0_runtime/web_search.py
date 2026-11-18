@@ -107,7 +107,8 @@ def _credentials(
         credential = resolve() if resolve else None
     if credential is None:
         raise ValueError(
-            "no DeepSeek API key for web search — run `/login deepseek` or export DEEPSEEK_API_KEY"
+            "no DeepSeek API key for web search — export DEEPSEEK_API_KEY "
+            "or configure a credential resolver"
         )
     return credential.api_key, credential.base_url
 
@@ -152,7 +153,7 @@ def _failed(error: _HttpError) -> str:
     if error.status == 0:
         return f"error: search request failed{detail}"
     if error.status == 401:
-        return "error: DeepSeek API key rejected for web search (401); check /login deepseek"
+        return "error: DeepSeek API key rejected for web search (401); check the configured key"
     if error.status == 402:
         return "error: DeepSeek balance is empty (402); top up before searching again"
     if error.status == 429:

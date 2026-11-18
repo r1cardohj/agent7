@@ -1,7 +1,9 @@
 """Standalone route construction and network resource ownership."""
 
 import asyncio
+import os
 import unittest
+from unittest.mock import patch
 
 from agent0_runtime import Credential, FailoverRoute, RouteTarget, build_auto_route
 
@@ -17,7 +19,8 @@ class ClosingClient:
 class RuntimeRoutingTests(unittest.TestCase):
     def test_build_auto_route_uses_runtime_providers(self):
         credential = Credential("sk-test", "https://api.deepseek.com", "env")
-        route = build_auto_route({"deepseek": credential})
+        with patch.dict(os.environ, {}, clear=True):
+            route = build_auto_route({"deepseek": credential})
         self.assertTrue(route.targets)
         self.assertTrue(all(target.provider_id == "deepseek" for target in route.targets))
         self.assertEqual(route.current.provider_id, "deepseek")

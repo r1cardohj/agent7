@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import io
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -53,22 +52,6 @@ def supports_vision(model: str | None) -> bool:
     return not any(hint in name for hint in _TEXT_ONLY)
 
 
-@dataclass
-class ImageBlock:
-    """One inline image, base64-encoded and ready for a Responses input_image."""
-
-    data: str
-    mime_type: str
-
-
-@dataclass
-class ToolImageOutput:
-    """A legacy tool result with text for the UI plus images for the model."""
-
-    text: str
-    images: list[ImageBlock] = field(default_factory=list)
-
-
 def base_mime(mime_type: str) -> str:
     return (mime_type or "").split(";")[0].strip().lower()
 
@@ -112,7 +95,7 @@ def process_image(
     *,
     max_dimension: int = MAX_IMAGE_DIMENSION,
     max_bytes: int = MAX_IMAGE_BYTES,
-) -> tuple[ImageBlock, list[str]] | None:
+) -> tuple[Attachment, list[str]] | None:
     """Normalize an image to a supported format and fit inline size limits."""
 
     mime = base_mime(mime_type)
@@ -127,7 +110,7 @@ def process_image(
                 and max(width, height) <= max_dimension
             ):
                 # Keep original bytes so an animated GIF stays animated.
-                return ImageBlock(base64.b64encode(data).decode(), mime), hints
+                return Attachment(base64.b64encode(data).decode(), mime), hints
             target = mime if mime in SUPPORTED_MIME else "image/png"
             if target != mime:
                 hints.append(f"[Image converted from {mime or 'unknown'} to {target}.]")
@@ -155,43 +138,30 @@ def process_image(
                 return None
             if final_mime != target:
                 hints.append(f"[Image re-encoded as {final_mime} to fit the size limit.]")
-            return ImageBlock(base64.b64encode(payload).decode(), final_mime), hints
+            return Attachment(base64.b64encode(payload).decode(), final_mime), hints
     except (OSError, ValueError):
         return None
-
-
-def read_image(path: Path) -> ToolImageOutput:
-    """Return legacy text plus image blocks for an image file."""
-
-    mime = detect_mime(path)
-    try:
-        data = path.read_bytes()
-    except OSError as e:
-        return ToolImageOutput(f"error: {type(e).__name__}: {e}")
-    if not data:
-        return ToolImageOutput(f"error: empty file: {path}")
-    processed = process_image(data, mime or "")
-    if processed is None:
-        return ToolImageOutput(
-            f"Read image file [{mime or 'unknown'}]\n"
-            "[Image omitted: could not be converted to a supported inline image format.]"
-        )
-    block, hints = processed
-    text = f"Read image file [{block.mime_type}]"
-    if hints:
-        text += "\n" + "\n".join(hints)
-    return ToolImageOutput(text, [block])
 
 
 class PillowImageReader(ImageReader):
     """Default ImageReader backed by Pillow and provider-neutral attachments."""
 
-    def read(self, path: Path, _mime_type: str | None) -> ToolResult:
-        result = read_image(path)
-        return ToolResult(
-            result.text,
-            attachments=tuple(
-                Attachment(data=block.data, mime_type=block.mime_type, kind="image")
-                for block in result.images
-            ),
-        )
+    def read(self, path: Path, mime_type: str | None) -> ToolResult:
+        mime = mime_type or detect_mime(path) or ""
+        try:
+            data = path.read_bytes()
+        except OSError as e:
+            return ToolResult(f"error: {type(e).__name__}: {e}")
+        if not data:
+            return ToolResult(f"error: empty file: {path}")
+        processed = process_image(data, mime)
+        if processed is None:
+            return ToolResult(
+                f"Read image file [{mime or 'unknown'}]\n"
+                "[Image omitted: could not be converted to a supported inline image format.]"
+            )
+        attachment, hints = processed
+        text = f"Read image file [{attachment.mime_type}]"
+        if hints:
+            text += "\n" + "\n".join(hints)
+        return ToolResult(text, attachments=(attachment,))

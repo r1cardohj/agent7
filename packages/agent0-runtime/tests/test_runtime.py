@@ -92,7 +92,6 @@ class CoreLoopTests(unittest.TestCase):
         self.assertEqual(result.text, "done")
         self.assertEqual(result.turns, 2)
         self.assertEqual(result.finish_reason, "stop")
-        self.assertEqual(result.legacy_text, "done")
         self.assertEqual([m["role"] for m in messages], ["user", "assistant", "tool", "assistant"])
         self.assertEqual(messages[2]["content"], "hello")
         self.assertEqual(messages[-1]["_wire"], {"private": True})
@@ -162,7 +161,7 @@ class CoreLoopTests(unittest.TestCase):
         self.assertEqual(result.status, RunStatus.BLOCKED)
         self.assertEqual(result.stop_reason, "max_turns")
         self.assertEqual(result.text, "")
-        self.assertEqual(result.legacy_text, "(stopped after 1 turns)")
+        self.assertEqual(result.turns, 1)
 
     def test_cooperative_cancellation_answers_every_pending_call(self):
         token = CancellationToken()

@@ -559,9 +559,7 @@ class Agent:
                 stop_reason="max_turns",
                 usage=last_usage,
             )
-            await events.emit(
-                "turn_blocked", turn=turns, reason="max_turns", text=result.legacy_text
-            )
+            await events.emit("turn_blocked", turn=turns, reason="max_turns", text=result.text)
             return result
         except AgentInterrupted as error:
             _answer_pending(messages, pending)

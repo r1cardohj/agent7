@@ -5,7 +5,6 @@ This module deliberately knows nothing about OpenAI, host sessions, or a UI.
 
 from __future__ import annotations
 
-import re
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -111,29 +110,6 @@ class RunResult:
     finish_reason: str | None = None
     stop_reason: str | None = None
     usage: dict[str, int] | None = None
-
-    @property
-    def legacy_text(self) -> str:
-        """The pre-runtime string result kept for legacy host API compatibility."""
-
-        if self.status is RunStatus.BLOCKED and self.stop_reason == "max_turns":
-            return f"(stopped after {self.turns} turns)"
-        return self.text
-
-    @classmethod
-    def from_legacy(cls, text: str, *, run_id: str = "") -> RunResult:
-        """Adapt an older runner while hosts migrate to typed results."""
-
-        match = re.fullmatch(r"\(stopped after (\d+) turns\)", text)
-        if match:
-            return cls(
-                text="",
-                status=RunStatus.BLOCKED,
-                turns=int(match.group(1)),
-                run_id=run_id,
-                stop_reason="max_turns",
-            )
-        return cls(text=text, status=RunStatus.SUCCEEDED, turns=0, run_id=run_id)
 
 
 class AgentInterrupted(Exception):
