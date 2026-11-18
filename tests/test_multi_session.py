@@ -192,7 +192,10 @@ class SessionSwitchTests(unittest.TestCase):
         self.assertEqual(state.id, second.id)
         self.assertEqual(state.name, "second task")
         self.assertEqual(state.created_at, "2025-01-02T00:00:00+00:00")
-        self.assertEqual(state.messages[1]["content"], "second task")
+        self.assertEqual(state.messages[0]["content"], "second task")
+        # The prompt follows the code: rebuilt for the target conversation.
+        self.assertIsNotNone(state.system_prompt)
+        self.assertIn(SYSTEM[:40], state.system_prompt or "")
         # Usage follows the conversation, not the process that switched to it.
         self.assertEqual(state.prompt_tokens, 4_868)
         self.assertEqual(state.spent_tokens, 9_500)

@@ -197,6 +197,9 @@ class Session:
     client: AsyncOpenAI
     max_turns: int = DEFAULT_MAX_TURNS
     messages: list[dict[str, Any]] = field(default_factory=list)
+    # Host-owned base prompt; the runtime writes it into messages[0] at run time
+    # together with any plugin fragments. Never persisted: it is rebuilt on load.
+    system_prompt: str | None = None
     id: str = field(default_factory=new_session_id)
     name: str = ""
     created_at: str = field(default_factory=timestamp)

@@ -75,7 +75,7 @@ class UsageSnapshotTests(unittest.TestCase):
         save(state)  # no prompt_tokens/totals on the object at all
         snapshot = load(self.cwd)
         resumed = Session(model="test", cwd=self.cwd, client=None, context_limit=100_000)
-        resumed.messages[:] = resume_messages(snapshot, SYSTEM)
+        resumed.messages[:] = resume_messages(snapshot)
 
         resumed.restore_usage(snapshot.get("usage"))
 

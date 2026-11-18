@@ -255,8 +255,10 @@ class SessionCliTests(unittest.TestCase):
         ):
             prompt.return_value.prompt_async.side_effect = fake_prompt
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd)])))
+        # No prompt is written until the real runtime runs a turn, so the fake
+        # run's history is exactly the conversation it appends.
         self.assertEqual(
-            load(self.cwd)["messages"][1:],
+            load(self.cwd)["messages"],
             [
                 {"role": "user", "content": "new task"},
                 {"role": "assistant", "content": "new answer"},
@@ -340,7 +342,7 @@ class SessionCliTests(unittest.TestCase):
         seen = []
 
         async def fake_run(session, task, **kwargs):
-            seen.append((list(session.messages), task))
+            seen.append((list(session.messages), task, session.system_prompt))
             kwargs["on_saved"]()
             return "done"
 
@@ -357,11 +359,12 @@ class SessionCliTests(unittest.TestCase):
             patch("agent7.cli.run_turn", new=fake_run),
         ):
             asyncio.run(async_main(Options.parse(["--cwd", str(self.cwd), "-r", "继续"])))
-        self.assertEqual(seen[0][0][1:], [{"role": "user", "content": "old"}])
+        self.assertEqual(seen[0][0], [{"role": "user", "content": "old"}])
+        self.assertIn(SYSTEM[:40], seen[0][2] or "")
         self.assertEqual(seen[0][1], "继续")
         snapshots = list((self.root / "state" / "agent7" / "sessions").glob("*.json"))
         self.assertEqual(len(snapshots), 1)
-        self.assertEqual(load(self.cwd)["messages"][1]["content"], "old")
+        self.assertEqual(load(self.cwd)["messages"][0]["content"], "old")
 
 
 if __name__ == "__main__":

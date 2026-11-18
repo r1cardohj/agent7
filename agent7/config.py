@@ -54,6 +54,20 @@ SHELL = resolve_shell()
 SYSTEM = make_system(SHELL)
 
 
+def system_prompt() -> str:
+    """The base prompt for a conversation: rules plus environment notes.
+
+    Composed once per session load and handed to the runtime through
+    ``run(system=...)``, which appends any plugin prompt fragments and writes the
+    result to ``messages[0]``. Keeping it out of the message list until then means
+    a prompt upgrade reaches resumed sessions instead of living on in the snapshot.
+    """
+
+    from .herdr import background_tasks_instructions  # local: keeps config import-light
+
+    return SYSTEM + background_tasks_instructions()
+
+
 def _trunc(s: str, n: int = 88) -> str:
     s = " ".join(s.split())
     return s if len(s) <= n else s[: n - 1] + "…"

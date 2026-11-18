@@ -961,6 +961,7 @@ async def _run_agent_once(session: Session, task: str, *, run_id: str = "") -> R
             route=getattr(session, "route", None),
             on_route=on_route,
             run_id=run_id,
+            system=session.system_prompt,
         )
     # RunResult.usage is summed over the run's model rounds; on_usage only keeps
     # the gauge honest, so the spend has to be recorded here.

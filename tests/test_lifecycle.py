@@ -11,6 +11,7 @@ from agent0_runtime import RunResult, RunStatus
 from agent0_runtime.lifecycle import LifecycleEvent, LifecycleHooks, emit_lifecycle
 
 import agent7.cli as cli
+import agent7.herdr as herdr
 from agent7.cli import Options
 from agent7.repl import run_turn
 from agent7.session import Session
@@ -116,7 +117,7 @@ class CliLifecycleTests(unittest.TestCase):
             credential = SimpleNamespace(source="test")
 
             def session_with_events(**kwargs) -> Session:
-                systems.append(kwargs["messages"][0]["content"])
+                systems.append(kwargs["system_prompt"])
                 session = Session(**kwargs)
                 session.hooks.subscribe(events.append)
                 return session
@@ -129,9 +130,9 @@ class CliLifecycleTests(unittest.TestCase):
             with (
                 patch.dict(os.environ, {"XDG_STATE_HOME": str(Path(root) / "state")}),
                 patch.object(
-                    cli, "background_tasks_instructions", return_value="\nHERDR-BACKGROUND"
+                    herdr, "background_tasks_instructions", return_value="\nHERDR-BACKGROUND"
                 ) as instructions,
-                patch.object(cli, "HerdrReporter", return_value=lambda _event: None) as herdr,
+                patch.object(cli, "HerdrReporter", return_value=lambda _event: None) as reporter,
                 patch.object(cli, "Session", new=session_with_events),
                 patch.object(cli, "resolve_all", return_value={"deepseek": credential}),
                 patch.object(cli, "resolve_default", return_value=(provider, credential)),
@@ -144,7 +145,7 @@ class CliLifecycleTests(unittest.TestCase):
                 asyncio.run(cli.async_main(Options.parse(["--cwd", str(cwd), "go"])))
 
             instructions.assert_called_once_with()
-            herdr.assert_called_once_with()
+            reporter.assert_called_once_with()
             self.assertEqual(len(systems), 1)
             self.assertTrue(systems[0].endswith("HERDR-BACKGROUND"))
             self.assertEqual(

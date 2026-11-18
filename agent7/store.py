@@ -57,5 +57,5 @@ def load(cwd: Path, session_id: str | None = None) -> dict[str, Any]:
 resume = load
 
 
-def resume_messages(snapshot: dict[str, Any], system: str) -> list[dict[str, Any]]:
-    return _file_sessions.resume_messages(snapshot, system)
+def resume_messages(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    return _file_sessions.resume_messages(snapshot)

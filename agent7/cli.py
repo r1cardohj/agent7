@@ -21,8 +21,8 @@ from agent0_runtime.lifecycle import emit_lifecycle
 
 from . import __version__
 from .commands import fetch_models, prefetch_models, switch_model
-from .config import SHELL, SYSTEM
-from .herdr import HerdrReporter, background_tasks_instructions
+from .config import SHELL, system_prompt
+from .herdr import HerdrReporter
 from .providers import (
     default_model_for,
     get_provider,
@@ -463,16 +463,16 @@ async def async_main(options: Options) -> None:
             sys.exit(1)
         prov, cred = None, None
     # Herdr-managed background runs are an optional optimization; ordinary bash
-    # remains the fallback in every other environment.
-    system = SYSTEM + background_tasks_instructions()
+    # remains the fallback in every other environment. The prompt is host state
+    # that the runtime writes into messages[0] on the first turn, so a resumed
+    # conversation picks up the current one instead of the prompt it was saved with.
     state = Session(
         model=model or "pending",
         cwd=cwd,
         client=client,
         max_turns=max_turns,
-        messages=resume_messages(snapshot, system)
-        if snapshot
-        else [{"role": "system", "content": system}],
+        messages=resume_messages(snapshot) if snapshot else [],
+        system_prompt=system_prompt(),
         id=snapshot["id"] if snapshot else new_session_id(),
         name=snapshot.get("name", "") if snapshot else "",
         created_at=created_at,

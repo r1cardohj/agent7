@@ -67,6 +67,7 @@ async def run_agent_result(
     hooks: LifecycleHooks | None = None,
     session: Any = None,
     run_id: str = "",
+    system: str | None = None,
 ) -> RunResult:
     """Run one task with agent7's tools while keeping host resource ownership."""
 
@@ -165,6 +166,7 @@ async def run_agent_result(
             on_event=on_event,
             session=session,
             run_id=run_id,
+            system=system,
         )
     finally:
         unsubscribe()

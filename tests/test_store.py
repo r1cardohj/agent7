@@ -158,7 +158,7 @@ class SessionStoreTests(unittest.TestCase):
             resume(self.cwd)
         self.assertEqual(path.read_text(), "{broken")
 
-    def test_resume_refreshes_system_and_preserves_completed_tools(self) -> None:
+    def test_resume_drops_the_stored_prompt_and_preserves_completed_tools(self) -> None:
         self.state.messages = [
             {"role": "system", "content": "old system"},
             {
@@ -170,10 +170,9 @@ class SessionStoreTests(unittest.TestCase):
             },
             {"role": "tool", "tool_call_id": "done", "content": "ok"},
         ]
-        messages = resume_messages({"messages": self.state.messages}, SYSTEM)
-        self.assertEqual(
-            messages, [{"role": "system", "content": SYSTEM}, *self.state.messages[1:]]
-        )
+        messages = resume_messages({"messages": self.state.messages})
+        self.assertEqual(messages, self.state.messages[1:])
+        self.assertFalse(any(m.get("role") == "system" for m in messages))
 
     def test_resume_closes_orphaned_tool_calls(self) -> None:
         self.state.messages = [
@@ -186,8 +185,8 @@ class SessionStoreTests(unittest.TestCase):
                 ],
             },
         ]
-        messages = resume_messages({"messages": self.state.messages}, SYSTEM)
-        self.assertEqual(messages[0]["content"], SYSTEM)
+        messages = resume_messages({"messages": self.state.messages})
+        self.assertEqual(messages[0]["role"], "assistant")
         self.assertEqual(messages[-1]["role"], "tool")
         self.assertEqual(messages[-1]["tool_call_id"], "pending")
         self.assertEqual(len([m for m in messages if m.get("tool_call_id") == "pending"]), 1)
@@ -205,8 +204,8 @@ class SessionStoreTests(unittest.TestCase):
             },
             {"role": "tool", "tool_call_id": "done", "content": "ok"},
         ]
-        messages = resume_messages({"messages": self.state.messages}, SYSTEM)
-        self.assertEqual([m.get("tool_call_id") for m in messages[2:]], ["done", "pending"])
+        messages = resume_messages({"messages": self.state.messages})
+        self.assertEqual([m.get("tool_call_id") for m in messages[1:]], ["done", "pending"])
         self.assertIn("interrupted", messages[-1]["content"])
 
     def test_resume_omits_orphan_tool_result_without_its_assistant_call(self) -> None:
@@ -215,14 +214,8 @@ class SessionStoreTests(unittest.TestCase):
             {"role": "user", "content": "go"},
             {"role": "tool", "tool_call_id": "lost", "content": "ok"},
         ]
-        messages = resume_messages({"messages": self.state.messages}, SYSTEM)
-        self.assertEqual(
-            messages,
-            [
-                {"role": "system", "content": SYSTEM},
-                {"role": "user", "content": "go"},
-            ],
-        )
+        messages = resume_messages({"messages": self.state.messages})
+        self.assertEqual(messages, [{"role": "user", "content": "go"}])
 
     def test_atomic_save_leaves_no_temporary_file(self) -> None:
         path = self.save()

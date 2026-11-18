@@ -10,7 +10,7 @@ from getpass import getpass
 
 from agent0_runtime.history import compact_messages
 
-from .config import SYSTEM
+from .config import system_prompt
 from .providers import (
     Credential,
     agent7_auth_path,
@@ -408,12 +408,10 @@ async def cmd_session(session: Session, args: list[str]) -> CommandResult:
             return CommandResult(message=f"session not switched: {result.message}")
 
     old = getattr(session, "name", "") or current
-    system = SYSTEM
-    if session.messages and session.messages[0].get("role") == "system":
-        content = session.messages[0].get("content")
-        if isinstance(content, str):
-            system = content
-    messages = resume_messages(snapshot, system)
+    messages = resume_messages(snapshot)
+    # The prompt follows the code, not the snapshot: switching sessions rebuilds
+    # the current one and lets the next turn write it into messages[0].
+    session.system_prompt = system_prompt()
     session.id = snapshot["id"]
     session.name = snapshot["name"]
     session.created_at = snapshot["created_at"]

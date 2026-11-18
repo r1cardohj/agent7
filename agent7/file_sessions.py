@@ -246,12 +246,16 @@ def load(cwd: Path, session_id: str | None = None, *, root: Path | None = None) 
 resume = load
 
 
-def resume_messages(snapshot: dict[str, Any], system: str) -> list[dict[str, Any]]:
-    """Refresh the prompt and repair an interrupted final group of tool calls."""
-    saved = snapshot["messages"]
-    rest = saved[1:] if saved and saved[0].get("role") == "system" else saved
-    out = [{"role": "system", "content": system}, *rest]
-    for i in range(len(out) - 1, 0, -1):
+def resume_messages(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Drop the stored prompt and repair an interrupted final group of tool calls.
+
+    The system prompt is host state, not conversation history: it is rebuilt on
+    every load and written by the runtime when the first turn runs. Dropping the
+    saved copy is what lets a prompt upgrade reach old sessions, and it keeps one
+    canonical prompt at ``messages[0]`` instead of a stale duplicate.
+    """
+    out = [m for m in snapshot["messages"] if m.get("role") != "system"]
+    for i in range(len(out) - 1, -1, -1):
         calls = out[i].get("tool_calls") if out[i].get("role") == "assistant" else None
         if not isinstance(calls, list):
             continue
@@ -272,8 +276,12 @@ def resume_messages(snapshot: dict[str, Any], system: str) -> list[dict[str, Any
             end += 1
         out[end:end] = missing
         break
-    if out[-1].get("role") == "tool" and not any(
-        m.get("role") == "assistant" and isinstance(m.get("tool_calls"), list) for m in out[1:]
+    if (
+        out
+        and out[-1].get("role") == "tool"
+        and not any(
+            m.get("role") == "assistant" and isinstance(m.get("tool_calls"), list) for m in out
+        )
     ):
         while out[-1].get("role") == "tool":
             out.pop()
@@ -343,5 +351,5 @@ class FileSessionStore:
         )
 
     @staticmethod
-    def resume_messages(snapshot: dict[str, Any], system: str) -> list[dict[str, Any]]:
-        return resume_messages(snapshot, system)
+    def resume_messages(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        return resume_messages(snapshot)

@@ -42,7 +42,7 @@ class FileSessionStoreTests(unittest.TestCase):
             self.assertEqual(second.name, f"{session.id}.2.json")
             self.assertEqual(store.list(cwd), [])
 
-    def test_resume_refreshes_system_and_repairs_pending_tool(self):
+    def test_resume_drops_the_prompt_and_repairs_pending_tool(self):
         snapshot = {
             "messages": [
                 {"role": "system", "content": "old"},
@@ -56,8 +56,8 @@ class FileSessionStoreTests(unittest.TestCase):
                 },
             ]
         }
-        messages = FileSessionStore.resume_messages(snapshot, "new")
-        self.assertEqual(messages[0]["content"], "new")
+        messages = FileSessionStore.resume_messages(snapshot)
+        self.assertEqual(messages[0], {"role": "user", "content": "go"})
         self.assertEqual(messages[-1]["tool_call_id"], "call-1")
         self.assertIn("interrupted", messages[-1]["content"])
 

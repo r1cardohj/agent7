@@ -317,6 +317,12 @@ lifecycle hooks, cancellation, and plugin SDK; agent7 owns the terminal interfac
 application policy. See the runtime repository for installation, embedding examples,
 and its [`docs/runtime.md`](https://github.com/r1cardohj/agent0-runtime/blob/main/docs/runtime.md).
 
+The system prompt is agent7's policy, not conversation history: it is rebuilt from
+`agent7/config.py` whenever a session is opened and handed to the runtime through
+`run(system=...)`, which appends any plugin prompt fragments and writes the result
+to `messages[0]`. Resuming therefore picks up the current prompt instead of the one
+the session was saved with, and a saved conversation never keeps a stale copy.
+
 ## Development
 
 ```bash
