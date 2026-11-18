@@ -1,24 +1,20 @@
-import contextlib
-import os
-import select
-import shlex
-import signal
-import subprocess
+"""Behavioral tests for the runtime's generic filesystem and shell tools."""
+
 import sys
 import tempfile
-import time
 import tracemalloc
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agent7.agent import (
+from agent0_runtime import BUILTIN_TOOL_SCHEMAS
+from agent0_runtime.filesystem import (
     DEFAULT_READ_LINES,
-    MAX_BASH_CHARS,
-    dispatch_tool,
-    tool_edit,
-    tool_write,
+    edit_file,
+    read_file,
+    write_file,
 )
+from agent0_runtime.shell import MAX_BASH_CHARS, run_shell
 
 
 class WriteToolTests(unittest.TestCase):
@@ -31,7 +27,7 @@ class WriteToolTests(unittest.TestCase):
 
     def test_new_file_previews_diff_and_writes(self) -> None:
         previews: list[str] = []
-        result = tool_write(
+        result = write_file(
             self.cwd,
             "nested/hello.py",
             "print('hi')\n",
@@ -48,7 +44,7 @@ class WriteToolTests(unittest.TestCase):
         path.write_text("same\n")
         previews: list[str] = []
 
-        result = tool_write(self.cwd, "hello.txt", "same\n", on_preview=previews.append)
+        result = write_file(self.cwd, "hello.txt", "same\n", on_preview=previews.append)
 
         self.assertTrue(result.startswith("no changes:"))
         self.assertEqual(previews, [])
@@ -58,10 +54,10 @@ class WriteToolTests(unittest.TestCase):
         path.write_text("original\n")
 
         with (
-            patch("agent7.agent.os.fsync", side_effect=OSError("disk full")),
+            patch("agent0_runtime.filesystem.os.fsync", side_effect=OSError("disk full")),
             self.assertRaises(OSError),
         ):
-            tool_write(self.cwd, "keep.txt", "half a rewrite")
+            write_file(self.cwd, "keep.txt", "half a rewrite")
 
         self.assertEqual(path.read_text(), "original\n")
         self.assertEqual([p.name for p in self.cwd.iterdir()], ["keep.txt"])
@@ -72,7 +68,7 @@ class WriteToolTests(unittest.TestCase):
         link = self.cwd / "link.txt"
         link.symlink_to(real)
 
-        tool_write(self.cwd, "link.txt", "new\n")
+        write_file(self.cwd, "link.txt", "new\n")
 
         self.assertTrue(link.is_symlink())
         self.assertEqual(real.read_text(), "new\n")
@@ -91,13 +87,10 @@ class EditToolTests(unittest.TestCase):
         path.write_text("def hello():\n    return 'old'\n")
         previews: list[str] = []
 
-        result = dispatch_tool(
+        result = edit_file(
             self.cwd,
-            "edit",
-            {
-                "path": "hello.py",
-                "edits": [{"old_string": "return 'old'", "new_string": "return 'new'"}],
-            },
+            "hello.py",
+            [{"old_string": "return 'old'", "new_string": "return 'new'"}],
             on_preview=previews.append,
         )
 
@@ -108,7 +101,7 @@ class EditToolTests(unittest.TestCase):
     def test_multi_hunk_against_original(self) -> None:
         path = self.cwd / "f.py"
         path.write_text("a = 1\nb = 2\nc = 3\n")
-        result = tool_edit(
+        result = edit_file(
             self.cwd,
             "f.py",
             [
@@ -124,7 +117,7 @@ class EditToolTests(unittest.TestCase):
         path.write_text("same\nsame\n")
         previews: list[str] = []
 
-        result = tool_edit(
+        result = edit_file(
             self.cwd,
             "hello.txt",
             [{"old_string": "same", "new_string": "different"}],
@@ -136,7 +129,7 @@ class EditToolTests(unittest.TestCase):
         self.assertEqual(path.read_text(), "same\nsame\n")
 
     def test_requires_existing_file(self) -> None:
-        result = tool_edit(self.cwd, "missing.txt", [{"old_string": "old", "new_string": "new"}])
+        result = edit_file(self.cwd, "missing.txt", [{"old_string": "old", "new_string": "new"}])
 
         self.assertTrue(result.startswith("error: not a file:"))
         self.assertFalse((self.cwd / "missing.txt").exists())
@@ -145,7 +138,7 @@ class EditToolTests(unittest.TestCase):
         path = self.cwd / "hello.txt"
         path.write_text("content\n")
 
-        result = tool_edit(self.cwd, "hello.txt", [{"old_string": "", "new_string": "new"}])
+        result = edit_file(self.cwd, "hello.txt", [{"old_string": "", "new_string": "new"}])
 
         self.assertIn("old_string must be a non-empty string", result)
         self.assertEqual(path.read_text(), "content\n")
@@ -153,7 +146,7 @@ class EditToolTests(unittest.TestCase):
     def test_overlapping_edits_are_rejected(self) -> None:
         path = self.cwd / "f.txt"
         path.write_text("abcdef\n")
-        result = tool_edit(
+        result = edit_file(
             self.cwd,
             "f.txt",
             [
@@ -167,7 +160,7 @@ class EditToolTests(unittest.TestCase):
     def test_empty_edits_rejected(self) -> None:
         path = self.cwd / "f.txt"
         path.write_text("x\n")
-        self.assertIn("non-empty", tool_edit(self.cwd, "f.txt", []))
+        self.assertIn("non-empty", edit_file(self.cwd, "f.txt", []))
 
 
 class ReadToolTests(unittest.TestCase):
@@ -182,7 +175,7 @@ class ReadToolTests(unittest.TestCase):
         path = self.cwd / "big.txt"
         path.write_text("\n".join(f"line{i}" for i in range(1, 251)) + "\n")
 
-        result = dispatch_tool(self.cwd, "read", {"path": "big.txt"})
+        result = read_file(self.cwd, "big.txt")
 
         self.assertIn("1|line1", result)
         self.assertIn(f"{DEFAULT_READ_LINES}|line{DEFAULT_READ_LINES}", result)
@@ -194,7 +187,7 @@ class ReadToolTests(unittest.TestCase):
         path = self.cwd / "big.txt"
         path.write_text("\n".join(f"line{i}" for i in range(1, 251)) + "\n")
 
-        result = dispatch_tool(self.cwd, "read", {"path": "big.txt", "offset": 201})
+        result = read_file(self.cwd, "big.txt", 201)
 
         self.assertIn("201|line201", result)
         self.assertIn("250|line250", result)
@@ -203,14 +196,14 @@ class ReadToolTests(unittest.TestCase):
     def test_small_file_has_no_pagination_hint(self) -> None:
         (self.cwd / "small.txt").write_text("a\nb\n")
 
-        result = dispatch_tool(self.cwd, "read", {"path": "small.txt"})
+        result = read_file(self.cwd, "small.txt")
 
         self.assertEqual(result, "1|a\n2|b")
 
     def test_explicit_limit_is_respected(self) -> None:
         (self.cwd / "small.txt").write_text("a\nb\nc\nd\n")
 
-        result = dispatch_tool(self.cwd, "read", {"path": "small.txt", "limit": 2})
+        result = read_file(self.cwd, "small.txt", None, 2)
 
         self.assertIn("1|a\n2|b", result)
         self.assertNotIn("3|c", result)
@@ -219,7 +212,7 @@ class ReadToolTests(unittest.TestCase):
     def test_empty_file(self) -> None:
         (self.cwd / "empty.txt").write_text("")
 
-        self.assertEqual(dispatch_tool(self.cwd, "read", {"path": "empty.txt"}), "(empty)")
+        self.assertEqual(read_file(self.cwd, "empty.txt"), "(empty)")
 
     def test_one_enormous_line_cannot_blow_up_memory(self) -> None:
         path = self.cwd / "min.js"
@@ -228,7 +221,7 @@ class ReadToolTests(unittest.TestCase):
 
         tracemalloc.start()
         try:
-            result = dispatch_tool(self.cwd, "read", {"path": "min.js"})
+            result = read_file(self.cwd, "min.js")
             peak = tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
@@ -240,7 +233,7 @@ class ReadToolTests(unittest.TestCase):
     def test_offset_past_eof_says_so(self) -> None:
         (self.cwd / "small.txt").write_text("a\nb\n")
 
-        result = dispatch_tool(self.cwd, "read", {"path": "small.txt", "offset": 99})
+        result = read_file(self.cwd, "small.txt", 99)
 
         self.assertIn("(empty)", result)
         self.assertIn("lines 99-2 of 2", result)
@@ -248,7 +241,7 @@ class ReadToolTests(unittest.TestCase):
     def test_binary_file_is_reported(self) -> None:
         (self.cwd / "blob.bin").write_bytes(b"\xff\xfe\x00binary")
 
-        self.assertTrue(dispatch_tool(self.cwd, "read", {"path": "blob.bin"}).startswith("error:"))
+        self.assertTrue(read_file(self.cwd, "blob.bin").startswith("error:"))
 
     def test_large_file_is_streamed_not_buffered(self) -> None:
         path = self.cwd / "big.log"
@@ -258,7 +251,7 @@ class ReadToolTests(unittest.TestCase):
 
         tracemalloc.start()
         try:
-            result = dispatch_tool(self.cwd, "read", {"path": "big.log"})
+            result = read_file(self.cwd, "big.log")
             peak = tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
@@ -267,85 +260,6 @@ class ReadToolTests(unittest.TestCase):
         self.assertIn("of 200000", result)
         self.assertIn("continue with offset=201", result)
         self.assertLess(peak, 4_000_000)
-
-
-class BashTimeoutTests(unittest.TestCase):
-    @staticmethod
-    def _process_running(pid: int) -> bool:
-        if sys.platform.startswith("linux"):
-            # One procfs read avoids the kill(0) → exists() → read() race: if
-            # the process disappears anywhere during the read, it is not running.
-            try:
-                stat = Path(f"/proc/{pid}/stat").read_text()
-            except (FileNotFoundError, ProcessLookupError):
-                return False
-            # Killed orphans can remain zombies until their new parent reaps
-            # them. Zombie/dead entries are no longer running the command.
-            state = stat.rpartition(") ")[2].split(maxsplit=1)[0]
-            return state not in {"Z", "X", "x"}
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        return True
-
-    def _wait_for_exit(self, pid: int, timeout: float) -> bool:
-        if sys.platform.startswith("linux") and hasattr(os, "pidfd_open"):
-            # A pidfd becomes readable on exit, including while the orphan is
-            # still a zombie. Unlike a final procfs poll, there is no exit race.
-            try:
-                fd = os.pidfd_open(pid)
-            except ProcessLookupError:
-                return True
-            try:
-                ready, _, _ = select.select([fd], [], [], timeout)
-                return bool(ready)
-            finally:
-                os.close(fd)
-        deadline = time.monotonic() + timeout
-        while self._process_running(pid):
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(0.02)
-        return True
-
-    @unittest.skipUnless(os.name == "posix", "POSIX process-group integration test")
-    def test_timeout_kills_shell_children(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            pidfile = Path(tmp) / "child.pid"
-            command = (
-                "sleep 30 & child=$!; "
-                f"printf '%s\\n' \"$child\" > {shlex.quote(str(pidfile))}; "
-                'wait "$child"'
-            )
-            pid = None
-            real_wait = subprocess.Popen.wait
-
-            def wait_after_ready(proc, timeout=None):
-                # On a loaded CI runner the shell itself can take over a second
-                # to be scheduled. Start the timeout only after the child exists.
-                if timeout is not None:
-                    deadline = time.monotonic() + 5
-                    while not pidfile.exists() and time.monotonic() < deadline:
-                        time.sleep(0.005)
-                return real_wait(proc, timeout=timeout)
-
-            try:
-                started = time.monotonic()
-                with patch("agent0_runtime.shell.subprocess.Popen.wait", new=wait_after_ready):
-                    result = dispatch_tool(
-                        Path(tmp),
-                        "bash",
-                        {"command": command, "timeout": 1},
-                    )
-                self.assertLess(time.monotonic() - started, 8)
-                self.assertIn("timeout after 1s", result)
-                pid = int(pidfile.read_text().strip())
-                self.assertTrue(self._wait_for_exit(pid, 2), "timed-out child is still running")
-            finally:
-                if pid is not None and self._process_running(pid):
-                    with contextlib.suppress(ProcessLookupError):
-                        os.kill(pid, signal.SIGKILL)
 
 
 class OutputBudgetTests(unittest.TestCase):
@@ -358,11 +272,7 @@ class OutputBudgetTests(unittest.TestCase):
 
     def test_bash_output_is_truncated(self) -> None:
         py = sys.executable.replace("'", "'\\''")
-        result = dispatch_tool(
-            self.cwd,
-            "bash",
-            {"command": f"'{py}' -c \"print('x' * {MAX_BASH_CHARS * 2})\""},
-        )
+        result = run_shell(self.cwd, f"'{py}' -c \"print('x' * {MAX_BASH_CHARS * 2})\"")
 
         self.assertIn("truncated", result)
         self.assertLess(len(result), MAX_BASH_CHARS + 200)
@@ -371,11 +281,7 @@ class OutputBudgetTests(unittest.TestCase):
         py = sys.executable.replace("'", "'\\''")
         tracemalloc.start()
         try:
-            result = dispatch_tool(
-                self.cwd,
-                "bash",
-                {"command": f"'{py}' -c \"print('y' * {8_000_000})\""},
-            )
+            result = run_shell(self.cwd, f"'{py}' -c \"print('y' * {8_000_000})\"")
             peak = tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
@@ -384,10 +290,23 @@ class OutputBudgetTests(unittest.TestCase):
         self.assertLess(len(result), MAX_BASH_CHARS + 200)
         self.assertLess(peak, 4_000_000)
 
-    def test_grep_tool_is_gone(self) -> None:
-        self.assertEqual(
-            dispatch_tool(self.cwd, "grep", {"pattern": "x"}), "error: unknown tool grep"
-        )
+
+class ToolSchemaTests(unittest.TestCase):
+    def test_write_schema_is_whole_file_only(self) -> None:
+        schema = next(tool for tool in BUILTIN_TOOL_SCHEMAS if tool["function"]["name"] == "write")[
+            "function"
+        ]
+        self.assertNotIn("old_string", schema["parameters"]["properties"])
+        self.assertEqual(sorted(schema["parameters"]["required"]), ["content", "path"])
+
+    def test_edit_schema_has_edits_array(self) -> None:
+        schema = next(tool for tool in BUILTIN_TOOL_SCHEMAS if tool["function"]["name"] == "edit")[
+            "function"
+        ]
+        props = schema["parameters"]["properties"]
+        self.assertIn("edits", props)
+        self.assertEqual(props["edits"]["type"], "array")
+        self.assertEqual(sorted(schema["parameters"]["required"]), ["edits", "path"])
 
 
 if __name__ == "__main__":
