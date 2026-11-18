@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
 from collections.abc import Callable, Iterable
-from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +25,7 @@ from agent0_runtime import (
 )
 from agent0_runtime import Agent as CoreAgent
 from agent0_runtime import history as _runtime_history
+from agent0_runtime import openai_backend as _runtime_openai
 from agent0_runtime.filesystem import edit_file, read_file, write_file
 from agent0_runtime.history import (
     ResponsesHistoryPolicy as CoreResponsesHistoryPolicy,
@@ -41,26 +40,19 @@ from agent0_runtime.shell import (
 from agent0_runtime.shell import (
     resolve_shell as _resolve_shell,
 )
-from openai import APIConnectionError, APITimeoutError, AsyncOpenAI
+from openai import AsyncOpenAI
 
 from . import web_fetch, web_search
 from .images import ImageBlock, ToolImageOutput, supports_vision
-from .responses import (
-    ResponseTurn,
-    output_text,
-    plain_item,
-    portable_history,
-    reasoning_text,
-    request_input,
-    response_status,
-    response_tools,
-    response_usage,
-)
+from .responses import ResponseTurn
 from .responses_backend import (
     ResponsesBackend as CoreResponsesBackend,
 )
 from .responses_backend import (
     RoutedResponsesBackend as CoreRoutedResponsesBackend,
+)
+from .responses_backend import (
+    stream_response_failover as _runtime_failover,
 )
 from .routing import FailoverRoute, RouteTarget
 from .tool_adapters import agent7_builtin_tools
@@ -74,8 +66,6 @@ TOOL_MAX_CHARS, ASSISTANT_MAX_CHARS = 2_000, 4_000
 OVERFLOW_RETRIES = 2
 RETRY_SLEEPS = (0.5, 1.5, 3.0)
 STREAM_CLOSE_TIMEOUT = 2.0
-RETRY_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
-FAILOVER_STATUS = frozenset({401, 403, 404})
 
 
 # Backwards-compatible name; the canonical exception lives in the runtime.
@@ -347,66 +337,10 @@ def tool_summary(name: str, args: dict[str, Any]) -> str:
     return _trunc(json.dumps(args, ensure_ascii=False))
 
 
-async def _emit(cb: Callable[..., Any] | None, *args: Any) -> None:
-    if cb and asyncio.iscoroutine(maybe := cb(*args)):
-        await maybe
-
-
-class _Retryable(Exception):
-    """Failed before any text reached the screen, so the request can be replayed."""
-
-    def __init__(self, cause: BaseException) -> None:
-        self.cause = cause
-        super().__init__(str(cause))
-
-
-_RETRY_ERRORS = frozenset(
-    {
-        "APIConnectionError",
-        "APITimeoutError",
-        "RateLimitError",
-        "InternalServerError",
-        "ServiceUnavailableError",
-        "BadGatewayError",
-    }
-)
-# Connection and timeout errors have no usable HTTP status; they are transient.
-_TRANSIENT_ERRORS = _RETRY_ERRORS | {"APIConnectionError", "APITimeoutError"}
-
-
-def _retryable(exc: BaseException) -> bool:
-    status = getattr(exc, "status_code", None)
-    if isinstance(status, int):
-        return status in RETRY_STATUS
-    if type(exc).__name__ in _RETRY_ERRORS or any(
-        cls.__name__ in _TRANSIENT_ERRORS for cls in type(exc).__mro__
-    ):
-        return True
-    # Streaming Responses failures can be plain APIError without status_code.
-    # Kimi reports temporary capacity exhaustion only in the error text/body.
-    return "overloaded" in f"{exc} {getattr(exc, 'body', '')}".lower()
-
-
-def _can_failover(exc: BaseException) -> bool:
-    """Whether another target may help; auth/model errors get no local retries."""
-    # The request never reached a provider. Keep retries on the current target:
-    # switching providers would only disguise a local/network transport failure.
-    if isinstance(exc, (APIConnectionError, APITimeoutError)):
-        return False
-    return _retryable(exc) or getattr(exc, "status_code", None) in FAILOVER_STATUS
-
-
-async def _open_stream(client: AsyncOpenAI, kwargs: dict[str, Any]) -> Any:
-    try:
-        return await client.responses.create(**kwargs)
-    except (asyncio.CancelledError, KeyboardInterrupt) as e:
-        raise Interrupted() from e
-
-
-def _consume_close_result(task: asyncio.Task) -> None:
-    """Retrieve a detached close task's exception after an interrupted cleanup."""
-    if not task.cancelled():
-        task.exception()
+_emit = _runtime_openai.emit_callback
+_Retryable = _runtime_openai.RetryableResponseError
+_retryable = _runtime_openai.is_retryable_response_error
+_can_failover = _runtime_openai.can_failover_response_error
 
 
 async def _stream_once(
@@ -418,108 +352,14 @@ async def _stream_once(
     on_answer_to_thinking,
     on_finish,
 ) -> ResponseTurn:
-    try:
-        stream = await _open_stream(client, kwargs)
-    except Interrupted:
-        raise
-    except Exception as e:
-        raise _Retryable(e) from e
-    parts: list[str] = []
-    output: list[dict[str, Any]] = []
-    saw_tools = emitted = False
-    response = None
-    try:
-        async for event in stream:
-            kind = getattr(event, "type", "")
-            if kind == "response.output_item.done":
-                item = plain_item(event.item)
-                output.append(item)
-                if item.get("type") == "function_call":
-                    if not saw_tools:
-                        saw_tools = True
-                        await _emit(on_answer_to_thinking)
-                elif item.get("type") == "message":
-                    text = output_text([item])
-                    if text and text != "".join(parts):
-                        # Some compatible endpoints return a final item but no deltas.
-                        emitted = True
-                        parts.append(text)
-                        await _emit(on_thinking if saw_tools else on_delta, text)
-                elif (
-                    item.get("type") == "reasoning"
-                    and not emitted
-                    and (text := reasoning_text(item))
-                ):
-                    # Delta-less compatible endpoints still expose useful summaries.
-                    emitted = True
-                    await _emit(on_thinking, text)
-            elif kind in (
-                "response.reasoning_text.delta",
-                "response.reasoning_summary_text.delta",
-            ):
-                if text := getattr(event, "delta", ""):
-                    emitted = True
-                    await _emit(on_thinking, text)
-            elif kind == "response.output_text.delta":
-                if text := getattr(event, "delta", ""):
-                    emitted = True
-                    parts.append(text)
-                    await _emit(on_thinking if saw_tools else on_delta, text)
-            elif kind in ("response.completed", "response.incomplete"):
-                response = event.response
-                final_output = [
-                    plain_item(item) for item in getattr(response, "output", None) or []
-                ]
-                if final_output:
-                    output = final_output
-                    if not parts and (text := output_text(output)):
-                        parts.append(text)
-                        emitted = True
-                        await _emit(on_thinking if saw_tools else on_delta, text)
-                finish, _ = response_status(response)
-                await _emit(on_finish, finish)
-            elif kind == "response.failed":
-                response = event.response
-                error = getattr(response, "error", None)
-                raise RuntimeError(
-                    getattr(error, "message", None) or "Responses API request failed"
-                )
-            elif kind == "response.error":
-                error = getattr(event, "error", None)
-                raise RuntimeError(getattr(error, "message", None) or "Responses API stream failed")
-    except Interrupted:
-        raise
-    except (asyncio.CancelledError, KeyboardInterrupt) as e:
-        raise Interrupted("".join(parts)) from e
-    except Exception as e:
-        if emitted:  # the user already saw text: replaying it would duplicate it
-            raise
-        raise _Retryable(e) from e
-    finally:
-        if close := getattr(stream, "close", None):
-            with suppress(Exception):
-                result = close()
-                if asyncio.iscoroutine(result):
-                    interrupted = isinstance(sys.exc_info()[1], Interrupted)
-                    # Shield the close so its timeout cannot wait for cleanup that
-                    # ignores cancellation. Detached tasks still report their errors.
-                    closing = asyncio.create_task(result)
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.shield(closing), timeout=STREAM_CLOSE_TIMEOUT
-                        )
-                    except BaseException:
-                        closing.cancel()
-                        closing.add_done_callback(_consume_close_result)
-                        if not interrupted:
-                            raise
-                        # Preserve the original interrupt over cleanup cancellation.
-    finish = response_status(response)[0] if response is not None else None
-    return ResponseTurn(
-        text="".join(parts),
-        output=output,
-        usage=response_usage(response),
-        finish_reason=finish,
+    return await _runtime_openai.stream_response_once(
+        client,
+        kwargs,
+        on_delta=on_delta,
+        on_thinking=on_thinking,
+        on_answer_to_thinking=on_answer_to_thinking,
+        on_finish=on_finish,
+        close_timeout=STREAM_CLOSE_TIMEOUT,
     )
 
 
@@ -529,21 +369,13 @@ def _completion_kwargs(
     provider_id: str | None,
     tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    inputs, instructions = request_input(messages, provider_id, vision=supports_vision(model))
-    kwargs: dict[str, Any] = {
-        "model": model,
-        "input": inputs,
-        "tools": response_tools(TOOLS if tools is None else tools),
-        "stream": True,
-    }
-    if instructions is not None:
-        kwargs["instructions"] = instructions
-    if provider_id == "deepseek" and portable_history(messages, provider_id):
-        # DeepSeek rejects thinking-mode replay when legacy/other-provider
-        # history has no reasoning items. Key off the provider, not the model
-        # name. Degrade only until fresh raw output is available again.
-        kwargs["reasoning"] = {"effort": "none"}
-    return kwargs
+    return _runtime_openai.completion_kwargs(
+        model,
+        messages,
+        provider_id,
+        TOOLS if tools is None else tools,
+        vision=supports_vision(model),
+    )
 
 
 async def _stream_with_retries(
@@ -555,22 +387,16 @@ async def _stream_with_retries(
     on_answer_to_thinking,
     on_finish,
 ) -> ResponseTurn:
-    """Retry one target, preserving _Retryable's no-output replay guarantee."""
-    for attempt in range(len(RETRY_SLEEPS) + 1):
-        try:
-            return await _stream_once(
-                client,
-                kwargs,
-                on_delta=on_delta,
-                on_thinking=on_thinking,
-                on_answer_to_thinking=on_answer_to_thinking,
-                on_finish=on_finish,
-            )
-        except _Retryable as e:
-            if attempt == len(RETRY_SLEEPS) or not _retryable(e.cause):
-                raise
-            await asyncio.sleep(RETRY_SLEEPS[attempt])
-    raise AssertionError("unreachable")  # pragma: no cover
+    return await _runtime_openai.stream_response_with_retries(
+        client,
+        kwargs,
+        on_delta=on_delta,
+        on_thinking=on_thinking,
+        on_answer_to_thinking=on_answer_to_thinking,
+        on_finish=on_finish,
+        retry_sleeps=RETRY_SLEEPS,
+        close_timeout=STREAM_CLOSE_TIMEOUT,
+    )
 
 
 async def _stream_completion(
@@ -585,17 +411,20 @@ async def _stream_completion(
     provider_id: str | None = None,
     tools: list[dict[str, Any]] | None = None,
 ) -> ResponseTurn:
-    try:
-        return await _stream_with_retries(
-            client,
-            _completion_kwargs(model, messages, provider_id, tools),
-            on_delta=on_delta,
-            on_thinking=on_thinking,
-            on_answer_to_thinking=on_answer_to_thinking,
-            on_finish=on_finish,
-        )
-    except _Retryable as e:
-        raise e.cause from None
+    return await _runtime_openai.stream_response_completion(
+        client,
+        model=model,
+        messages=messages,
+        on_delta=on_delta,
+        on_thinking=on_thinking,
+        on_answer_to_thinking=on_answer_to_thinking,
+        on_finish=on_finish,
+        provider_id=provider_id,
+        tools=TOOLS if tools is None else tools,
+        vision=supports_vision(model),
+        retry_sleeps=RETRY_SLEEPS,
+        close_timeout=STREAM_CLOSE_TIMEOUT,
+    )
 
 
 async def _stream_failover(
@@ -609,41 +438,18 @@ async def _stream_failover(
     on_route,
     tools: list[dict[str, Any]] | None = None,
 ) -> tuple[ResponseTurn, RouteTarget]:
-    """Replay a silent failed request on the next target, never a partial stream."""
-    while True:
-        target = route.current
-        try:
-            turn = await _stream_with_retries(
-                target.client,
-                _completion_kwargs(target.model, messages, target.provider_id, tools),
-                on_delta=on_delta,
-                on_thinking=on_thinking,
-                on_answer_to_thinking=on_answer_to_thinking,
-                on_finish=on_finish,
-            )
-        except _Retryable as e:
-            # _stream_once only wraps failures before any text/reasoning was
-            # emitted. Failover therefore cannot duplicate user-visible output
-            # or a tool call, and run_agent has not executed any tools yet.
-            next_target = route.advance() if _can_failover(e.cause) else None
-            if next_target is None:
-                raise e.cause from None
-            await _emit(on_route, next_target, target, e.cause)
-        else:
-            return turn, target
-
-
-def _answer_pending(
-    messages: list[dict[str, Any]],
-    calls: list[dict[str, Any]],
-    note: str = "error: interrupted",
-) -> None:
-    """Answer every tool call that will never run, so the history stays replayable."""
-    answered = {m.get("tool_call_id") for m in messages if m.get("role") == "tool"}
-    for call in calls:
-        call_id = call.get("id")
-        if isinstance(call_id, str) and call_id and call_id not in answered:
-            messages.append({"role": "tool", "tool_call_id": call_id, "content": note})
+    return await _runtime_failover(
+        route,
+        messages=messages,
+        on_delta=on_delta,
+        on_thinking=on_thinking,
+        on_answer_to_thinking=on_answer_to_thinking,
+        on_finish=on_finish,
+        on_route=on_route,
+        tools=TOOLS if tools is None else tools,
+        retry_sleeps=RETRY_SLEEPS,
+        close_timeout=STREAM_CLOSE_TIMEOUT,
+    )
 
 
 # Keep compatibility names pointed at the provider-neutral core and agent7

@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from openai import APIConnectionError
 from responses_fakes import FakeClient, call_turn, text_turn
 
 import agent7.agent as A
@@ -147,11 +148,11 @@ class AutoFailoverTests(unittest.TestCase):
         self.assertTrue(any(change[1] is first and change[0] is second for change in changes))
 
     def test_connection_error_retries_without_switching_providers(self) -> None:
-        first = target("deepseek", "chat", [A.APIConnectionError(request=None)])
+        first = target("deepseek", "chat", [APIConnectionError(request=None)])
         second = target("kimi", "k2", [text_turn("wrong")])
         route = FailoverRoute((first, second))
 
-        with self.assertRaises(A.APIConnectionError):
+        with self.assertRaises(APIConnectionError):
             self.run_route(route)
 
         self.assertEqual(first.client.calls, 4)

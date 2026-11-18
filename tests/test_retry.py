@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from openai import APIConnectionError
 from responses_fakes import FakeClient, call_turn, text_turn, usage_turn
 
 import agent7.agent as A
@@ -75,7 +76,7 @@ class RetryTests(unittest.TestCase):
 
     def test_connection_error_is_retried(self) -> None:
         # Real SDK transport errors have no usable HTTP status.
-        error = A.APIConnectionError(request=None)
+        error = APIConnectionError(request=None)
         answer, client = self.run_agent([error, text_turn("ok")])
 
         self.assertEqual(answer, "ok")
