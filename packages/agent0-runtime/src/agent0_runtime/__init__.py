@@ -13,6 +13,13 @@ from .builtin_tools import (
     create_builtin_registry,
 )
 from .capabilities import MODEL_CAPABILITIES, ModelCapability
+from .client import (
+    OpenAIClient,
+    OpenAISyncClient,
+    make_openai_client,
+    make_openai_sync_client,
+)
+from .credentials import FileCredentialStore
 from .events import (
     EventBus,
     EventEmitter,
@@ -34,6 +41,7 @@ from .lifecycle import (
     run_with_lifecycle,
 )
 from .loop import DEFAULT_MAX_TURNS, Agent, HistoryPolicy
+from .managed import ManagedProvider
 from .openai_backend import OpenAIResponsesBackend
 from .plugins import (
     PLUGIN_API_VERSION,
@@ -89,9 +97,12 @@ __all__ = [
     "EventBus",
     "EventEmitter",
     "EventListener",
+    "FileCredentialStore",
     "HistoryPolicy",
     "ImageReader",
     "OpenAIResponsesBackend",
+    "OpenAIClient",
+    "OpenAISyncClient",
     "LifecycleContext",
     "LifecycleEvent",
     "LifecycleHooks",
@@ -105,6 +116,7 @@ __all__ = [
     "ModelInfo",
     "ModelRequest",
     "MemorySessionStore",
+    "ManagedProvider",
     "ModelTurn",
     "PLUGIN_API_VERSION",
     "PLUGIN_ENTRY_POINT",
@@ -141,6 +153,8 @@ __all__ = [
     "emit_lifecycle",
     "get_provider",
     "list_providers",
+    "make_openai_client",
+    "make_openai_sync_client",
     "new_run_id",
     "resolve_all_env",
     "run_with_lifecycle",
