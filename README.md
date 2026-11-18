@@ -309,48 +309,24 @@ general coding-agent ranking; repeat it before drawing conclusions about the cur
   instructions; the system prompt tells the model to treat them accordingly.
 - **Hard kills lose the current turn.** Sessions are durable only after they are saved.
 
-## Embed a minimal agent
+## Runtime
 
-With `DEEPSEEK_API_KEY` or `KIMI_API_KEY` set, the headless runtime needs no
-manual client, backend, history, or message-list setup:
-
-```python
-import asyncio
-from agent0_runtime import Agent, tool
-
-@tool("add")
-def add(a: float, b: float) -> str:
-    """Add two numbers."""
-    return str(a + b)
-
-async def main():
-    async with Agent.from_env(tools=["add"]) as agent:
-        result = await agent.run("Use add to calculate 20 + 22.")
-        print(result.text)
-
-asyncio.run(main())
-```
-
-The async context closes plugins and network resources automatically. See
-[`examples/minimal_agent.py`](examples/minimal_agent.py) and
-[docs/runtime.md](docs/runtime.md) for sessions, events, custom backends, built-in
-tools, lifecycle hooks, and plugins.
+agent7 builds on the standalone [`agent0-runtime`](https://github.com/r1cardohj/agent0-runtime)
+package. The runtime owns the headless loop, model/tool interfaces, structured events,
+lifecycle hooks, cancellation, and plugin SDK; agent7 owns the terminal interface and
+application policy. See the runtime repository for installation, embedding examples,
+and its [`docs/runtime.md`](https://github.com/r1cardohj/agent0-runtime/blob/main/docs/runtime.md).
 
 ## Development
 
 ```bash
 uv sync
-uv run python -m unittest discover -s packages/agent0-runtime/tests -v
 uv run python -m unittest discover -s tests -v
 ```
 
-CI tests the standalone runtime and agent7 on Python 3.10 through 3.13, builds
-both distributions, and smoke-tests their installed wheels. `scripts/generate_mascot.py`
-regenerates the mascot assets from `agent7/mascot.py`.
-
-The headless loop, model/tool interfaces, structured events, lifecycle hooks, cancellation,
-and plugin SDK live behind the standalone `agent0_runtime` package, independently of the terminal. See
-[docs/runtime.md](docs/runtime.md) for embedding and plugin examples.
+CI tests agent7 on Python 3.10 through 3.13 and smoke-tests its installed wheel.
+The standalone runtime has its own repository, CI, and release pipeline.
+`scripts/generate_mascot.py` regenerates the mascot assets from `agent7/mascot.py`.
 
 ## License
 

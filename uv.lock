@@ -10,19 +10,18 @@ resolution-markers = [
 [[package]]
 name = "agent0-runtime"
 version = "0.1.0"
-source = { editable = "packages/agent0-runtime" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "certifi" },
     { name = "openai" },
     { name = "pillow", version = "12.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pillow", version = "13.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "trafilatura" },
+    { name = "urllib3" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "openai", specifier = ">=1.40.0" },
-    { name = "pillow", specifier = ">=12.3.0" },
-    { name = "trafilatura", specifier = ">=2.3,<3" },
+sdist = { url = "https://files.pythonhosted.org/packages/a6/8b/659755c79c59cd3cf7b44f06b9963bc1676f706943264ad6e471d766112d/agent0_runtime-0.1.0.tar.gz", hash = "sha256:a119fa712a524c39a1fc0a63e86f77f87d6b96d1a16c8bcbf1c6171128d0b93a", size = 69835, upload-time = "2026-11-18T12:57:04.961Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/1b/eae0d5f931df4d529cdc6ef879a7968ab9fd8cb15660ef619139d4fc2da4/agent0_runtime-0.1.0-py3-none-any.whl", hash = "sha256:a1d0a8be6e9d34c3ba6a2206930855f63cb500f13f7389e6d8771c6ca8a711cc", size = 63008, upload-time = "2026-11-18T12:57:03.353Z" },
 ]
 
 [[package]]
@@ -43,7 +42,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent0-runtime", editable = "packages/agent0-runtime" },
+    { name = "agent0-runtime", specifier = ">=0.1.0,<0.2" },
     { name = "click", specifier = ">=8.1" },
     { name = "fzp", specifier = ">=0.2.3" },
     { name = "openai", specifier = ">=1.40.0" },

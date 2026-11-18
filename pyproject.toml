@@ -49,9 +49,6 @@ Issues = "https://github.com/r1cardohj/agent7/issues"
 [project.scripts]
 agent7 = "agent7.cli:main"
 
-[tool.uv.sources]
-agent0-runtime = { path = "packages/agent0-runtime", editable = true }
-
 [tool.ruff]
 line-length = 100
 extend-exclude = ["evals/repos"]
@@ -105,8 +102,6 @@ include = [
     "/agent7",
     "/README.md",
     "/assets",
-    "/docs",
-    "/examples",
     "/LICENSE",
     "/pyproject.toml",
 ]
