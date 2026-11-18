@@ -1,141 +1,31 @@
-"""Embeddable agent runtime, currently packaged inside agent7.
+"""Compatibility aliases for the extracted :mod:`agent0_runtime` package."""
 
-Nothing in this package imports the terminal, provider authentication UI, session
-storage, or agent7's concrete tools. ``Agent.from_env()`` is the recommended
-zero-configuration entry point; the backend/tool protocols remain available to
-advanced embedders and future standalone distributions.
-"""
+import importlib
+import sys
 
-from .backend import BackendRegistry, ModelBackend, ModelInfo, ModelRequest
-from .builtin_tools import (
-    BUILTIN_TOOL_SCHEMAS,
-    BuiltinToolsConfig,
-    create_builtin_registry,
-)
-from .events import (
-    EventBus,
-    EventEmitter,
-    EventListener,
-    ListenerError,
-    RuntimeEvent,
-    RuntimeEventKind,
-)
-from .filesystem import ImageReader, VisionSupport
-from .history import ResponsesHistoryPolicy
-from .lifecycle import (
-    LifecycleContext,
-    LifecycleEvent,
-    LifecycleHooks,
-    LifecycleKind,
-    LifecycleListenerError,
-    emit_lifecycle,
-    run_with_lifecycle,
-)
-from .loop import DEFAULT_MAX_TURNS, Agent, HistoryPolicy
-from .openai_backend import OpenAIResponsesBackend
-from .plugins import (
-    PLUGIN_API_VERSION,
-    PLUGIN_ENTRY_POINT,
-    Plugin,
-    PluginContext,
-    PluginError,
-    PluginInfo,
-    PluginManager,
-    discover_plugins,
-)
-from .providers import (
-    BUILTIN_PROVIDERS,
-    Credential,
-    ProviderSpec,
-    default_model_for,
-    get_provider,
-    list_providers,
-    resolve_all_env,
-)
-from .search import SearchProvider
-from .session import MemorySessionStore, RunContext, RuntimeSession, SessionStore
-from .shell import Shell
-from .tools import Tool, ToolContext, ToolExecution, ToolExecutor, ToolRegistry, tool
-from .types import (
-    TOOL_ATTACHMENTS_KEY,
-    AgentInterrupted,
-    Attachment,
-    CancellationToken,
-    Message,
-    ModelTurn,
-    Recovery,
-    RunResult,
-    RunStatus,
-    ToolCall,
-    ToolResult,
-    new_run_id,
-)
+import agent0_runtime as _runtime
 
-__all__ = [
-    "Agent",
-    "AgentInterrupted",
-    "Attachment",
-    "BackendRegistry",
-    "BUILTIN_PROVIDERS",
-    "BUILTIN_TOOL_SCHEMAS",
-    "BuiltinToolsConfig",
-    "CancellationToken",
-    "Credential",
-    "DEFAULT_MAX_TURNS",
-    "EventBus",
-    "EventEmitter",
-    "EventListener",
-    "HistoryPolicy",
-    "ImageReader",
-    "OpenAIResponsesBackend",
-    "LifecycleContext",
-    "LifecycleEvent",
-    "LifecycleHooks",
-    "LifecycleKind",
-    "LifecycleListenerError",
-    "ListenerError",
-    "Message",
-    "ModelBackend",
-    "ModelInfo",
-    "ModelRequest",
-    "MemorySessionStore",
-    "ModelTurn",
-    "PLUGIN_API_VERSION",
-    "PLUGIN_ENTRY_POINT",
-    "Plugin",
-    "ProviderSpec",
-    "PluginContext",
-    "PluginError",
-    "PluginInfo",
-    "PluginManager",
-    "Recovery",
-    "RunContext",
-    "RunResult",
-    "RunStatus",
-    "ResponsesHistoryPolicy",
-    "RuntimeEvent",
-    "RuntimeEventKind",
-    "RuntimeSession",
-    "TOOL_ATTACHMENTS_KEY",
-    "SearchProvider",
-    "SessionStore",
-    "Shell",
-    "Tool",
-    "ToolCall",
-    "ToolContext",
-    "ToolExecution",
-    "ToolExecutor",
-    "ToolRegistry",
-    "ToolResult",
-    "VisionSupport",
-    "create_builtin_registry",
-    "default_model_for",
-    "discover_plugins",
-    "emit_lifecycle",
-    "get_provider",
-    "list_providers",
-    "new_run_id",
-    "resolve_all_env",
-    "run_with_lifecycle",
-    "tool",
-]
+__all__ = _runtime.__all__
+globals().update({name: getattr(_runtime, name) for name in __all__})
+
+_SUBMODULES = (
+    "backend",
+    "builtin_tools",
+    "events",
+    "filesystem",
+    "history",
+    "lifecycle",
+    "loop",
+    "openai_backend",
+    "plugins",
+    "providers",
+    "responses",
+    "search",
+    "session",
+    "shell",
+    "tools",
+    "types",
+    "web_fetch",
+)
+for _name in _SUBMODULES:
+    sys.modules[f"{__name__}.{_name}"] = importlib.import_module(f"agent0_runtime.{_name}")

@@ -1,6 +1,6 @@
 """Compatibility imports for the provider-neutral web fetch implementation."""
 
-from .core.web_fetch import (
+from agent0_runtime.web_fetch import (
     DEFAULT_FETCH_CHARS,
     MAX_DOWNLOAD_BYTES,
     MAX_FETCH_CHARS,

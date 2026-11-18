@@ -1,10 +1,11 @@
 # Headless runtime and plugin API
 
-`agent7.core` is the public headless runtime, currently packaged inside agent7
-and intended for a future standalone `agent0-runtime` distribution. It has no
-imports from the terminal, agent7 providers, or application-owned session storage.
-It contains the generic loop plus optional built-in filesystem/shell/web tools
-that other agent types can select without importing agent7's coding profile.
+`agent0_runtime` is the standalone headless runtime consumed by agent7. The old
+`agent7.core` import path is temporarily preserved as a compatibility alias. The
+runtime has no imports from the terminal, agent7 providers, or application-owned
+session storage. It contains the generic loop plus optional built-in
+filesystem/shell/web tools that other agent types can select without importing
+agent7's coding profile.
 
 ## Quick start
 
@@ -14,7 +15,7 @@ the matching Responses backend and history policy:
 
 ```python
 import asyncio
-from agent7.core import Agent, tool
+from agent0_runtime import Agent, tool
 
 @tool("add")
 def add(a: float, b: float) -> str:
@@ -74,7 +75,7 @@ model/text/reasoning deltas, routing, usage, compaction, tool start/preview/end,
 and terminal turn states. `event.to_dict()` is suitable for a future JSON-RPC or
 WebSocket adapter. `on_event` may be synchronous or asynchronous.
 
-For custom backends, instantiate `agent7.core.Agent` directly. The required
+For custom backends, instantiate `agent0_runtime.Agent` directly. The required
 backend protocol is only `complete(request, events) -> ModelTurn`; `model`,
 `provider_id`, `context_limit`, and `prepare()` are optional metadata/policy.
 An owned backend may implement `close()` or `aclose()` to release resources:
@@ -86,7 +87,7 @@ class Backend:
 ```
 
 The runtime owns the model integration layer and normally depends on the
-`openai` package. `agent7.core.OpenAIResponsesBackend` implements one
+`openai` package. `agent0_runtime.OpenAIResponsesBackend` implements one
 OpenAI-compatible Responses endpoint, including streaming, function calls,
 usage mapping, retry-safe requests, raw Responses history, and client cleanup.
 The core also has provider-neutral registry metadata for built-in OpenAI-compatible
@@ -118,7 +119,7 @@ or shadowed tools. Use `Tool.define()` when a tool needs an explicit schema or
 
 ```python
 from agent7.agent import create_tool_registry, run_agent_result
-from agent7.core import Tool
+from agent0_runtime import Tool
 
 registry = create_tool_registry()  # agent7's six coding tools
 registry.register(
@@ -147,7 +148,7 @@ The runtime includes provider-neutral `read`, `write`, `edit`, `bash`, `fetch`,
 and `search` definitions. Optional behavior is injected rather than imported:
 
 ```python
-from agent7.core import BuiltinToolsConfig, create_builtin_registry, Shell
+from agent0_runtime import BuiltinToolsConfig, create_builtin_registry, Shell
 
 registry = create_builtin_registry(
     BuiltinToolsConfig(
@@ -169,7 +170,7 @@ from `agent7.tool_adapters`; neither is part of the generic tool definitions.
 The core models only portable runtime state:
 
 ```python
-from agent7.core import MemorySessionStore, RuntimeSession
+from agent0_runtime import MemorySessionStore, RuntimeSession
 
 session = RuntimeSession(
     id="assistant-1",
@@ -195,7 +196,7 @@ A host can cancel its asyncio task for immediate network-stream cancellation,
 or pass a `CancellationToken` for cooperative cancellation:
 
 ```python
-from agent7.core import CancellationToken
+from agent0_runtime import CancellationToken
 
 token = CancellationToken()
 result_task = asyncio.create_task(agent.run(..., cancellation=token))

@@ -5,10 +5,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from responses_fakes import FakeClient, call_turn, text_turn
-
-from agent7.agent import run_agent_result
-from agent7.core import (
+from agent0_runtime import (
     Agent,
     ModelTurn,
     OpenAIResponsesBackend,
@@ -17,6 +14,7 @@ from agent7.core import (
     ToolRegistry,
     tool,
 )
+from responses_fakes import FakeClient, call_turn, text_turn
 
 
 @tool("reflected_add")
@@ -229,20 +227,6 @@ class ResourceOwnershipTests(unittest.TestCase):
             self.assertEqual(shared.closed, 0)
 
         asyncio.run(exercise())
-
-    def test_legacy_facade_does_not_close_a_shared_client(self):
-        client = ClosingFakeClient([text_turn("ok")])
-        result = asyncio.run(
-            run_agent_result(
-                "hello",
-                client=client,
-                model="model",
-                messages=[],
-                registry=ToolRegistry(),
-            )
-        )
-        self.assertEqual(result.text, "ok")
-        self.assertEqual(client.closed, 0)
 
     def test_responses_backend_closes_its_client(self):
         client = ClosingFakeClient([text_turn("ok")])

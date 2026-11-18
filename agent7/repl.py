@@ -18,6 +18,7 @@ from collections.abc import Callable, Iterator
 from itertools import islice
 from pathlib import Path
 
+from agent0_runtime import RunResult, new_run_id
 from fzp.fuzzy import Match, fuzzy_filter, fuzzy_match
 from fzp.tui import Picker
 from prompt_toolkit import PromptSession
@@ -36,7 +37,6 @@ from rich.text import Text
 
 from .agent import Interrupted, run_agent_result, tool_summary
 from .commands import dispatch, known_names
-from .core import RunResult, new_run_id
 from .hooks import run_with_lifecycle
 from .images import clipboard_text, paste_image_file
 from .interrupt import run_with_interrupt_keys

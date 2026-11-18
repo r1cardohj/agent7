@@ -8,10 +8,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from agent0_runtime.providers import BUILTIN_PROVIDERS, Credential, ProviderSpec
 from openai import AsyncOpenAI, OpenAI
 
 from . import __version__
-from .core.providers import BUILTIN_PROVIDERS, Credential, ProviderSpec
 
 
 class Agent7Client(AsyncOpenAI):

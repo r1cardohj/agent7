@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agent7.core import (
+from agent0_runtime import (
     TOOL_ATTACHMENTS_KEY,
     Agent,
     AgentInterrupted,
@@ -415,7 +415,7 @@ class PluginTests(unittest.TestCase):
                 return [point] if group == "agent0.plugins" else []
 
         agent = Agent(FakeBackend([ModelTurn(text="done")]))
-        with patch("agent7.core.plugins.metadata.entry_points", return_value=Points()):
+        with patch("agent0_runtime.plugins.metadata.entry_points", return_value=Points()):
             discovered = agent.plugins.discover()
             self.assertEqual(loaded, [])
             self.assertEqual(discovered[0].distribution, "demo-dist")

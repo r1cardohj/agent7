@@ -316,7 +316,7 @@ manual client, backend, history, or message-list setup:
 
 ```python
 import asyncio
-from agent7.core import Agent, tool
+from agent0_runtime import Agent, tool
 
 @tool("add")
 def add(a: float, b: float) -> str:
@@ -348,7 +348,7 @@ the installed wheel. `scripts/generate_mascot.py` regenerates the mascot assets 
 `agent7/mascot.py`.
 
 The headless loop, model/tool interfaces, structured events, lifecycle hooks, cancellation,
-and plugin SDK live behind `agent7.core`, independently of the terminal. See
+and plugin SDK live behind the standalone `agent0_runtime` package, independently of the terminal. See
 [docs/runtime.md](docs/runtime.md) for embedding and plugin examples.
 
 ## License

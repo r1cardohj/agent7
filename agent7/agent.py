@@ -17,10 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from openai import APIConnectionError, APITimeoutError, AsyncOpenAI
-
-from . import web_fetch, web_search
-from .core import (
+from agent0_runtime import (
     DEFAULT_MAX_TURNS,
     AgentInterrupted,
     Attachment,
@@ -34,11 +31,12 @@ from .core import (
     ToolResult,
     create_builtin_registry,
 )
-from .core import (
-    Agent as CoreAgent,
-)
-from .core.history import ResponsesHistoryPolicy as CoreResponsesHistoryPolicy
-from .core.openai_backend import OpenAIResponsesBackend as CoreOpenAIResponsesBackend
+from agent0_runtime import Agent as CoreAgent
+from agent0_runtime.history import ResponsesHistoryPolicy as CoreResponsesHistoryPolicy
+from agent0_runtime.openai_backend import OpenAIResponsesBackend as CoreOpenAIResponsesBackend
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI
+
+from . import web_fetch, web_search
 from .images import (
     IMAGE_TOKEN_ESTIMATE,
     ToolImageOutput,

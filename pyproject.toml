@@ -31,6 +31,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "agent0-runtime>=0.1.0,<0.2",
     "openai>=1.40.0",
     "rich>=13.0.0",
     "prompt-toolkit>=3.0.0",
@@ -47,6 +48,9 @@ Issues = "https://github.com/r1cardohj/agent7/issues"
 
 [project.scripts]
 agent7 = "agent7.cli:main"
+
+[tool.uv.sources]
+agent0-runtime = { path = "packages/agent0-runtime", editable = true }
 
 [tool.ruff]
 line-length = 100

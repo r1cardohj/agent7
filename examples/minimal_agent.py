@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent7.core import Agent, tool
+from agent0_runtime import Agent, tool
 
 
 @tool("add")

@@ -1,6 +1,6 @@
 """Compatibility imports for the generic OpenAI Responses protocol helpers."""
 
-from .core.responses import (
+from agent0_runtime.responses import (
     IMAGES_KEY,
     RAW_ITEMS_KEY,
     ResponseTurn,

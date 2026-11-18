@@ -6,10 +6,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from agent0_runtime import RunStatus, Tool, ToolRegistry
 from responses_fakes import FakeClient, call_turn, text_turn
 
 from agent7.agent import create_tool_registry, run_agent_result
-from agent7.core import RunStatus, Tool
+
+
+class ClosingFakeClient(FakeClient):
+    def __init__(self, script):
+        super().__init__(script)
+        self.closed = 0
+
+    async def close(self):
+        self.closed += 1
 
 
 class PluginTool:
@@ -61,6 +70,20 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual({event.run_id for event in events}, {"run-gui"})
             self.assertEqual([event.seq for event in events], list(range(1, len(events) + 1)))
             json.dumps([event.to_dict() for event in events])
+
+    def test_legacy_facade_does_not_close_a_shared_client(self):
+        client = ClosingFakeClient([text_turn("ok")])
+        result = asyncio.run(
+            run_agent_result(
+                "hello",
+                client=client,
+                model="model",
+                messages=[],
+                registry=ToolRegistry(),
+            )
+        )
+        self.assertEqual(result.text, "ok")
+        self.assertEqual(client.closed, 0)
 
 
 if __name__ == "__main__":

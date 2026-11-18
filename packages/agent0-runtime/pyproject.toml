@@ -1,0 +1,46 @@
+[project]
+name = "agent0-runtime"
+version = "0.1.0"
+description = "A small embeddable agent runtime with tools, sessions, events, and plugins"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "r1cardohj", email = "2413302357@qq.com" },
+]
+keywords = [
+    "agent",
+    "agent-runtime",
+    "llm",
+    "openai-compatible",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = [
+    "openai>=1.40.0",
+    "trafilatura>=2.3,<3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent0_runtime"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/pyproject.toml",
+]

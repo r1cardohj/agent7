@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .core.events import EventEmitter
-from .core.openai_backend import (
+from agent0_runtime.events import EventEmitter
+from agent0_runtime.openai_backend import (
     OpenAIResponsesBackend,
     RetryableResponseError,
     can_failover_response_error,
@@ -13,8 +13,9 @@ from .core.openai_backend import (
     emit_callback,
     stream_response_with_retries,
 )
-from .core.responses import ResponseTurn
-from .core.types import ModelTurn
+from agent0_runtime.responses import ResponseTurn
+from agent0_runtime.types import ModelTurn
+
 from .images import supports_vision
 from .routing import FailoverRoute, RouteTarget
 

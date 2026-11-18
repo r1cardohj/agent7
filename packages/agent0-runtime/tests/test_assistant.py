@@ -5,7 +5,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from agent7.core import (
+from agent0_runtime import (
     Agent,
     MemorySessionStore,
     ModelTurn,
