@@ -8,10 +8,11 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+from agent0_runtime import AgentInterrupted as Interrupted
+from agent0_runtime.builtin_tools import run_shell as original_run_shell
+from agent0_runtime.openai_backend import stream_response_once as _stream_once
+from agent_runner import run_agent
 from responses_fakes import FakeClient, call_turn
-
-from agent7.agent import Interrupted, _stream_once, run_agent
-from agent7.core.builtin_tools import run_shell as original_run_shell
 
 
 class InterruptedToolBatchTests(unittest.TestCase):
@@ -34,7 +35,7 @@ class InterruptedToolBatchTests(unittest.TestCase):
 
         client = FakeClient([call_turn([("bash", {"command": f"echo {i}"}) for i in range(3)])])
         with (
-            patch("agent7.core.builtin_tools.run_shell", side_effect=flaky),
+            patch("agent0_runtime.builtin_tools.run_shell", side_effect=flaky),
             self.assertRaises(Interrupted),
         ):
             asyncio.run(
@@ -86,7 +87,7 @@ class InterruptedToolBatchTests(unittest.TestCase):
             await task
 
         with (
-            patch("agent7.agent.STREAM_CLOSE_TIMEOUT", 0.01),
+            patch("agent0_runtime.openai_backend.STREAM_CLOSE_TIMEOUT", 0.01),
             self.assertRaises(Interrupted),
         ):
             asyncio.run(asyncio.wait_for(interrupt_stream(), timeout=0.1))
@@ -126,7 +127,7 @@ class InterruptedToolBatchTests(unittest.TestCase):
             await task
 
         with (
-            patch("agent7.agent.STREAM_CLOSE_TIMEOUT", 0.01),
+            patch("agent0_runtime.openai_backend.STREAM_CLOSE_TIMEOUT", 0.01),
             self.assertRaises(Interrupted),
         ):
             asyncio.run(asyncio.wait_for(interrupt_stream(), timeout=1))

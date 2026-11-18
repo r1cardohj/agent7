@@ -8,15 +8,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from agent0_runtime.responses import RAW_ITEMS_KEY, raw_state
+from agent_runner import run_agent
 from openai import APIConnectionError
 from responses_fakes import FakeClient, call_turn, text_turn
 
 import agent7.agent as A
 from agent7 import cli
-from agent7.agent import run_agent
 from agent7.commands import switch_model
 from agent7.providers import Credential
-from agent7.responses import RAW_ITEMS_KEY, raw_state
 from agent7.routing import (
     MODEL_CAPABILITIES,
     FailoverRoute,

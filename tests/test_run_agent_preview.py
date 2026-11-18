@@ -6,9 +6,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from agent_runner import run_agent
 from responses_fakes import FakeClient, call_turn, text_turn
-
-from agent7.agent import run_agent
 
 
 class RunAgentPreviewTests(unittest.TestCase):

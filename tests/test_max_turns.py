@@ -11,11 +11,12 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+from agent0_runtime import DEFAULT_MAX_TURNS
+from agent_runner import run_agent
 from responses_fakes import FakeClient, FakeStream, call_turn, text_turn
 from rich.console import Console
 
 import agent7.cli as cli
-from agent7.agent import DEFAULT_MAX_TURNS, run_agent
 from agent7.cli import Options, resolve_max_turns
 from agent7.session import Session
 from agent7.store import save

@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import agent0_runtime.history as runtime_history
+from agent0_runtime.history import compact_messages, estimate_tokens, without_orphan_tool_results
+from agent_runner import run_agent
 from openai import APIConnectionError
 from responses_fakes import FakeClient, call_turn, text_turn, usage_turn
 
 import agent7.agent as A
-import agent7.core.history as history
-from agent7.agent import estimate_tokens, run_agent
 
 
 class _Status(Exception):
@@ -83,8 +84,8 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(client.calls, 2)
 
     def test_compaction_drops_tool_results_without_their_call(self) -> None:
-        new_msgs, _ = A.compact_messages(self.history(3))
-        A._without_orphan_tool_results(new_msgs)
+        new_msgs, _ = compact_messages(self.history(3))
+        without_orphan_tool_results(new_msgs)
 
         self.assertNotIn("tool", [message["role"] for message in new_msgs])
 
@@ -188,7 +189,7 @@ class CompactionFallbackTests(unittest.TestCase):
     def test_missing_usage_still_triggers_the_compaction_check(self) -> None:
         """No usage in the final response: the 75% check uses an estimate."""
         calls: list[list[dict[str, Any]]] = []
-        real = history.compact_messages
+        real = compact_messages
 
         def spy(messages: list[dict[str, Any]], **kwargs: Any):
             calls.append(messages)
@@ -197,7 +198,7 @@ class CompactionFallbackTests(unittest.TestCase):
         events = text_turn("a")
         events[-1].response.usage = None
         client = FakeClient([events])
-        with patch.object(history, "compact_messages", side_effect=spy):
+        with patch.object(runtime_history, "compact_messages", side_effect=spy):
             asyncio.run(
                 run_agent(
                     "go",

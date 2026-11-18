@@ -9,20 +9,17 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from agent0_runtime import TOOL_ATTACHMENTS_KEY
+from agent0_runtime.filesystem import read_file
+from agent0_runtime.history import compact_messages, estimate_tokens
+from agent0_runtime.images import PillowImageReader, detect_mime, process_image, supports_vision
+from agent0_runtime.responses import IMAGES_KEY, request_input, tool_output
+from agent_runner import run_agent
 from PIL import Image
 from responses_fakes import FakeClient, call_turn, text_turn
 
-from agent7.agent import compact_messages, dispatch_tool, estimate_tokens, run_agent
-from agent7.core import TOOL_ATTACHMENTS_KEY
-from agent7.images import (
-    ToolImageOutput,
-    detect_mime,
-    paste_image_file,
-    process_image,
-    supports_vision,
-)
+from agent7.images import paste_image_file
 from agent7.repl import repl_key_bindings
-from agent7.responses import IMAGES_KEY, request_input, tool_output
 
 
 def png_bytes(width: int = 8, height: int = 8, color: tuple = (255, 0, 0)) -> bytes:
@@ -84,30 +81,35 @@ class ReadImageToolTests(unittest.TestCase):
         self.assertEqual(detect_mime(bare), "image/png")
         self.assertIsNone(detect_mime(self.cwd / "missing.txt"))
 
-    def test_read_returns_text_plus_an_image_block(self) -> None:
-        result = dispatch_tool(self.cwd, "read", {"path": "shot.png"}, model="kimi-for-coding")
+    def read_image(self, model: str):
+        return read_file(
+            self.cwd,
+            "shot.png",
+            model=model,
+            image_reader=PillowImageReader(),
+            supports_vision=supports_vision,
+        )
 
-        self.assertIsInstance(result, ToolImageOutput)
+    def test_read_returns_text_plus_an_image_block(self) -> None:
+        result = self.read_image("kimi-for-coding")
+
         self.assertIn("Read image file [image/png]", result.text)
-        self.assertEqual(len(result.images), 1)
-        self.assertNotIn(result.images[0].data, result.text)
+        self.assertEqual(len(result.attachments), 1)
+        self.assertNotIn(result.attachments[0].data, result.text)
 
     def test_read_omits_the_image_for_a_text_only_model(self) -> None:
-        result = dispatch_tool(
-            self.cwd, "read", {"path": "shot.png"}, model="text-embedding-3-large"
-        )
+        result = self.read_image("text-embedding-3-large")
 
         self.assertIsInstance(result, str)
         self.assertIn("does not support images", result)
 
     def test_read_keeps_the_image_for_deepseek_flash(self) -> None:
-        result = dispatch_tool(self.cwd, "read", {"path": "shot.png"}, model="deepseek-flash")
-        self.assertIsInstance(result, ToolImageOutput)
-        self.assertEqual(len(result.images), 1)
+        result = self.read_image("deepseek-flash")
+        self.assertEqual(len(result.attachments), 1)
 
     def test_read_still_reads_text(self) -> None:
         (self.cwd / "a.py").write_text("x = 1\n", encoding="utf-8")
-        self.assertIn("x = 1", dispatch_tool(self.cwd, "read", {"path": "a.py"}))
+        self.assertIn("x = 1", read_file(self.cwd, "a.py"))
 
     def test_run_agent_puts_the_image_in_the_next_request(self) -> None:
         client = FakeClient([call_turn(("read", {"path": "shot.png"})), text_turn("done")])

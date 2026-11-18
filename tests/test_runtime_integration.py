@@ -1,14 +1,12 @@
-"""The public agent7 facade uses the same registry/events as the headless core."""
+"""CLI assembly integrates runtime tools, events, plugins, and host clients."""
 
 import asyncio
 import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from agent0_runtime import RunStatus, Tool, ToolRegistry
-from agent0_runtime import web_fetch as runtime_web_fetch
 from responses_fakes import FakeClient, call_turn, text_turn
 
 from agent7.agent import create_tool_registry, run_agent_result
@@ -40,7 +38,7 @@ class PluginTool:
 
 
 class RuntimeIntegrationTests(unittest.TestCase):
-    def test_plugin_tool_legacy_callbacks_and_structured_events(self):
+    def test_plugin_tool_callbacks_and_structured_events(self):
         with tempfile.TemporaryDirectory() as tmp:
             client = FakeClient([call_turn(("plugin_echo", {"text": "hello"})), text_turn("done")])
             events, deltas, tools = [], [], []
@@ -73,15 +71,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual([event.seq for event in events], list(range(1, len(events) + 1)))
             json.dumps([event.to_dict() for event in events])
 
-    def test_compat_submodules_are_parent_attributes_for_mock_patch(self):
-        import agent7.core as compat
-
-        self.assertIs(compat.web_fetch, runtime_web_fetch)
-        with patch("agent7.core.web_fetch.DEFAULT_FETCH_CHARS", 123):
-            self.assertEqual(runtime_web_fetch.DEFAULT_FETCH_CHARS, 123)
-        self.assertNotEqual(runtime_web_fetch.DEFAULT_FETCH_CHARS, 123)
-
-    def test_legacy_facade_does_not_close_a_shared_client(self):
+    def test_host_owned_client_is_not_closed(self):
         client = ClosingFakeClient([text_turn("ok")])
         result = asyncio.run(
             run_agent_result(

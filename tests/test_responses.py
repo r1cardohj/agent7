@@ -7,11 +7,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from responses_fakes import FakeClient, call_turn, completed, ns, text_turn
-
-from agent7.agent import run_agent
-from agent7.core.builtin_tools import BUILTIN_TOOL_SCHEMAS
-from agent7.responses import (
+from agent0_runtime import BUILTIN_TOOL_SCHEMAS
+from agent0_runtime.responses import (
     RAW_ITEMS_KEY,
     output_text,
     portable_history,
@@ -20,6 +17,8 @@ from agent7.responses import (
     response_tools,
     response_usage,
 )
+from agent_runner import run_agent
+from responses_fakes import FakeClient, call_turn, completed, ns, text_turn
 
 
 class ResponsesRequestTests(unittest.TestCase):

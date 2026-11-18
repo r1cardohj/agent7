@@ -8,12 +8,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from agent0_runtime.responses import IMAGES_KEY
+from agent_runner import run_agent
 from responses_fakes import FakeClient, call_turn, text_turn
 
 import agent7.agent as A
-from agent7.agent import run_agent
 from agent7.providers import Credential
-from agent7.responses import IMAGES_KEY
 from agent7.routing import MODEL_CAPABILITIES, FailoverRoute, ModelCapability, RouteTarget
 
 

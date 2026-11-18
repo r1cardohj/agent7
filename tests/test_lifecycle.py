@@ -6,10 +6,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from agent0_runtime import AgentInterrupted as Interrupted
+from agent0_runtime import RunResult, RunStatus
+from agent0_runtime.lifecycle import LifecycleEvent, LifecycleHooks, emit_lifecycle
+
 import agent7.cli as cli
-from agent7.agent import Interrupted
 from agent7.cli import Options
-from agent7.hooks import LifecycleEvent, LifecycleHooks, emit_lifecycle
 from agent7.repl import run_turn
 from agent7.session import Session
 from agent7.store import workspace_key
@@ -61,7 +63,18 @@ class LifecycleTests(unittest.TestCase):
         session = make_session(self.cwd)
         hooks, events = self.recording_hooks()
         session.hooks = hooks
-        with patch("agent7.repl._run_agent_once", new=AsyncMock(return_value=answer)):
+        if answer.startswith("(stopped after "):
+            turns = int(answer.removeprefix("(stopped after ").removesuffix(" turns)"))
+            outcome = RunResult(
+                text="",
+                status=RunStatus.BLOCKED,
+                turns=turns,
+                run_id="run-test",
+                stop_reason="max_turns",
+            )
+        else:
+            outcome = RunResult(text=answer, status=RunStatus.SUCCEEDED, turns=1, run_id="run-test")
+        with patch("agent7.repl._run_agent_once", new=AsyncMock(return_value=outcome)):
             self.assertEqual(asyncio.run(run_turn(session, "go")), answer)
         return events
 
