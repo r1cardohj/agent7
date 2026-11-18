@@ -39,7 +39,7 @@ class DecoratorTests(unittest.TestCase):
             """Add two integers."""
             return str(a + b)
 
-        tool_definition = add.__agent7_tool__
+        tool_definition = add.__agent0_tool__
 
         self.assertEqual(add(20, 2), "22")
         self.assertIsInstance(tool_definition, Tool)
@@ -63,18 +63,18 @@ class DecoratorTests(unittest.TestCase):
             """Add two integers."""
             return str(a + b)
 
-        self.assertEqual(add.__agent7_tool__.name, "sum_two")
-        self.assertEqual(add.__agent7_tool__.handler(None, {"a": 1, "b": 2}), "3")
+        self.assertEqual(add.__agent0_tool__.name, "sum_two")
+        self.assertEqual(add.__agent0_tool__.handler(None, {"a": 1, "b": 2}), "3")
 
     def test_configured_and_async_decorators(self):
         @tool(name="say", description="Say something.")
         async def echo(text: str) -> str:
             return text
 
-        self.assertEqual(echo.__agent7_tool__.name, "say")
-        self.assertEqual(echo.__agent7_tool__.schema["function"]["description"], "Say something.")
+        self.assertEqual(echo.__agent0_tool__.name, "say")
+        self.assertEqual(echo.__agent0_tool__.schema["function"]["description"], "Say something.")
         self.assertEqual(
-            asyncio.run(echo.__agent7_tool__.handler(None, {"text": "hello"})), "hello"
+            asyncio.run(echo.__agent0_tool__.handler(None, {"text": "hello"})), "hello"
         )
 
     def test_collection_and_optional_annotations(self):
@@ -82,7 +82,7 @@ class DecoratorTests(unittest.TestCase):
         def summarize(words: list[str], limit: int | None = None) -> str:
             return ",".join(words[:limit])
 
-        parameters = summarize.__agent7_tool__.schema["function"]["parameters"]
+        parameters = summarize.__agent0_tool__.schema["function"]["parameters"]
         self.assertEqual(parameters["properties"]["words"]["items"], {"type": "string"})
         self.assertIn("anyOf", parameters["properties"]["limit"])
         self.assertEqual(parameters["required"], ["words"])
@@ -175,6 +175,28 @@ class DefaultAgentTests(unittest.TestCase):
             agent = Agent.from_env("deepseek/deepseek-flash")
             self.assertEqual(agent.backend.model, "deepseek-flash")
             self.assertEqual(agent.backend.provider_id, "deepseek")
+            asyncio.run(agent.close())
+
+    def test_runtime_environment_uses_neutral_names(self):
+        client = ClosingFakeClient([text_turn("ok")])
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "DEEPSEEK_API_KEY": "sk-test",
+                    "AGENT0_MODEL": "deepseek/deepseek-flash",
+                    "AGENT0_BASE_URL": "https://runtime.example/v1",
+                    "AGENT7_MODEL": "kimi/kimi-for-coding",
+                },
+                clear=True,
+            ),
+            patch("openai.AsyncOpenAI", return_value=client) as factory,
+        ):
+            agent = Agent.from_env()
+            self.assertEqual(agent.backend.model, "deepseek-flash")
+            factory.assert_called_once_with(
+                api_key="sk-test", base_url="https://runtime.example/v1"
+            )
             asyncio.run(agent.close())
 
     def test_configuration_errors_are_early_and_clear(self):

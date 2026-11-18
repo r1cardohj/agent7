@@ -256,7 +256,7 @@ class BuiltinToolTests(unittest.TestCase):
         self.cwd = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
 
-    def test_generic_registry_runs_without_agent7_services(self):
+    def test_generic_registry_runs_without_host_services(self):
         class LocalSearch:
             def __init__(self):
                 self.seen = []

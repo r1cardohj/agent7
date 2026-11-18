@@ -98,7 +98,7 @@ def _parameter_schema(annotation: Any) -> dict[str, Any]:
     raise TypeError(f"unsupported tool parameter annotation: {annotation!r}")
 
 
-_TOOL_ATTRIBUTE = "__agent7_tool__"
+_TOOL_ATTRIBUTE = "__agent0_tool__"
 
 
 def _as_tool(value: Any) -> Tool:

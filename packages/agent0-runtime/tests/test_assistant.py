@@ -1,4 +1,4 @@
-"""A second consumer style: an assistant that uses none of agent7's coding pieces."""
+"""A second consumer style: an assistant that uses none of the host coding pieces."""
 
 import asyncio
 import os
@@ -87,7 +87,7 @@ class AssistantRuntimeTests(unittest.TestCase):
         self.assertGreater(len(restored.messages), 4)
         self.assertIn({"role": "user", "content": "remember my name is Hou"}, restored.messages)
 
-    def test_provider_registry_is_available_without_agent7_auth(self):
+    def test_provider_registry_is_available_without_host_auth(self):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-test"}, clear=True):
             deepseek = get_provider("ds")
             self.assertEqual(deepseek.id, "deepseek")

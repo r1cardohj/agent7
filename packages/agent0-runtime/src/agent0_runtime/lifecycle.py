@@ -165,7 +165,7 @@ async def run_with_lifecycle(
 ) -> RunResult:
     """Classify one runner using typed outcomes and emit exactly one end event.
 
-    ``str`` is accepted temporarily for older agent7 embedders. New runners
+    ``str`` is accepted temporarily for older host embedders. New runners
     return ``RunResult`` and never need to encode control state in answer text.
     """
 

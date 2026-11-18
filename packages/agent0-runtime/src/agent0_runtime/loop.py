@@ -182,7 +182,7 @@ class Agent:
                     del caller
             else:
                 registry = ToolRegistry(values)
-        requested = (model or os.environ.get("AGENT7_MODEL", "")).strip()
+        requested = (model or os.environ.get("AGENT0_MODEL", "")).strip()
         credentials = resolve_all_env()
         if not credentials:
             raise ValueError("no model provider configured; set DEEPSEEK_API_KEY or KIMI_API_KEY")
@@ -206,7 +206,7 @@ class Agent:
             raise ValueError(f"{requested!r} requires {provider.env_keys[0]}")
         client = AsyncOpenAI(
             api_key=credential.api_key,
-            base_url=os.environ.get("AGENT7_BASE_URL", "").strip() or credential.base_url,
+            base_url=os.environ.get("AGENT0_BASE_URL", "").strip() or credential.base_url,
         )
         backend = OpenAIResponsesBackend(
             client,

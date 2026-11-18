@@ -32,7 +32,7 @@ asyncio.run(main())
 
 Set `DEEPSEEK_API_KEY` or `KIMI_API_KEY` before running. With both configured,
 pass an explicit reference such as `Agent.from_env("kimi/kimi-for-coding")`.
-`AGENT7_MODEL` supplies the same default reference, and `AGENT7_BASE_URL` overrides
+`AGENT0_MODEL` supplies the same default reference, and `AGENT0_BASE_URL` overrides
 the endpoint. No tools are enabled unless supplied. The executable version of this
 example is `examples/minimal_agent.py`.
 

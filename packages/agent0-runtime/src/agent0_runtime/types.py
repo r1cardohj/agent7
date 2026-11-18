@@ -1,6 +1,6 @@
 """Shared, transport-neutral values used by the agent runtime.
 
-This module deliberately knows nothing about OpenAI, agent7 sessions, or a UI.
+This module deliberately knows nothing about OpenAI, host sessions, or a UI.
 """
 
 from __future__ import annotations
@@ -114,7 +114,7 @@ class RunResult:
 
     @property
     def legacy_text(self) -> str:
-        """The pre-runtime string result kept for agent7 API compatibility."""
+        """The pre-runtime string result kept for legacy host API compatibility."""
 
         if self.status is RunStatus.BLOCKED and self.stop_reason == "max_turns":
             return f"(stopped after {self.turns} turns)"

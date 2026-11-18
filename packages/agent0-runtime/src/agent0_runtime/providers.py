@@ -31,7 +31,7 @@ class ProviderSpec:
 
     @property
     def default_base(self) -> str:
-        """Compatibility spelling used by older agent7 callers."""
+        """Compatibility spelling used by older host callers."""
 
         return self.base_url
 

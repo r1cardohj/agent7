@@ -79,7 +79,7 @@ def resolve_shell(*, platform: str | None = None) -> Shell:
     """Pick a shell from sys.platform, honoring an explicit executable/name."""
 
     plat = sys.platform if platform is None else platform
-    override = os.environ.get("AGENT7_SHELL", "").strip()
+    override = os.environ.get("AGENT0_SHELL", "").strip()
     if override:
         key = override.lower()
         if key in ("bash", "powershell", "cmd", "sh"):

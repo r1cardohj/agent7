@@ -17,7 +17,7 @@ MAX_DOWNLOAD_BYTES = 20_000_000
 CONNECT_TIMEOUT = 8
 READ_TIMEOUT = 20
 
-_USER_AGENT = "Mozilla/5.0 (compatible; agent7)"
+_USER_AGENT = "Mozilla/5.0 (compatible; agent0-runtime)"
 _RETRY_STATUS = (429, 500, 502, 503, 504)
 _TEXT_TYPES = frozenset(
     {
