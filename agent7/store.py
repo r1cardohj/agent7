@@ -1,11 +1,11 @@
-"""agent7 path policy for the runtime's workspace-scoped FileSessionStore."""
+"""agent7 path policy for its workspace-scoped JSON session store."""
 
 import os
 from pathlib import Path
 from typing import Any
 
-from agent0_runtime import file_sessions as _file_sessions
-from agent0_runtime.file_sessions import FileSessionStore
+from . import file_sessions as _file_sessions
+from .file_sessions import FileSessionStore
 
 VERSION = _file_sessions.VERSION
 READABLE_VERSIONS = _file_sessions.READABLE_VERSIONS

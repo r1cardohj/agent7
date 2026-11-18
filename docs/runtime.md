@@ -199,9 +199,9 @@ result = await agent.run("hello", session=session)
 
 `RuntimeSession` contains an ID, message history, and application metadata.
 `SessionStore` is the portable persistence contract; `MemorySessionStore` supports
-tests and ephemeral agents. `FileSessionStore` adds host-rooted, workspace-scoped
-JSON snapshots with resume, legacy migration, and non-overwriting trash. agent7
-supplies its existing XDG paths while the runtime owns the file format and I/O.
+tests and ephemeral agents. Applications own their durable formats and retention
+policies. In particular, agent7 owns its workspace-scoped JSON snapshots, resume
+migration, XDG paths, and non-overwriting trash in `agent7.file_sessions`.
 
 For explicit per-run state, use `RunContext` and `Agent.run_in_context()`. The
 legacy `cwd` parameter is the filesystem spelling of the optional run workspace;

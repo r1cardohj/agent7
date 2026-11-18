@@ -28,7 +28,6 @@ from .events import (
     RuntimeEvent,
     RuntimeEventKind,
 )
-from .file_sessions import FileSessionStore
 from .filesystem import ImageReader, VisionSupport
 from .history import ResponsesHistoryPolicy
 from .images import PillowImageReader, supports_vision
@@ -102,7 +101,6 @@ __all__ = [
     "EventEmitter",
     "EventListener",
     "FileCredentialStore",
-    "FileSessionStore",
     "FailoverRoute",
     "HistoryPolicy",
     "ImageReader",

@@ -1,11 +1,11 @@
-"""Standalone workspace-scoped JSON session storage."""
+"""Focused tests for agent7's reusable workspace store object."""
 
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent0_runtime import FileSessionStore
+from agent7.file_sessions import FileSessionStore
 
 
 class FileSessionStoreTests(unittest.TestCase):

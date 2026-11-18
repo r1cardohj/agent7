@@ -1,4 +1,4 @@
-"""One JSON snapshot per session, with workspace-scoped discovery."""
+"""agent7's workspace-scoped JSON snapshots and legacy migration."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def session_dir(root: Path | None = None) -> Path:
         return root
     xdg = os.environ.get("XDG_STATE_HOME", "").strip()
     base = Path(xdg).expanduser() if xdg else Path.home() / ".local" / "state"
-    return base / "agent0" / "sessions"
+    return base / "agent7" / "sessions"
 
 
 def timestamp() -> str:
