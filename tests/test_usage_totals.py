@@ -140,10 +140,23 @@ class FormatUsageTests(unittest.TestCase):
         self.assertIn("run=9,500 (3 rounds)", text)
         self.assertIn("session=9,500 (prompt=9,000 completion=500)", text)
 
-    def test_no_usage_at_all(self) -> None:
+    def test_a_fresh_session_is_zero_not_unknown(self) -> None:
         self.assertEqual(
-            format_usage(make_session(limit=128_000)), "usage=none  context_limit=128k"
+            format_usage(make_session(limit=128_000)), "context=0/128k (0%)  session=0"
         )
+
+    def test_a_resumed_conversation_estimates_and_says_so(self) -> None:
+        session = make_session(limit=128_000)
+        session.messages[:] = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "x" * 400},
+        ]
+
+        text = format_usage(session)
+
+        self.assertTrue(session.context_estimated)
+        self.assertIn("context~", text)
+        self.assertIn("session=unknown", text)
 
     def test_known_usage_without_a_context_limit(self) -> None:
         session = make_session(prompt=1_200)

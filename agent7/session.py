@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from agent0_runtime import DEFAULT_MAX_TURNS
+from agent0_runtime.history import estimate_tokens
 from agent0_runtime.lifecycle import LifecycleHooks
 from openai import AsyncOpenAI
 
@@ -79,15 +80,15 @@ def fmt_limit(n: int) -> str:
 
 
 def format_context_prompt(session: Session) -> str:
-    u = fmt_tokens(session.prompt_tokens) if session.prompt_tokens is not None else "?"
+    u = fmt_tokens(session.context_tokens)
     return u if session.context_limit is None else f"{u}/{fmt_limit(session.context_limit)}"
 
 
 def context_pressure(session: Session) -> int | None:
-    """Share of the context window in use, as a percentage, or None if unknown."""
-    if session.prompt_tokens is None or not session.context_limit:
+    """Share of the context window in use, as a percentage, or None without a limit."""
+    if not session.context_limit:
         return None
-    return min(100, round(100 * session.prompt_tokens / session.context_limit))
+    return min(100, round(100 * session.context_tokens / session.context_limit))
 
 
 def fmt_cwd(path: Path, *, limit: int = 44) -> str:
@@ -107,21 +108,15 @@ def fmt_cwd(path: Path, *, limit: int = 44) -> str:
 def format_usage(session: Session) -> str:
     """Context occupancy now, plus what this run and this session actually spent.
 
-    ``prompt_tokens`` tracks the *last* model round because that is the context
-    the next request carries. Totals are separate fields so a long turn no
-    longer hides its cost behind the final round's numbers.
+    ``context_tokens`` is the last reported round, or an estimate for a
+    conversation that was resumed before any turn ran; the status bar shows the
+    same number without the ``~`` estimate marker.
     """
 
-    parts: list[str] = []
-    if session.prompt_tokens is None:
-        parts.append("usage=none")
-        if session.context_limit:
-            parts.append(f"context_limit={fmt_limit(session.context_limit)}")
-    else:
-        context = f"context={format_context_prompt(session)}"
-        if (pct := context_pressure(session)) is not None:
-            context += f" ({pct}%)"
-        parts.append(context)
+    context = format_context_prompt(session)
+    parts = [f"context~{context}" if session.context_estimated else f"context={context}"]
+    if (pct := context_pressure(session)) is not None:
+        parts[0] += f" ({pct}%)"
     if (spent := session.run_tokens.total) is not None:
         parts.append(f"run={fmt_tokens(spent)} ({fmt_rounds(session.run_tokens.rounds)})")
     if (spent := session.session_tokens.total) is not None:
@@ -131,6 +126,11 @@ def format_usage(session: Session) -> str:
             f"(prompt={fmt_tokens(totals.prompt_tokens or 0)} "
             f"completion={fmt_tokens(totals.completion_tokens or 0)})"
         )
+    elif not session.has_turns:
+        parts.append("session=0")
+    else:
+        # Nothing was reported for this conversation: say so instead of guessing.
+        parts.append("session=unknown")
     return "  ".join(parts)
 
 
@@ -260,6 +260,31 @@ class Session:
         if (total := self.session_tokens.total) is not None:
             return total
         return self.run_tokens.total
+
+    @property
+    def has_turns(self) -> bool:
+        """Whether the conversation holds anything beyond its system prompt."""
+
+        return any(message.get("role") != "system" for message in self.messages)
+
+    @property
+    def context_tokens(self) -> int:
+        """What the next request carries: the last round, else an estimate.
+
+        A fresh session is exactly zero; a resumed conversation has no reported
+        usage until its first turn, so its messages are estimated instead of
+        showing an unhelpful ``?``.
+        """
+
+        if self.prompt_tokens is not None:
+            return self.prompt_tokens
+        if not self.has_turns:
+            return 0
+        return estimate_tokens(self.messages)
+
+    @property
+    def context_estimated(self) -> bool:
+        return self.prompt_tokens is None and self.has_turns
 
     def remember(self, provider_id: str, cred: Credential) -> None:
         self.credentials[provider_id] = cred

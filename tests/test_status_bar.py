@@ -102,7 +102,8 @@ class ContextPressureTests(unittest.TestCase):
         self.assertEqual(context_pressure(make_session(limit=100_000, tokens=250_000)), 100)
 
     def test_unknown_without_usage_or_limit(self) -> None:
-        self.assertIsNone(context_pressure(make_session(limit=100_000)))
+        # No turn has reported usage yet, so the conversation is empty: 0%, not unknown.
+        self.assertEqual(context_pressure(make_session(limit=100_000)), 0)
         self.assertIsNone(context_pressure(make_session(limit=None, tokens=10)))
 
     def test_tone_tracks_pressure(self) -> None:

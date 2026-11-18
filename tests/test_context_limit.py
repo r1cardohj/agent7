@@ -56,11 +56,12 @@ class ContextPromptTests(unittest.TestCase):
 
     def test_prompt_without_usage_or_limit(self) -> None:
         self.assertEqual(format_context_prompt(make_session(None, 4_868)), "4,868")
-        self.assertEqual(format_context_prompt(make_session(1_048_576, None)), "?/1M")
+        # A fresh session holds nothing yet; it is zero, not unknown.
+        self.assertEqual(format_context_prompt(make_session(1_048_576, None)), "0/1M")
 
     def test_status_line(self) -> None:
         self.assertIn("context=4,868/1M", format_usage(make_session(1_048_576, 4_868)))
-        self.assertIn("context_limit=256k", format_usage(make_session(262_144, None)))
+        self.assertIn("context=0/256k (0%)", format_usage(make_session(262_144, None)))
 
 
 class ResolveContextLimitTests(unittest.TestCase):
