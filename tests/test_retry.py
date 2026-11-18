@@ -10,6 +10,7 @@ from unittest.mock import patch
 from responses_fakes import FakeClient, call_turn, text_turn, usage_turn
 
 import agent7.agent as A
+import agent7.core.history as history
 from agent7.agent import estimate_tokens, run_agent
 
 
@@ -186,7 +187,7 @@ class CompactionFallbackTests(unittest.TestCase):
     def test_missing_usage_still_triggers_the_compaction_check(self) -> None:
         """No usage in the final response: the 75% check uses an estimate."""
         calls: list[list[dict[str, Any]]] = []
-        real = A.compact_messages
+        real = history.compact_messages
 
         def spy(messages: list[dict[str, Any]], **kwargs: Any):
             calls.append(messages)
@@ -195,7 +196,7 @@ class CompactionFallbackTests(unittest.TestCase):
         events = text_turn("a")
         events[-1].response.usage = None
         client = FakeClient([events])
-        with patch.object(A, "compact_messages", side_effect=spy):
+        with patch.object(history, "compact_messages", side_effect=spy):
             asyncio.run(
                 run_agent(
                     "go",

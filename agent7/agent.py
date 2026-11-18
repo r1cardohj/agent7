@@ -25,16 +25,11 @@ from .core import (
     AgentInterrupted,
     Attachment,
     CancellationToken,
-    EventEmitter,
     EventListener,
     LifecycleHooks,
     ModelBackend,
-    ModelRequest,
-    ModelTurn,
-    Recovery,
     RunResult,
     Tool,
-    ToolCall,
     ToolRegistry,
     ToolResult,
     create_builtin_registry,
@@ -42,6 +37,8 @@ from .core import (
 from .core import (
     Agent as CoreAgent,
 )
+from .core.history import ResponsesHistoryPolicy as CoreResponsesHistoryPolicy
+from .core.openai_backend import OpenAIResponsesBackend as CoreOpenAIResponsesBackend
 from .images import (
     IMAGE_TOKEN_ESTIMATE,
     ToolImageOutput,
@@ -51,19 +48,21 @@ from .images import (
 )
 from .responses import (
     IMAGES_KEY,
-    RAW_ITEMS_KEY,
     ResponseTurn,
-    discard_raw_output,
     output_text,
     plain_item,
     portable_history,
-    public_call,
-    raw_state,
     reasoning_text,
     request_input,
     response_status,
     response_tools,
     response_usage,
+)
+from .responses_backend import (
+    ResponsesBackend as CoreResponsesBackend,
+)
+from .responses_backend import (
+    RoutedResponsesBackend as CoreRoutedResponsesBackend,
 )
 from .routing import FailoverRoute, RouteTarget
 from .tool_adapters import agent7_builtin_tools
@@ -1038,198 +1037,12 @@ def _answer_pending(
             messages.append({"role": "tool", "tool_call_id": call_id, "content": note})
 
 
-class OpenAIResponsesBackend:
-    """One OpenAI-compatible Responses endpoint implementing the backend SPI."""
-
-    def __init__(
-        self,
-        client: AsyncOpenAI,
-        model: str,
-        *,
-        provider_id: str | None = None,
-        context_limit: int | None = None,
-        on_route=None,
-    ) -> None:
-        self.client = client
-        self._model = model
-        self._provider_id = provider_id
-        self.route: FailoverRoute | None = None
-        self._context_limit = context_limit
-        self.on_route = on_route
-
-    @property
-    def model(self) -> str:
-        return self.route.current.model if self.route is not None else self._model
-
-    @property
-    def provider_id(self) -> str | None:
-        return self.route.current.provider_id if self.route is not None else self._provider_id
-
-    @property
-    def context_limit(self) -> int | None:
-        return self.route.current.context_limit if self.route is not None else self._context_limit
-
-    async def _route_changed(
-        self,
-        events: EventEmitter,
-        target: RouteTarget,
-        previous: RouteTarget | None,
-        error: BaseException | None,
-    ) -> None:
-        await events.emit(
-            "route_changed",
-            target=target.ref,
-            previous=previous.ref if previous is not None else None,
-            error=str(error) if error is not None else None,
-            error_type=type(error).__name__ if error is not None else None,
-        )
-        # The terminal adapter also needs the concrete object to update Session.
-        # The structured event above intentionally contains only transport-safe data.
-        await _emit(self.on_route, target, previous, error)
-
-    async def prepare(
-        self,
-        task: str,
-        messages: list[dict[str, Any]],
-        estimated_tokens: int,
-        events: EventEmitter,
-    ) -> None:
-        if self.route is not None:
-            await self.route.start(task, messages, estimated_tokens)
-            await self._route_changed(events, self.route.current, None, None)
-
-    async def complete(self, request: ModelRequest, events: EventEmitter) -> ModelTurn:
-        if request.cancellation is not None:
-            request.cancellation.throw_if_cancelled(run_id=request.run_id)
-
-        async def on_delta(text) -> None:
-            await events.emit("text_delta", turn=request.turn, text=text)
-
-        async def on_thinking(text) -> None:
-            await events.emit("reasoning_delta", turn=request.turn, text=text)
-
-        async def on_answer_to_thinking() -> None:
-            await events.emit("answer_to_thinking", turn=request.turn)
-
-        async def on_finish(reason) -> None:
-            await events.emit("model_finished", turn=request.turn, finish_reason=reason)
-
-        target: RouteTarget | None = None
-        if self.route is not None:
-
-            async def changed(current, previous, error) -> None:
-                await self._route_changed(events, current, previous, error)
-
-            turn, target = await _stream_failover(
-                self.route,
-                messages=request.messages,
-                on_delta=on_delta,
-                on_thinking=on_thinking,
-                on_answer_to_thinking=on_answer_to_thinking,
-                on_finish=on_finish,
-                on_route=changed,
-                tools=request.tools,
-            )
-        else:
-            turn = await _stream_completion(
-                self.client,
-                model=self._model,
-                messages=request.messages,
-                on_delta=on_delta,
-                on_thinking=on_thinking,
-                on_answer_to_thinking=on_answer_to_thinking,
-                on_finish=on_finish,
-                provider_id=self._provider_id,
-                tools=request.tools,
-            )
-        answered_by = target.provider_id if target else self._provider_id
-        answered_model = target.model if target else self._model
-        calls = []
-        for raw in turn.calls:
-            call = public_call(raw)
-            calls.append(
-                ToolCall(
-                    id=call["id"],
-                    name=call["function"]["name"],
-                    arguments=call["function"]["arguments"],
-                )
-            )
-        return ModelTurn(
-            text=turn.text,
-            calls=calls,
-            usage=turn.usage,
-            finish_reason=turn.finish_reason,
-            model=answered_model,
-            state={RAW_ITEMS_KEY: raw_state(answered_by, turn.output)},
-        )
-
-
-class RoutedResponsesBackend(OpenAIResponsesBackend):
-    """agent7's optional route selection and failover policy for Responses."""
-
-    def __init__(
-        self,
-        client: AsyncOpenAI,
-        model: str,
-        *,
-        route: FailoverRoute,
-        provider_id: str | None = None,
-        context_limit: int | None = None,
-        on_route=None,
-    ) -> None:
-        super().__init__(
-            client,
-            model,
-            provider_id=provider_id,
-            context_limit=context_limit,
-            on_route=on_route,
-        )
-        self.route = route
-
-
-# Compatibility name from the first runtime extraction pass.
-ResponsesBackend = RoutedResponsesBackend
-
-
-class ResponsesHistoryPolicy:
-    """Responses-specific compaction and safe-retry decisions for the core loop."""
-
-    def estimate(self, messages: list[dict[str, Any]]) -> int:
-        return estimate_tokens(messages)
-
-    def should_compact(self, prompt_tokens: int | None, context_limit: int | None) -> bool:
-        return should_compact(prompt_tokens, context_limit)
-
-    def compact(
-        self, messages: list[dict[str, Any]], *, aggressive: bool = False
-    ) -> tuple[list[dict[str, Any]], int]:
-        if aggressive:
-            new_messages, changed = compact_messages(
-                messages, keep_user_turns=1, keep_tool_results=1
-            )
-        else:
-            new_messages, changed = compact_messages(messages)
-        if changed:
-            discard_raw_output(new_messages)
-            _without_orphan_tool_results(new_messages)
-        return new_messages, changed
-
-    def recover(
-        self,
-        messages: list[dict[str, Any]],
-        error: Exception,
-        *,
-        attempt: int,
-    ) -> Recovery | None:
-        # Some compatible backends reject valid raw tool-call replay. Fall back
-        # to portable history once, without spending a model turn.
-        if _is_tool_history_error(error) and any(RAW_ITEMS_KEY in message for message in messages):
-            discard_raw_output(messages)
-            return Recovery(messages)
-        if attempt > OVERFLOW_RETRIES or not _is_context_overflow(error):
-            return None
-        new_messages, changed = self.compact(messages, aggressive=True)
-        return Recovery(new_messages, changed) if changed else None
+# Keep compatibility names pointed at the provider-neutral core and agent7
+# routed implementations.
+OpenAIResponsesBackend = CoreOpenAIResponsesBackend
+ResponsesHistoryPolicy = CoreResponsesHistoryPolicy
+RoutedResponsesBackend = CoreRoutedResponsesBackend
+ResponsesBackend = CoreResponsesBackend
 
 
 def create_tool_registry(dispatcher: Callable[..., Any] | None = None) -> ToolRegistry:
@@ -1312,6 +1125,8 @@ async def run_agent_result(
                 provider_id=provider_id,
                 context_limit=context_limit,
                 on_route=on_route,
+                retry_sleeps=RETRY_SLEEPS,
+                stream_close_timeout=STREAM_CLOSE_TIMEOUT,
             )
             if route is not None
             else OpenAIResponsesBackend(
@@ -1319,6 +1134,9 @@ async def run_agent_result(
                 model,
                 provider_id=provider_id,
                 context_limit=context_limit,
+                supports_vision=supports_vision,
+                retry_sleeps=RETRY_SLEEPS,
+                stream_close_timeout=STREAM_CLOSE_TIMEOUT,
             )
         )
     runtime = CoreAgent(

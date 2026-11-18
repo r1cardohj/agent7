@@ -20,6 +20,7 @@ from .events import (
     RuntimeEventKind,
 )
 from .filesystem import ImageReader, VisionSupport
+from .history import ResponsesHistoryPolicy
 from .lifecycle import (
     LifecycleContext,
     LifecycleEvent,
@@ -30,6 +31,7 @@ from .lifecycle import (
     run_with_lifecycle,
 )
 from .loop import DEFAULT_MAX_TURNS, Agent, HistoryPolicy
+from .openai_backend import OpenAIResponsesBackend
 from .plugins import (
     PLUGIN_API_VERSION,
     PLUGIN_ENTRY_POINT,
@@ -73,6 +75,7 @@ __all__ = [
     "EventListener",
     "HistoryPolicy",
     "ImageReader",
+    "OpenAIResponsesBackend",
     "LifecycleContext",
     "LifecycleEvent",
     "LifecycleHooks",
@@ -96,6 +99,7 @@ __all__ = [
     "RunContext",
     "RunResult",
     "RunStatus",
+    "ResponsesHistoryPolicy",
     "RuntimeEvent",
     "RuntimeEventKind",
     "RuntimeSession",

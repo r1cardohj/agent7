@@ -50,11 +50,13 @@ class Backend:
         ...
 ```
 
-The backend owns its wire protocol. The generic loop owns model/tool rounds,
-history policy, cancellation, and run outcomes. agent7 provides
-`OpenAIResponsesBackend` for one endpoint and `RoutedResponsesBackend` for its
-intent/failover policy; another application can use either, neither, or a
-different backend entirely.
+The runtime owns the model integration layer and normally depends on the
+`openai` package. `agent7.core.OpenAIResponsesBackend` implements one
+OpenAI-compatible Responses endpoint, including streaming, function calls,
+usage mapping, retry-safe requests, and raw Responses history. agent7 adds
+`RoutedResponsesBackend` only for its intent/failover policy; another
+application can use the core backend, its own router, or a different backend
+entirely.
 
 ## Tool registry
 

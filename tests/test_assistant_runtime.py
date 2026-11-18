@@ -7,6 +7,7 @@ from agent7.core import (
     Agent,
     MemorySessionStore,
     ModelTurn,
+    OpenAIResponsesBackend,
     RuntimeSession,
     Tool,
     ToolCall,
@@ -83,8 +84,6 @@ class AssistantRuntimeTests(unittest.TestCase):
         self.assertIn({"role": "user", "content": "remember my name is Hou"}, restored.messages)
 
     def test_plain_responses_backend_has_no_route_policy(self):
-        from agent7.agent import OpenAIResponsesBackend
-
         backend = OpenAIResponsesBackend(object(), "model")
         self.assertIsNone(backend.route)
         self.assertEqual(backend.model, "model")
