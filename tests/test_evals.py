@@ -12,9 +12,8 @@ import unittest
 from collections import Counter
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
 
-from responses_fakes import FakeClient, text_turn
+from responses_fakes import FakeClient, response, text_turn
 
 from agent7.providers import Credential
 from agent7.routing import MODEL_CAPABILITIES
@@ -61,17 +60,45 @@ class FakeRunner:
         return result
 
 
-def capability_target(ref):
+def capability_target(ref, client=None):
     capability = next(cap for cap in MODEL_CAPABILITIES if cap.ref == ref)
     credential = Credential("secret", "https://example.test", "test")
     return RouteTarget(
         capability.provider_id,
         capability.model,
         credential,
-        FakeClient([text_turn("unused")]),
+        client or FakeClient([text_turn("unused")]),
         capability.context_limit,
         capability,
     )
+
+
+class ScoreClient:
+    """Exercise route selection through the Responses protocol, not private patches."""
+
+    def __init__(self) -> None:
+        self.responses = self
+        self.answer = json.dumps(
+            {
+                "intent": "debugging",
+                "scores": {
+                    "deepseek/deepseek-flash": 10,
+                    "kimi/kimi-for-coding": 90,
+                    "kimi/k3.1-pro": 100,
+                },
+            }
+        )
+
+    async def create(self, **_kwargs):
+        message = {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": self.answer}],
+        }
+        return response([message])
+
+    async def close(self) -> None:
+        pass
 
 
 class TaskManifestTests(unittest.TestCase):
@@ -128,18 +155,15 @@ class TaskManifestTests(unittest.TestCase):
 class RouteAblationTests(unittest.TestCase):
     def start(self, tier_only: bool) -> ObservedRoute:
         refs = ("deepseek/deepseek-flash", "kimi/kimi-for-coding", "kimi/k3.1-pro")
-        base = FailoverRoute(tuple(capability_target(ref) for ref in refs), intent_routing=True)
-        route = ObservedRoute(base, tier_only=tier_only)
-
-        async def fake_score(*_args, **_kwargs):
-            return "debugging", {
-                "deepseek/deepseek-flash": 10,
-                "kimi/kimi-for-coding": 90,
-                "kimi/k3.1-pro": 100,
-            }
-
-        with patch("agent0_runtime.routing._score_targets", new=fake_score):
-            asyncio.run(route.start("debug", [{"role": "user", "content": "debug"}], 10))
+        targets = tuple(
+            capability_target(
+                ref,
+                client=ScoreClient() if ref == "deepseek/deepseek-flash" else None,
+            )
+            for ref in refs
+        )
+        route = ObservedRoute(FailoverRoute(targets, intent_routing=True), tier_only=tier_only)
+        asyncio.run(route.start("debug", [{"role": "user", "content": "debug"}], 10))
         return route
 
     def test_tier_ablation_uses_the_first_strong_model(self) -> None:
