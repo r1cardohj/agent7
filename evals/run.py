@@ -24,9 +24,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from agent7.agent import SYSTEM, run_agent
+from agent0_runtime.responses import response_usage
+
+from agent7.agent import run_agent_result
+from agent7.config import SYSTEM
 from agent7.providers import Credential, get_provider, resolve_all
-from agent7.responses import response_usage
 from agent7.routing import FailoverRoute, RouteTarget, build_auto_route
 from agent7.session import resolve_context_limit
 
@@ -330,7 +332,7 @@ class AgentRunner:
                 result.compactions += 1
                 result.events.append({"event": "compact", "messages": count})
 
-            result.answer = await run_agent(
+            outcome = await run_agent_result(
                 task.prompt,
                 cwd=cwd,
                 client=client,
@@ -346,6 +348,7 @@ class AgentRunner:
                 on_model_start=on_model_start,
                 on_compact=on_compact,
             )
+            result.answer = outcome.text
         except Exception as error:  # the outer runner classifies and records it
             result.error = error
         finally:

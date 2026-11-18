@@ -15,12 +15,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import click
+from agent0_runtime import DEFAULT_MAX_TURNS
+from agent0_runtime import AgentInterrupted as Interrupted
+from agent0_runtime.lifecycle import emit_lifecycle
 
 from . import __version__
-from .agent import DEFAULT_MAX_TURNS, SHELL, SYSTEM, Interrupted
 from .commands import fetch_models, prefetch_models, switch_model
+from .config import SHELL, SYSTEM
 from .herdr import HerdrReporter, background_tasks_instructions
-from .hooks import emit_lifecycle
 from .providers import (
     default_model_for,
     get_provider,
@@ -451,7 +453,7 @@ async def async_main(options: Options) -> None:
         prov, cred = picked
         client = prov.make_client(cred)
     else:
-        client = make_client("missing", list_providers()[0].default_base)
+        client = make_client("missing", list_providers()[0].base_url)
         if task:
             keys = ", ".join(k for p in list_providers() for k in p.env_keys)
             print(

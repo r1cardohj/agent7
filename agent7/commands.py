@@ -8,7 +8,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from getpass import getpass
 
-from .agent import SYSTEM, compact_messages
+from agent0_runtime.history import compact_messages
+
+from .config import SYSTEM
 from .providers import (
     Credential,
     agent7_auth_path,

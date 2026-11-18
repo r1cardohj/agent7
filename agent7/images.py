@@ -1,4 +1,4 @@
-"""Terminal clipboard integration; image processing lives in agent0-runtime."""
+"""Terminal clipboard integration; image processing belongs to the runtime."""
 
 from __future__ import annotations
 
@@ -12,39 +12,10 @@ import uuid
 from pathlib import Path
 
 from agent0_runtime.images import (
-    IMAGE_TOKEN_ESTIMATE,
-    MAX_IMAGE_BYTES,
-    MAX_IMAGE_DIMENSION,
-    MIME_EXTENSION,
-    MIME_SUFFIX,
     SUPPORTED_MIME,
-    ImageBlock,
-    ToolImageOutput,
     base_mime,
-    detect_mime,
     process_image,
-    read_image,
-    supports_vision,
 )
-
-__all__ = [
-    "IMAGE_TOKEN_ESTIMATE",
-    "MAX_IMAGE_BYTES",
-    "MAX_IMAGE_DIMENSION",
-    "MIME_EXTENSION",
-    "MIME_SUFFIX",
-    "SUPPORTED_MIME",
-    "ImageBlock",
-    "ToolImageOutput",
-    "base_mime",
-    "clipboard_text",
-    "detect_mime",
-    "paste_image_file",
-    "process_image",
-    "read_clipboard_image",
-    "read_image",
-    "supports_vision",
-]
 
 CLIPBOARD_TIMEOUT = 10.0
 
@@ -163,8 +134,8 @@ def read_clipboard_image() -> tuple[bytes, str] | None:
         converted = process_image(image[0], image[1])
         if converted is None:
             return None
-        block, _ = converted
-        return base64.b64decode(block.data), block.mime_type
+        attachment, _ = converted
+        return base64.b64decode(attachment.data), attachment.mime_type
     return image
 
 
@@ -175,7 +146,7 @@ def paste_image_file() -> Path | None:
     if not image:
         return None
     data, mime = image
-    ext = MIME_EXTENSION.get(base_mime(mime), "png")
+    ext = _extension_for(mime)
     root = Path(tempfile.gettempdir()) / "agent7-images"
     try:
         root.mkdir(parents=True, exist_ok=True)
@@ -184,6 +155,15 @@ def paste_image_file() -> Path | None:
     except OSError:
         return None
     return path
+
+
+def _extension_for(mime: str) -> str:
+    return {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/webp": "webp",
+        "image/gif": "gif",
+    }.get(base_mime(mime), "png")
 
 
 def clipboard_text() -> str | None:

@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TextIO
 
-from .hooks import LifecycleEvent
+from agent0_runtime.lifecycle import LifecycleEvent
 
 _STATES = {
     "session_started": "idle",

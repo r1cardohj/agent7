@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from agent0_runtime.builtin_tools import BuiltinToolsConfig
 from agent0_runtime.images import PillowImageReader, supports_vision
-from agent0_runtime.web_search import DeepSeekSearchProvider
+
+from .web_search import Agent7SearchProvider
 
 
 def _deepseek_credential():
@@ -15,11 +16,11 @@ def _deepseek_credential():
 
 
 def agent7_builtin_tools() -> BuiltinToolsConfig:
-    from .agent import SHELL  # local: avoids an import cycle with the legacy facade
+    from .config import SHELL  # local: avoids the module-level shell/config cycle
 
     return BuiltinToolsConfig(
         shell=SHELL,
         image_reader=PillowImageReader(),
         supports_vision=supports_vision,
-        search_provider=DeepSeekSearchProvider(_deepseek_credential),
+        search_provider=Agent7SearchProvider(_deepseek_credential),
     )

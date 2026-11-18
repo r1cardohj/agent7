@@ -11,10 +11,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent0_runtime import DEFAULT_MAX_TURNS
+from agent0_runtime.lifecycle import LifecycleHooks
 from openai import AsyncOpenAI
 
-from .agent import DEFAULT_MAX_TURNS
-from .hooks import LifecycleHooks
 from .providers import Credential, Provider, get_provider
 from .routing import AUTO_REF, FailoverRoute, RouteTarget
 from .store import new_session_id, timestamp

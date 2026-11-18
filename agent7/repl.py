@@ -18,7 +18,9 @@ from collections.abc import Callable, Iterator
 from itertools import islice
 from pathlib import Path
 
-from agent0_runtime import RunResult, new_run_id
+from agent0_runtime import AgentInterrupted as Interrupted
+from agent0_runtime import RunResult, RunStatus, new_run_id
+from agent0_runtime.lifecycle import run_with_lifecycle
 from fzp.fuzzy import Match, fuzzy_filter, fuzzy_match
 from fzp.tui import Picker
 from prompt_toolkit import PromptSession
@@ -35,9 +37,9 @@ from rich.console import Console
 from rich.live import Live
 from rich.text import Text
 
-from .agent import Interrupted, run_agent_result, tool_summary
+from .agent import run_agent_result
 from .commands import dispatch, known_names
-from .hooks import run_with_lifecycle
+from .config import tool_summary
 from .images import clipboard_text, paste_image_file
 from .interrupt import run_with_interrupt_keys
 from .markdown import Markdown
@@ -430,7 +432,7 @@ class ReplyPrinter:
         err.print(f"  {mark} [bold]{name:<5}[/bold] [dim]{tool_summary(name, args)}[/dim]{meta}")
 
     def on_preview(self, stats: str) -> None:
-        # dispatch_tool invokes this from a worker thread; do not let a timer
+        # A tool can invoke this from a worker thread; do not let a timer
         # repaint the running line in the middle of the preview.
         with self._tool_lock:
             self._print_preview(stats)
@@ -862,6 +864,16 @@ TRUNCATED_NOTICE = (
     "no text in the reply — the model hit the output token limit (retry with a smaller step)"
 )
 STOPPED_PREFIX = "(stopped after "
+
+
+def _result_text(result: RunResult) -> str:
+    """Terminal text for a typed result, including turn-limit recovery."""
+
+    if result.status is RunStatus.BLOCKED and result.stop_reason == "max_turns":
+        return f"{STOPPED_PREFIX}{result.turns} turns)"
+    return result.text
+
+
 TURN_LIMIT_GUIDANCE = (
     "The task may be unfinished; your session is preserved.\n"
     'Type `continue` in the REPL, or run `agent7 -r "continue"`.\n'
@@ -894,7 +906,7 @@ async def run_turn(
         if sys.stdin is not None and sys.stdin.isatty():
             work = run_with_interrupt_keys(work, input_obj=get_app_session().input)
         result = await run_with_lifecycle(session, work, run_id=run_id)
-        return result.legacy_text
+        return _result_text(result)
     finally:
         if previous_sigint is not None:
             signal.signal(signal.SIGINT, previous_sigint)
@@ -940,7 +952,7 @@ async def _run_agent_once(session: Session, task: str, *, run_id: str = "") -> R
             on_route=on_route,
             run_id=run_id,
         )
-    answer = result.legacy_text
+    answer = _result_text(result)
     # A turn-limit pause is a warning, not an invisible or successful final answer.
     if notice := reply_notice(answer, result.finish_reason):
         style = "yellow" if result.stop_reason == "max_turns" else "dim"
