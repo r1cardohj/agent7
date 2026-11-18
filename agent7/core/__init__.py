@@ -26,6 +26,8 @@ _SUBMODULES = (
     "plugins",
     "providers",
     "responses",
+    "routing",
+    "routing_backend",
     "search",
     "session",
     "shell",

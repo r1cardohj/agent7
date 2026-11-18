@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from .client import make_openai_client
+
 
 @dataclass(frozen=True)
 class Credential:
@@ -40,6 +42,16 @@ class ProviderSpec:
             if key := os.environ.get(env, "").strip():
                 return Credential(key, self.base_url, "env")
         return None
+
+    def resolve(self) -> Credential | None:
+        """Resolve the default environment credential; managed hosts may override."""
+
+        return self.resolve_env()
+
+    def make_client(self, credential: Credential):
+        """Create a default runtime client; managed hosts may override this."""
+
+        return make_openai_client(credential.api_key, credential.base_url)
 
 
 BUILTIN_PROVIDERS = (

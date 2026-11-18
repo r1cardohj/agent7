@@ -138,7 +138,7 @@ class RouteAblationTests(unittest.TestCase):
                 "kimi/k3.1-pro": 100,
             }
 
-        with patch("agent7.routing._score_targets", new=fake_score):
+        with patch("agent0_runtime.routing._score_targets", new=fake_score):
             asyncio.run(route.start("debug", [{"role": "user", "content": "debug"}], 10))
         return route
 

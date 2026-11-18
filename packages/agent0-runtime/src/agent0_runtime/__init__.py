@@ -63,6 +63,8 @@ from .providers import (
     list_providers,
     resolve_all_env,
 )
+from .routing import AUTO_REF, FailoverRoute, RouteSelection, RouteTarget, build_auto_route
+from .routing_backend import RoutedResponsesBackend, stream_response_failover
 from .search import SearchProvider
 from .session import MemorySessionStore, RunContext, RuntimeSession, SessionStore
 from .shell import Shell
@@ -87,6 +89,7 @@ __all__ = [
     "Agent",
     "AgentInterrupted",
     "Attachment",
+    "AUTO_REF",
     "BackendRegistry",
     "BUILTIN_PROVIDERS",
     "BUILTIN_TOOL_SCHEMAS",
@@ -100,6 +103,7 @@ __all__ = [
     "EventListener",
     "FileCredentialStore",
     "FileSessionStore",
+    "FailoverRoute",
     "HistoryPolicy",
     "ImageReader",
     "OpenAIResponsesBackend",
@@ -134,6 +138,9 @@ __all__ = [
     "RunResult",
     "RunStatus",
     "ResponsesHistoryPolicy",
+    "RouteSelection",
+    "RouteTarget",
+    "RoutedResponsesBackend",
     "RuntimeEvent",
     "RuntimeEventKind",
     "RuntimeSession",
@@ -149,6 +156,7 @@ __all__ = [
     "ToolRegistry",
     "ToolResult",
     "VisionSupport",
+    "build_auto_route",
     "create_builtin_registry",
     "default_model_for",
     "discover_plugins",
@@ -160,6 +168,7 @@ __all__ = [
     "new_run_id",
     "resolve_all_env",
     "run_with_lifecycle",
+    "stream_response_failover",
     "supports_vision",
     "tool",
 ]
